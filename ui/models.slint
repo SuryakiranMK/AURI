@@ -1,0 +1,39 @@
+// AURI Data Structures & Models
+
+export struct TrackData {
+    id: string,
+    title: string,
+    artist: string,
+    album: string,
+    duration: string,
+    duration_secs: int,
+    format_badge: string,
+    is_favorite: bool,
+    cover_hue: color,
+}
+
+export struct AlbumData {
+    id: string,
+    title: string,
+    artist: string,
+    year: string,
+    track_count: int,
+    cover_hue: color,
+}
+
+export struct ArtistData {
+    id: string,
+    name: string,
+    followers: string,
+    is_following: bool,
+    avatar_hue: color,
+}
+
+export struct QueueItemData {
+    id: string,
+    title: string,
+    artist: string,
+    duration: string,
+    is_playing: bool,
+    cover_hue: color,
+}

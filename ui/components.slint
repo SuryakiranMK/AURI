@@ -1,0 +1,151 @@
+// Reusable AURI Widgets
+import { Theme } from "theme.slint";
+
+export component AuriIconButton inherits Rectangle {
+    in property <string> icon_text: "▶";
+    in property <bool> is_active: false;
+    in property <length> icon_size: 14px;
+    in property <color> active_color: Theme.accent;
+    in property <color> inactive_color: Theme.text_secondary;
+    callback clicked();
+
+    border-radius: self.height / 2;
+    background: touch.has_hover ? Theme.bg_surface_hover : Colors.transparent;
+    animate background { duration: 150ms; }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        text: root.icon_text;
+        font_size: root.icon_size;
+        color: root.is_active ? root.active_color : (touch.has_hover ? Theme.text_primary : root.inactive_color);
+        horizontal_alignment: center;
+        vertical_alignment: center;
+    }
+}
+
+export component AuriPlayButton inherits Rectangle {
+    in property <bool> is_playing: false;
+    in property <length> button_size: 38px;
+    in property <color> btn_color: Theme.accent;
+    callback clicked();
+
+    width: root.button_size;
+    height: root.button_size;
+    border-radius: self.height / 2;
+    background: touch.has_hover ? Theme.accent_hover : root.btn_color;
+    animate background { duration: 120ms; }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    Text {
+        text: root.is_playing ? "❚❚" : "▶";
+        font_size: root.button_size * 0.42;
+        color: Theme.text_primary;
+        horizontal_alignment: center;
+        vertical_alignment: center;
+    }
+}
+
+export component AuriSlider inherits Rectangle {
+    in-out property <float> value: 0.35; // 0.0 to 1.0
+    callback value_changed(float);
+
+    height: 16px;
+    background: Colors.transparent;
+
+    track := Rectangle {
+        y: (parent.height - self.height) / 2;
+        height: touch.has_hover ? 6px : 4px;
+        border-radius: self.height / 2;
+        background: Theme.bg_surface_elevated;
+        animate height { duration: 100ms; }
+
+        fill := Rectangle {
+            x: 0;
+            width: parent.width * root.value;
+            height: parent.height;
+            border-radius: self.height / 2;
+            background: touch.has_hover ? Theme.accent_hover : Theme.accent;
+        }
+
+        thumb := Rectangle {
+            x: fill.width - self.width / 2;
+            y: (parent.height - self.height) / 2;
+            width: touch.has_hover ? 12px : 0px;
+            height: self.width;
+            border-radius: self.height / 2;
+            background: Theme.text_primary;
+            animate width { duration: 100ms; }
+        }
+    }
+
+    touch := TouchArea {
+        pointer_event(event) => {
+            if (event.kind == PointerEventKind.down || (event.kind == PointerEventKind.move && self.pressed)) {
+                root.value = Math.max(0.0, Math.min(1.0, self.mouse_x / self.width));
+                root.value_changed(root.value);
+            }
+        }
+    }
+}
+
+export component AuriNavButton inherits Rectangle {
+    in property <string> icon: "♪";
+    in property <string> label: "Item";
+    in property <bool> is_selected: false;
+    in property <string> badge: "";
+    callback clicked();
+
+    height: 38px;
+    border-radius: Theme.radius_md;
+    background: root.is_selected ? Theme.bg_surface_elevated : (touch.has_hover ? Theme.bg_surface : Colors.transparent);
+    animate background { duration: 120ms; }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    HorizontalLayout {
+        padding_left: 12px;
+        padding_right: 12px;
+        spacing: 12px;
+        alignment: start;
+
+        Text {
+            text: root.icon;
+            font_size: 15px;
+            color: root.is_selected ? Theme.accent_hover : (touch.has_hover ? Theme.text_primary : Theme.text_secondary);
+            vertical_alignment: center;
+        }
+
+        Text {
+            text: root.label;
+            font_size: 13px;
+            font_weight: root.is_selected ? 600 : 400;
+            color: root.is_selected ? Theme.text_primary : (touch.has_hover ? Theme.text_primary : Theme.text_secondary);
+            vertical_alignment: center;
+            horizontal_stretch: 1;
+        }
+
+        if root.badge != "": Rectangle {
+            width: badge_text.preferred_width + 12px;
+            height: 18px;
+            border-radius: 9px;
+            background: Theme.badge_bg;
+            y: (parent.height - self.height) / 2;
+
+            badge_text := Text {
+                text: root.badge;
+                font_size: 10px;
+                color: Theme.badge_text;
+                horizontal_alignment: center;
+                vertical_alignment: center;
+            }
+        }
+    }
+}

@@ -1,0 +1,203 @@
+// AURI Main Application Window
+import { Theme } from "theme.slint";
+import { NormalModeView } from "normal_mode.slint";
+import { MiniModeView } from "mini_mode.slint";
+import { GamingHudView } from "gaming_mode.slint";
+
+export component AppWindow inherits Window {
+    title: "AURI";
+    background: Theme.bg_app;
+    always-on-top: root.is_pinned;
+
+    // Operating Mode: 0 = Normal, 1 = Mini, 2 = Gaming HUD, 3 = Pure Headless
+    in-out property <int> current_mode: 0;
+
+    // Normal Mode Layout Variant: 0 = Variant A1 (Ref 1), 1 = Variant A2 (Docked Bar)
+    in-out property <int> normal_layout_variant: 0;
+
+    // Mini Mode Variant: 0 = Variant B1 (Card with Art), 1 = Variant B2 (Micro-Pill)
+    in-out property <int> mini_variant: 0;
+
+    // Player State
+    in-out property <bool> is_playing: false;
+    in-out property <string> track_title: "Saldo 0,7";
+    in-out property <string> track_artist: "Taco Hemingway, Szprycer";
+    in-out property <string> track_duration: "3:34";
+    in-out property <string> track_elapsed: "1:18";
+    in-out property <float> track_progress: 0.36;
+    in-out property <float> volume: 0.75;
+    in-out property <bool> is_favorite: true;
+    in-out property <bool> is_shuffle: false;
+    in-out property <bool> is_repeat: false;
+    in-out property <string> current_nav: "home";
+    in-out property <bool> is_pinned: false;
+    in-out property <bool> enable_dimming: true;
+    in-out property <bool> show_visualizer: true;
+
+    // Callbacks to Rust Core
+    callback toggle_play();
+    callback prev_track();
+    callback next_track();
+    callback seek(float);
+    callback volume_changed(float);
+    callback toggle_favorite();
+    callback toggle_shuffle();
+    callback toggle_repeat();
+    callback switch_mode(int);
+    callback set_normal_layout(int);
+    callback set_mini_layout(int);
+    callback navigate(string);
+    callback enter_headless();
+
+    // Responsive dimensions based on active mode
+    min_width: root.current_mode == 0 ? 920px : (root.current_mode == 1 ? 320px : 380px);
+    min_height: root.current_mode == 0 ? 580px : (root.current_mode == 1 ? (root.mini_variant == 0 ? 110px : 60px) : 340px);
+    preferred_width: root.current_mode == 0 ? 1120px : (root.current_mode == 1 ? (root.mini_variant == 0 ? 380px : 340px) : 420px);
+    preferred_height: root.current_mode == 0 ? 720px : (root.current_mode == 1 ? (root.mini_variant == 0 ? 120px : 68px) : 380px);
+
+    // ==========================================
+    // 0: NORMAL MODE VIEW
+    // ==========================================
+    if root.current_mode == 0: NormalModeView {
+        layout_variant: root.normal_layout_variant;
+        current_nav: root.current_nav;
+        is_playing: root.is_playing;
+        track_title: root.track_title;
+        track_artist: root.track_artist;
+        track_duration: root.track_duration;
+        track_elapsed: root.track_elapsed;
+        track_progress: root.track_progress;
+        volume: root.volume;
+        is_favorite: root.is_favorite;
+        is_shuffle: root.is_shuffle;
+        is_repeat: root.is_repeat;
+
+        navigate(nav) => {
+            if (nav == "set_var_0") {
+                root.normal_layout_variant = 0;
+            } else if (nav == "set_var_1") {
+                root.normal_layout_variant = 1;
+            } else {
+                root.current_nav = nav;
+                root.navigate(nav);
+            }
+        }
+        toggle_play => { root.is_playing = !root.is_playing; root.toggle_play(); }
+        prev_track => { root.prev_track(); }
+        next_track => { root.next_track(); }
+        seek(val) => { root.track_progress = val; root.seek(val); }
+        volume_changed(val) => { root.volume = val; root.volume_changed(val); }
+        toggle_favorite => { root.is_favorite = !root.is_favorite; root.toggle_favorite(); }
+        toggle_shuffle => { root.is_shuffle = !root.is_shuffle; root.toggle_shuffle(); }
+        toggle_repeat => { root.is_repeat = !root.is_repeat; root.toggle_repeat(); }
+        switch_to_mini => { root.current_mode = 1; root.switch_mode(1); }
+        switch_to_gaming => { root.current_mode = 2; root.switch_mode(2); }
+    }
+
+    // ==========================================
+    // 1: MINI MODE FLOATING CONTROLLER
+    // ==========================================
+    if root.current_mode == 1: MiniModeView {
+        mini_variant: root.mini_variant;
+        is_playing: root.is_playing;
+        track_title: root.track_title;
+        track_artist: root.track_artist;
+        track_duration: root.track_duration;
+        track_elapsed: root.track_elapsed;
+        track_progress: root.track_progress;
+        is_favorite: root.is_favorite;
+        always_on_top: root.is_pinned;
+        enable_dimming: root.enable_dimming;
+
+        toggle_play => { root.is_playing = !root.is_playing; root.toggle_play(); }
+        prev_track => { root.prev_track(); }
+        next_track => { root.next_track(); }
+        seek(val) => { root.track_progress = val; root.seek(val); }
+        toggle_favorite => { root.is_favorite = !root.is_favorite; root.toggle_favorite(); }
+        toggle_always_on_top => { root.is_pinned = !root.is_pinned; }
+        toggle_variant => { root.mini_variant = root.mini_variant == 0 ? 1 : 0; root.set_mini_layout(root.mini_variant); }
+        switch_to_normal => { root.current_mode = 0; root.switch_mode(0); }
+        switch_to_gaming => { root.current_mode = 2; root.switch_mode(2); }
+    }
+
+    // ==========================================
+    // 2: GAMING HUD COMPANION MODE
+    // ==========================================
+    if root.current_mode == 2: GamingHudView {
+        is_playing: root.is_playing;
+        track_title: root.track_title;
+        track_artist: root.track_artist;
+        track_format: "FLAC 96 KHZ 24-BIT";
+        track_duration: root.track_duration;
+        track_elapsed: root.track_elapsed;
+        track_progress: root.track_progress;
+        volume: root.volume;
+        is_favorite: root.is_favorite;
+        is_shuffle: root.is_shuffle;
+        is_repeat: root.is_repeat;
+        show_visualizer: root.show_visualizer;
+
+        toggle_play => { root.is_playing = !root.is_playing; root.toggle_play(); }
+        prev_track => { root.prev_track(); }
+        next_track => { root.next_track(); }
+        seek(val) => { root.track_progress = val; root.seek(val); }
+        volume_changed(val) => { root.volume = val; root.volume_changed(val); }
+        toggle_favorite => { root.is_favorite = !root.is_favorite; root.toggle_favorite(); }
+        toggle_shuffle => { root.is_shuffle = !root.is_shuffle; root.toggle_shuffle(); }
+        toggle_repeat => { root.is_repeat = !root.is_repeat; root.toggle_repeat(); }
+        toggle_visualizer => { root.show_visualizer = !root.show_visualizer; }
+        enter_headless => { root.current_mode = 3; root.enter_headless(); }
+        switch_to_normal => { root.current_mode = 0; root.switch_mode(0); }
+    }
+
+    // ==========================================
+    // 3: PURE HEADLESS MODE (0.0% GPU)
+    // ==========================================
+    if root.current_mode == 3: Rectangle {
+        background: #09090C;
+        border-radius: Theme.radius_md;
+        border-width: 1px;
+        border-color: #2D1A4E;
+
+        VerticalLayout {
+            padding: 24px;
+            alignment: center;
+            spacing: 14px;
+
+            Text {
+                text: "⚡ AURI PURE HEADLESS GAMING MODE ACTIVE";
+                font_size: 14px;
+                font_weight: 800;
+                color: #A855F7;
+                horizontal_alignment: center;
+            }
+
+            Text {
+                text: "• Graphical UI is suspended (0.0% GPU activity)\n• OS Working Set trimmed to minimum (< 35 MB RAM)\n• Uninterrupted playback continues via real-time MMCSS WASAPI audio thread\n• Control via Keyboard Media Keys (Play/Pause, Next, Prev, Volume) & Windows SMTC";
+                font_size: 11px;
+                color: Theme.text_secondary;
+                horizontal_alignment: center;
+            }
+
+            Rectangle {
+                width: 180px;
+                height: 34px;
+                border-radius: 17px;
+                background: Theme.accent;
+
+                TouchArea {
+                    clicked => { root.current_mode = 0; root.switch_mode(0); }
+                }
+
+                Text {
+                    text: "Restore Full UI";
+                    font_size: 12px;
+                    font_weight: 700;
+                    color: Theme.text_primary;
+                    horizontal_alignment: center;
+                    vertical_alignment: center;
+                }
+            }
+        }
+    }
+}

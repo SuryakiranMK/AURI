@@ -1,0 +1,247 @@
+// AURI Mini Mode (Floating Controller - Reference 2)
+import { Theme } from "theme.slint";
+import { AuriIconButton, AuriPlayButton, AuriSlider } from "components.slint";
+
+export component MiniModeView inherits Rectangle {
+    in property <int> mini_variant: 0; // 0 = Variant B1 (Card with Art), 1 = Variant B2 (Micro-Pill)
+    in property <bool> is_playing: false;
+    in property <string> track_title: "Gemini";
+    in property <string> track_artist: "Elder";
+    in property <string> track_duration: "9:40";
+    in property <string> track_elapsed: "2:22";
+    in property <float> track_progress: 0.24;
+    in property <bool> is_favorite: true;
+    in property <bool> always_on_top: true;
+    in property <bool> enable_dimming: true;
+
+    callback toggle_play();
+    callback prev_track();
+    callback next_track();
+    callback seek(float);
+    callback toggle_favorite();
+    callback toggle_always_on_top();
+    callback toggle_variant();
+    callback switch_to_normal();
+    callback switch_to_gaming();
+
+    border-radius: Theme.radius_lg;
+    background: Theme.bg_surface;
+    border-width: 1px;
+    border-color: Theme.border_elevated;
+
+    // Optional subtle dimming when unhovered
+    opacity: (root.enable_dimming && !hover_area.has_hover) ? 0.85 : 1.0;
+    animate opacity { duration: 180ms; }
+
+    hover_area := TouchArea {
+        // Keeps hover state active
+    }
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 8px;
+
+        // Top Drag Handle & Action Bar
+        HorizontalLayout {
+            spacing: 8px;
+            height: 16px;
+
+            // Mini brand tag
+            Text {
+                text: "AURI MINI";
+                font_size: 9px;
+                font_weight: 800;
+                letter_spacing: 0.8px;
+                color: Theme.text_muted;
+                vertical_alignment: center;
+                horizontal_stretch: 1;
+            }
+
+            // Always on Top Toggle
+            AuriIconButton {
+                icon_text: root.always_on_top ? "📌" : "📍";
+                icon_size: 11px;
+                is_active: root.always_on_top;
+                clicked => { root.toggle_always_on_top(); }
+            }
+
+            // Switch to Gaming Mode
+            AuriIconButton {
+                icon_text: "⚡";
+                icon_size: 11px;
+                active_color: #A855F7;
+                clicked => { root.switch_to_gaming(); }
+            }
+
+            // Expand to Normal Mode
+            AuriIconButton {
+                icon_text: "⛶";
+                icon_size: 11px;
+                clicked => { root.switch_to_normal(); }
+            }
+
+            // Collapse / Expand Variant Toggle
+            AuriIconButton {
+                icon_text: root.mini_variant == 0 ? "▲" : "▼";
+                icon_size: 9px;
+                clicked => { root.toggle_variant(); }
+            }
+        }
+
+        // ==========================================
+        // VARIANT B1: COMPACT CARD WITH ARTWORK (Ref 2A)
+        // ==========================================
+        if root.mini_variant == 0: HorizontalLayout {
+            spacing: 12px;
+
+            // Square Album Art Thumbnail
+            Rectangle {
+                width: 58px;
+                height: 58px;
+                border-radius: Theme.radius_md;
+                background: #F59E0B;
+                y: (parent.height - self.height) / 2;
+
+                Text {
+                    text: "🎵";
+                    font_size: 24px;
+                    horizontal_alignment: center;
+                    vertical_alignment: center;
+                }
+            }
+
+            // Track Details + Seekbar + Transport Controls
+            VerticalLayout {
+                horizontal_stretch: 1;
+                spacing: 6px;
+
+                // Title & Artist
+                HorizontalLayout {
+                    VerticalLayout {
+                        spacing: 1px;
+                        horizontal_stretch: 1;
+
+                        Text {
+                            text: root.track_title;
+                            font_size: 14px;
+                            font_weight: 700;
+                            color: Theme.text_primary;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.track_artist;
+                            font_size: 11px;
+                            color: Theme.text_muted;
+                            overflow: elide;
+                        }
+                    }
+
+                    AuriIconButton {
+                        icon_text: "♥";
+                        is_active: root.is_favorite;
+                        active_color: Theme.favorite_active;
+                        clicked => { root.toggle_favorite(); }
+                        y: 0;
+                    }
+                }
+
+                // Seekbar with Elapsed / Remaining
+                VerticalLayout {
+                    spacing: 2px;
+
+                    AuriSlider {
+                        value: root.track_progress;
+                        value_changed(val) => { root.seek(val); }
+                    }
+
+                    HorizontalLayout {
+                        Text { text: root.track_elapsed; font_size: 9px; color: Theme.text_muted; }
+                        Rectangle { horizontal_stretch: 1; }
+                        Text { text: root.track_duration; font_size: 9px; color: Theme.text_muted; }
+                    }
+                }
+
+                // Transport Controls
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 16px;
+
+                    AuriIconButton {
+                        icon_text: "⏮";
+                        clicked => { root.prev_track(); }
+                    }
+                    AuriPlayButton {
+                        is_playing: root.is_playing;
+                        button_size: 28px;
+                        clicked => { root.toggle_play(); }
+                    }
+                    AuriIconButton {
+                        icon_text: "⏭";
+                        clicked => { root.next_track(); }
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // VARIANT B2: ULTRA-THIN MICRO-PILL (Ref 2B)
+        // ==========================================
+        if root.mini_variant == 1: VerticalLayout {
+            spacing: 6px;
+
+            // Streamlined Track & Controls Row
+            HorizontalLayout {
+                spacing: 10px;
+                alignment: center;
+
+                VerticalLayout {
+                    horizontal_stretch: 1;
+                    alignment: center;
+
+                    Text {
+                        text: root.track_title + " • " + root.track_artist;
+                        font_size: 12px;
+                        font_weight: 700;
+                        color: Theme.text_primary;
+                        overflow: elide;
+                    }
+                }
+
+                AuriIconButton {
+                    icon_text: "♥";
+                    is_active: root.is_favorite;
+                    active_color: Theme.favorite_active;
+                    clicked => { root.toggle_favorite(); }
+                }
+                AuriIconButton {
+                    icon_text: "⏮";
+                    clicked => { root.prev_track(); }
+                }
+                AuriPlayButton {
+                    is_playing: root.is_playing;
+                    button_size: 26px;
+                    clicked => { root.toggle_play(); }
+                }
+                AuriIconButton {
+                    icon_text: "⏭";
+                    clicked => { root.next_track(); }
+                }
+            }
+
+            // Seekbar
+            HorizontalLayout {
+                spacing: 8px;
+
+                Text { text: root.track_elapsed; font_size: 9px; color: Theme.text_muted; vertical_alignment: center; }
+
+                AuriSlider {
+                    value: root.track_progress;
+                    value_changed(val) => { root.seek(val); }
+                    horizontal_stretch: 1;
+                }
+
+                Text { text: root.track_duration; font_size: 9px; color: Theme.text_muted; vertical_alignment: center; }
+            }
+        }
+    }
+}

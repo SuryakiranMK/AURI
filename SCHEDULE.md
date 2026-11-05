@@ -20,8 +20,8 @@ This document is the **single source of truth** for all planned, in-progress, co
 | Version | Milestone / Update Title | Category | Scope & Details of What Is Updated | Status | Target / Notes |
 |:---:|---|---|---|:---:|---|
 | **v0.0.1** | **Repository & Phase 1 Specifications** | Architecture & Docs | - Initialize Git repository & link to GitHub remote.<br>- Deep research & competitive benchmarking (foobar2000, Tubefast, Limusic).<br>- Create `PRODUCT_SPECIFICATION.md`, `ARCHITECTURE.md`, `TECH_STACK_EVALUATION.md`, `PERFORMANCE_TARGETS.md`, `PROJECT_ROADMAP.md`.<br>- Verify host toolchains (Rust 1.99.1, Cargo, MSVC C++ Linker & Windows SDK). | **Completed** | Foundation & Planning |
-| **v0.1.0** | **Multi-Mode UI Prototype & Settings Switcher** | Visual UI / Prototype | - Setup Rust UI framework with custom dark theme tokens (`#0F0F12`, `#17171C`, `#23232B`).<br>- **Normal Mode**: Implement Variant A1 (Right-panel embedded player card) & Variant A2 (Docked persistent bottom bar). Sidebar with navigation + quick library shortcuts.<br>- **Mini Mode**: Implement Variant B1 (Compact card with art) & Variant B2 (Micro-pill). Auto-dimming (~80% unhovered) and Always-on-Top toggle.<br>- **Gaming HUD**: Translucent overlay widget (Reference 3 style) with hotkey summon (`Win+Alt+M`).<br>- **Settings Panel**: Live switcher to toggle between UI variants.<br>- Populate views with realistic mock library data. | **In Progress** | Phase 2 Visual Prototype |
-| **v0.2.0** | **Minimal Audio Engine & WASAPI Sink** | Audio Core | - Implement native WASAPI shared mode audio output sink via CPAL.<br>- Integrate `symphonia` pure-Rust decoders (FLAC, MP3, AAC, Opus, WAV).<br>- Register real-time MMCSS audio thread (`AvSetMmThreadCharacteristicsW`).<br>- Lock-free circular audio ring buffer with sample-rate conversion.<br>- Core playback controls: Play, Pause, Resume, Stop, Seek, Volume, Mute.<br>- Standalone headless playback test verifying zero audio stutter. | **Planned** | Phase 3 Playback Core |
+| **v0.1.0** | **Multi-Mode UI Prototype & Settings Switcher** | Visual UI / Prototype | - Setup Rust UI framework with custom dark theme tokens (`#0F0F12`, `#17171C`, `#23232B`).<br>- **Normal Mode**: Implement Variant A1 (Right-panel embedded player card) & Variant A2 (Docked persistent bottom bar). Sidebar with navigation + quick library shortcuts.<br>- **Mini Mode**: Implement Variant B1 (Compact card with art) & Variant B2 (Micro-pill). Auto-dimming (~80% unhovered) and Always-on-Top toggle.<br>- **Gaming HUD**: Translucent overlay widget (Reference 3 style) with hotkey summon (`Win+Alt+M`).<br>- **Settings Panel**: Live switcher to toggle between UI variants.<br>- Populate views with realistic mock library data.<br>- Standalone portable release binary (`auri.exe`, 8.9 MB). | **Completed** | Phase 2 Visual Prototype |
+| **v0.2.0** | **Minimal Audio Engine & WASAPI Sink** | Audio Core | - Implement native WASAPI shared mode audio output sink via CPAL.<br>- Integrate `symphonia` pure-Rust decoders (FLAC, MP3, AAC, Opus, WAV).<br>- Register real-time MMCSS audio thread (`AvSetMmThreadCharacteristicsW`).<br>- Lock-free circular audio ring buffer with sample-rate conversion.<br>- Core playback controls: Play, Pause, Resume, Stop, Seek, Volume, Mute.<br>- Standalone headless playback test verifying zero audio stutter. | **Next Up** | Phase 3 Playback Core |
 | **v0.3.0** | **Local Music Library & Queue Manager** | Library & Queue | - Local folder scanner and indexer (recursive directory scan).<br>- ID3v2, Vorbis comment, and FLAC metadata parser.<br>- Bounded artwork memory cache (max 16 MB LRU cache).<br>- Dynamic Playback Queue: Next, Previous, Shuffle (Fisher-Yates), Repeat (Off, One, All).<br>- Connect Local Files view in Normal Mode to the real audio engine. | **Planned** | Local Playback Complete |
 | **v0.4.0** | **Windows Deep Integration & Headless Playback** | OS Integration | - Decouple UI lifecycle from audio: Closing/hiding windows leaves playback running.<br>- System Tray integration (`Shell_NotifyIconW`) with dark context menu (Play/Pause, Next, Modes, Exit).<br>- Windows System Media Transport Controls (SMTC) integration for native volume flyout and keyboard media keys.<br>- Global hotkeys via `RegisterHotKey` (`Win+Alt+Space`, `Win+Alt+Right`, etc.). | **Planned** | Background Engine Ready |
 | **v0.5.0** | **Anti-Cheat Safe Game Detection & Working Set Trimmer** | Performance & Gaming | - `SetWinEventHook` foreground listener detecting active fullscreen games without code injection.<br>- Configurable game process detection list.<br>- Automatic transition to Gaming Mode upon game focus.<br>- Window hiding (`SW_HIDE`) and swapchain suspension (0.0% GPU load).<br>- Memory purging via Windows `EmptyWorkingSet()` down to < 35 MB RAM. | **Planned** | Gaming Mode Complete |
@@ -36,7 +36,20 @@ This document is the **single source of truth** for all planned, in-progress, co
 
 ## Change Log & Revision History
 
-### Version: v0.0.1 (Current Completed Milestone)
+### Version: v0.1.0 (Completed Milestone)
+- **Date**: 2026-11-05
+- **Category**: Visual UI Prototype & Multi-Mode Settings Switcher
+- **What Was Done**:
+  - Implemented pure native Slint UI with lightweight Femtovg hardware-accelerated 2D backend.
+  - Built dark-first Apple Music/Spotify inspired theme system (`ui/theme.slint`).
+  - Created **Normal Mode** (`ui/normal_mode.slint`) supporting both **Variant A1** (Reference 1 Right-Panel Card) and **Variant A2** (Docked Persistent Bottom Bar). Included hero artist section, album grid, popular tracks list, similar artists, and library shortcuts.
+  - Created **Mini Mode** (`ui/mini_mode.slint`) supporting **Variant B1** (Compact Card with artwork, Reference 2A) and **Variant B2** (Micro-Pill, Reference 2B) with quick collapse, Always-on-Top, and idle opacity dimming.
+  - Created **Gaming Mode Companion HUD** (`ui/gaming_mode.slint`) with vinyl record motif, high-res audio format badge (*"FLAC 96 KHZ 24-BIT"*), seekbar, transport controls, and spectrum visualizer.
+  - Created live **Settings Switcher** enabling dynamic switching between all UI variants.
+  - Built single-file portable release executable (`target/release/auri.exe`) measuring only **8.9 MB**.
+  - Verified process startup and private memory footprint (57 MB baseline).
+
+### Version: v0.0.1 (Completed Milestone)
 - **Date**: 2026-11-05
 - **Category**: Architecture, Tech Stack Evaluation, and Specification
 - **What Was Done**:
