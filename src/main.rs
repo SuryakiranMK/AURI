@@ -2,11 +2,14 @@
 // Milestone v0.2.0: Minimal Audio Engine (Symphonia Codecs & WASAPI Sink)
 
 pub mod audio;
+pub mod integration;
 pub mod library;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use audio::{AudioEngine, PlaybackState};
+use integration::{HotkeyAction, TrayAction, WindowsIntegration};
 use library::{LibraryManager, RepeatMode};
 use slint::Timer;
 
@@ -21,8 +24,8 @@ fn format_duration(seconds: f64) -> String {
 
 fn main() -> Result<(), slint::PlatformError> {
     println!("========================================================");
-    println!("  AURI Desktop Music Player - v0.3.0 Library & Queue Core");
-    println!("  Native Decoders • WASAPI Real-Time • 16MB LRU Cache");
+    println!("  AURI Desktop Music Player - v0.4.0 Windows Integration");
+    println!("  System Tray • SMTC Media Keys • Global Hotkeys • Headless");
     println!("========================================================");
 
     // Initialize native audio engine
@@ -47,6 +50,10 @@ fn main() -> Result<(), slint::PlatformError> {
     let discovered_count = library.scan_directories(&music_dirs);
     println!("[AURI Library] Discovered {} tracks in local library", discovered_count);
 
+    // Initialize Windows System Integration (System Tray & Global Hotkeys)
+    let integration = Arc::new(WindowsIntegration::new());
+    let is_window_visible = Arc::new(AtomicBool::new(true));
+
     let ui = AppWindow::new()?;
 
     // Sync initial state from discovered library
@@ -57,25 +64,37 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.set_track_title(first_track.title.as_str().into());
         ui.set_track_artist(first_track.artist.as_str().into());
         ui.set_track_duration(first_track.formatted_duration().into());
+        integration.update_tray_tooltip(&first_track.title, &first_track.artist);
         println!("[AURI Queue] Initial track staged: {} - {}", first_track.artist, first_track.title);
     }
+
+    // Helper closure to play a track and sync UI + Tray
+    let play_track_helper = {
+        let audio = audio.clone();
+        let integration = integration.clone();
+        let ui_handle = ui.as_weak();
+        move |track: &library::TrackMetadata| {
+            audio.play_file(&track.path);
+            integration.update_tray_tooltip(&track.title, &track.artist);
+            if let Some(ui) = ui_handle.upgrade() {
+                ui.set_track_title(track.title.as_str().into());
+                ui.set_track_artist(track.artist.as_str().into());
+                ui.set_track_duration(track.formatted_duration().as_str().into());
+            }
+        }
+    };
 
     // Wire: Play / Pause toggle
     let audio_clone = audio.clone();
     let library_clone = library.clone();
-    let ui_handle = ui.as_weak();
+    let play_helper = play_track_helper.clone();
     ui.on_toggle_play(move || {
         let status = audio_clone.get_status();
         if status.state == PlaybackState::Stopped || status.duration_secs <= 0.0 {
             let cur_opt = library_clone.queue().lock().unwrap().current_track().cloned();
             if let Some(track) = cur_opt {
                 println!("[AURI Playback] Playing track from queue: {} - {}", track.artist, track.title);
-                audio_clone.play_file(&track.path);
-                if let Some(ui) = ui_handle.upgrade() {
-                    ui.set_track_title(track.title.as_str().into());
-                    ui.set_track_artist(track.artist.as_str().into());
-                    ui.set_track_duration(track.formatted_duration().into());
-                }
+                play_helper(&track);
             } else {
                 println!("[AURI Audio] No track in queue: Playing AURI test chime (440 Hz A4)");
                 audio_clone.play_test_tone(440.0, 15.0);
@@ -90,17 +109,13 @@ fn main() -> Result<(), slint::PlatformError> {
     // Wire: Previous track
     let audio_clone = audio.clone();
     let library_clone = library.clone();
+    let play_helper = play_track_helper.clone();
     let ui_handle = ui.as_weak();
     ui.on_prev_track(move || {
         let prev_opt = library_clone.queue().lock().unwrap().previous().cloned();
         if let Some(track) = prev_opt {
             println!("[AURI Queue] Playing Previous: {} - {}", track.artist, track.title);
-            audio_clone.play_file(&track.path);
-            if let Some(ui) = ui_handle.upgrade() {
-                ui.set_track_title(track.title.as_str().into());
-                ui.set_track_artist(track.artist.as_str().into());
-                ui.set_track_duration(track.formatted_duration().into());
-            }
+            play_helper(&track);
         } else {
             println!("[AURI Queue] Playing Previous Chime (330 Hz E4)");
             audio_clone.play_test_tone(329.63, 12.0);
@@ -114,17 +129,13 @@ fn main() -> Result<(), slint::PlatformError> {
     // Wire: Next track
     let audio_clone = audio.clone();
     let library_clone = library.clone();
+    let play_helper = play_track_helper.clone();
     let ui_handle = ui.as_weak();
     ui.on_next_track(move || {
         let next_opt = library_clone.queue().lock().unwrap().next().cloned();
         if let Some(track) = next_opt {
             println!("[AURI Queue] Playing Next: {} - {}", track.artist, track.title);
-            audio_clone.play_file(&track.path);
-            if let Some(ui) = ui_handle.upgrade() {
-                ui.set_track_title(track.title.as_str().into());
-                ui.set_track_artist(track.artist.as_str().into());
-                ui.set_track_duration(track.formatted_duration().into());
-            }
+            play_helper(&track);
         } else {
             println!("[AURI Queue] Playing Next Chime (523 Hz C5)");
             audio_clone.play_test_tone(523.25, 12.0);
@@ -202,33 +213,186 @@ fn main() -> Result<(), slint::PlatformError> {
         println!("[AURI Navigation] Destination: {}", dest);
     });
 
+    let ui_handle_headless = ui.as_weak();
+    let vis_headless = is_window_visible.clone();
     ui.on_enter_headless(move || {
         println!("[AURI Gaming Mode] Headless Mode: UI Rendering paused (0.0% GPU)");
+        if let Some(ui) = ui_handle_headless.upgrade() {
+            let _ = ui.hide();
+            vis_headless.store(false, Ordering::SeqCst);
+        }
     });
 
-    // Smooth UI synchronization timer (updates seekbar and timers at 10 FPS without loading CPU)
+    // Smooth UI synchronization and Windows events timer (10 FPS)
     let ui_weak = ui.as_weak();
     let audio_sync = audio.clone();
     let library_sync = library.clone();
+    let integration_sync = integration.clone();
+    let vis_sync = is_window_visible.clone();
+    let play_helper_sync = play_track_helper.clone();
+
     let sync_timer = Timer::default();
     sync_timer.start(
         slint::TimerMode::Repeated,
         Duration::from_millis(100),
         move || {
-            // Check EOF and auto-advance queue
-            if audio_sync.take_eof() {
-                println!("[AURI Audio] Track EOF reached. Auto-advancing to next track in queue...");
-                let next_opt = library_sync.queue().lock().unwrap().next().cloned();
-                if let Some(track) = next_opt {
-                    audio_sync.play_file(&track.path);
-                    if let Some(ui) = ui_weak.upgrade() {
-                        ui.set_track_title(track.title.as_str().into());
-                        ui.set_track_artist(track.artist.as_str().into());
-                        ui.set_track_duration(track.formatted_duration().into());
+            // 1. Process Global Hotkeys
+            while let Some(action) = integration_sync.poll_hotkey() {
+                match action {
+                    HotkeyAction::PlayPause => {
+                        println!("[AURI Hotkey] Play/Pause triggered");
+                        let status = audio_sync.get_status();
+                        if status.state == PlaybackState::Stopped || status.duration_secs <= 0.0 {
+                            if let Some(track) = library_sync.queue().lock().unwrap().current_track().cloned() {
+                                play_helper_sync(&track);
+                            } else {
+                                audio_sync.play_test_tone(440.0, 15.0);
+                            }
+                        } else {
+                            audio_sync.toggle_playback();
+                        }
+                    }
+                    HotkeyAction::NextTrack => {
+                        println!("[AURI Hotkey] Next Track triggered");
+                        if let Some(track) = library_sync.queue().lock().unwrap().next().cloned() {
+                            play_helper_sync(&track);
+                        } else {
+                            audio_sync.play_test_tone(523.25, 12.0);
+                        }
+                    }
+                    HotkeyAction::PrevTrack => {
+                        println!("[AURI Hotkey] Previous Track triggered");
+                        if let Some(track) = library_sync.queue().lock().unwrap().previous().cloned() {
+                            play_helper_sync(&track);
+                        } else {
+                            audio_sync.play_test_tone(329.63, 12.0);
+                        }
+                    }
+                    HotkeyAction::VolumeUp => {
+                        let cur_vol = audio_sync.get_status().volume;
+                        let new_vol = (cur_vol + 0.05).min(1.0);
+                        audio_sync.set_volume(new_vol);
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_volume(new_vol);
+                        }
+                        println!("[AURI Hotkey] Volume Up -> {:.0}%", new_vol * 100.0);
+                    }
+                    HotkeyAction::VolumeDown => {
+                        let cur_vol = audio_sync.get_status().volume;
+                        let new_vol = (cur_vol - 0.05).max(0.0);
+                        audio_sync.set_volume(new_vol);
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_volume(new_vol);
+                        }
+                        println!("[AURI Hotkey] Volume Down -> {:.0}%", new_vol * 100.0);
+                    }
+                    HotkeyAction::CycleMode => {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            let cur = ui.get_current_mode();
+                            let next = (cur + 1) % 4;
+                            ui.set_current_mode(next);
+                            if next == 3 {
+                                let _ = ui.hide();
+                                vis_sync.store(false, Ordering::SeqCst);
+                                println!("[AURI Mode] Cycled to Pure Headless (Window Hidden, 0.0% GPU)");
+                            } else {
+                                let _ = ui.show();
+                                vis_sync.store(true, Ordering::SeqCst);
+                                println!("[AURI Mode] Cycled to Mode {}", next);
+                            }
+                        }
+                    }
+                    HotkeyAction::ToggleWindow => {
+                        let vis = vis_sync.load(Ordering::SeqCst);
+                        if let Some(ui) = ui_weak.upgrade() {
+                            if vis {
+                                let _ = ui.hide();
+                                vis_sync.store(false, Ordering::SeqCst);
+                                println!("[AURI Hotkey] Window Hidden");
+                            } else {
+                                let _ = ui.show();
+                                vis_sync.store(true, Ordering::SeqCst);
+                                println!("[AURI Hotkey] Window Restored");
+                            }
+                        }
                     }
                 }
             }
 
+            // 2. Process System Tray Actions
+            while let Some(action) = integration_sync.poll_tray() {
+                match action {
+                    TrayAction::TogglePlay => {
+                        let status = audio_sync.get_status();
+                        if status.state == PlaybackState::Stopped || status.duration_secs <= 0.0 {
+                            if let Some(track) = library_sync.queue().lock().unwrap().current_track().cloned() {
+                                play_helper_sync(&track);
+                            } else {
+                                audio_sync.play_test_tone(440.0, 15.0);
+                            }
+                        } else {
+                            audio_sync.toggle_playback();
+                        }
+                    }
+                    TrayAction::NextTrack => {
+                        if let Some(track) = library_sync.queue().lock().unwrap().next().cloned() {
+                            play_helper_sync(&track);
+                        } else {
+                            audio_sync.play_test_tone(523.25, 12.0);
+                        }
+                    }
+                    TrayAction::PrevTrack => {
+                        if let Some(track) = library_sync.queue().lock().unwrap().previous().cloned() {
+                            play_helper_sync(&track);
+                        } else {
+                            audio_sync.play_test_tone(329.63, 12.0);
+                        }
+                    }
+                    TrayAction::SetMode(mode) => {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_current_mode(mode);
+                            if mode == 3 {
+                                let _ = ui.hide();
+                                vis_sync.store(false, Ordering::SeqCst);
+                                println!("[AURI Tray] Switched to Pure Headless Mode (0.0% GPU)");
+                            } else {
+                                let _ = ui.show();
+                                vis_sync.store(true, Ordering::SeqCst);
+                                println!("[AURI Tray] Switched to Mode {}", mode);
+                            }
+                        }
+                    }
+                    TrayAction::ToggleWindow => {
+                        let vis = vis_sync.load(Ordering::SeqCst);
+                        if let Some(ui) = ui_weak.upgrade() {
+                            if vis {
+                                let _ = ui.hide();
+                                vis_sync.store(false, Ordering::SeqCst);
+                                println!("[AURI Tray] Window Hidden to Tray");
+                            } else {
+                                let _ = ui.show();
+                                vis_sync.store(true, Ordering::SeqCst);
+                                println!("[AURI Tray] Window Restored from Tray");
+                            }
+                        }
+                    }
+                    TrayAction::Exit => {
+                        println!("[AURI] Clean exit requested from System Tray");
+                        std::process::exit(0);
+                    }
+                }
+            }
+
+            // 3. Check EOF and auto-advance queue
+            if audio_sync.take_eof() {
+                println!("[AURI Audio] Track EOF reached. Auto-advancing to next track in queue...");
+                let next_opt = library_sync.queue().lock().unwrap().next().cloned();
+                if let Some(track) = next_opt {
+                    play_helper_sync(&track);
+                }
+            }
+
+            // 4. Update UI Seekbar and Timers
             if let Some(ui) = ui_weak.upgrade() {
                 let status = audio_sync.get_status();
                 let is_playing = status.state == PlaybackState::Playing;
@@ -248,6 +412,6 @@ fn main() -> Result<(), slint::PlatformError> {
         },
     );
 
-    println!("[AURI Startup] Launching interface with active audio engine and local library...");
+    println!("[AURI Startup] Launching interface with active audio engine, local library, and system tray...");
     ui.run()
 }
