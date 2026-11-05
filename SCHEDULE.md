@@ -29,13 +29,37 @@ This document is the **single source of truth** for all planned, in-progress, co
 | **v0.7.0** | **Performance Benchmarking Suite & Latency Tuning** | Optimization & QA | - Implement automated profiling script (`scripts/benchmark.ps1`).<br>- Measure Private Bytes, Working Set, CPU%, and GPU% across all 3 modes.<br>- Live testing alongside demanding AAA games with active anti-cheat.<br>- Binary optimization: strip symbols, LTO enabled, panic abort. | **Completed** | Hardening & Tuning |
 | **v1.0.0** | **AURI Initial Official Release** | Major Release | - Complete, unified desktop application (Normal Mode, Mini Mode, Gaming Mode).<br>- Full UI variant switcher in Settings.<br>- Dual-mode local and YouTube Music streaming.<br>- Release binary package (.exe installer / standalone portable zip).<br>- Finalized user documentation and performance benchmark reports. | **Completed** | **AURI 1.0.0 Baseline** |
 | **v1.0.1** | **Complete UI/UX Overhaul & Reference Fidelity** | Visual UI / Polish | - **Crisp Vector Iconography**: Replace all unicode/emojis with 23 pure SVG vector path icons (Play, Pause, Next, Prev, Volume, Search, Heart, Shuffle, Repeat, Settings, Pin, Close, Block, etc.).<br>- **Interactive Tooltips**: Add descriptive hover tooltips and shortcuts across all controls.<br>- **Fix Search Bar**: Fix clickability and focus scope for instant search typing and clear button.<br>- **Mini Mode Overhaul (Reference 2 Fidelity)**: Downscale to true compact floating size (310x84px) with full dark glassmorphic styling, 40x40px cover art, clean typography, slim seekbar, and signature solid white circular play button.<br>- **Normal Mode Streamlining (Apple/YouTube Music Polish)**: Strip out mock artist stats/bio clutter; deliver clean, minimalist content table and Reference 1 play queue.<br>- **Glassmorphism**: Translucent dark surfaces with refined borders and subtle shadows. | **Completed** | UI/UX Total Redesign |
-| **v1.0.2** | **Audio Buffer Auto-Tuning & High-DPI Scaling** | Maintenance & QA | - Audio buffer auto-tuning based on host system load.<br>- Verify high-DPI (125%, 150%, 200%) display scaling across multi-monitor setups. | **Next Up** | Post-Launch Patch |
+| **v1.0.2** | **Batch 1: Search Engine Fix, Strict Window Geometry & Layout Rules** | Core Engine & Architecture | - **YouTube Music Search Fix**: Remove corrupt params token; robust videoId, artist, album, and duration extraction; fallback and empty-state handling.<br>- **Unified Local + Cloud Search**: Instant local library search combined with Innertube streaming results.<br>- **Mini Mode Strict Geometry**: Enforce fixed, unchangeable dimensions (310x84px for Card, 280x48px for Pill) via Slint `max_width`/`max_height` and Win32 `SetWindowPos` / `ShowWindow(SW_RESTORE)`.<br>- **Strict Layout Dimension System**: Standardize content column widths, eliminate awkward void stretching, and fix search results viewport. | **Completed** | Batch 1: Core Functionality |
+| **v1.0.3** | **Batch 2: Sizable Icons, Micro-Animations & Apple Music Home Redesign** | Visual UI / Aesthetics | - **Icon Sizing**: Enlarge primary vector icons to 18-22px and secondary to 16px with clear visual presence.<br>- **Smooth Micro-Animations**: Hover scale (1.05x), background fade transitions (120ms), slider thumb growth, and active indicator animations.<br>- **Home Page Redesign**: Replace ugly wide gray boxes with authentic Apple Music / Spotify song table (art, title, artist, album, time, actions) and square album cards (140x140px). | **Next Up** | Batch 2: Aesthetics & Polish |
+| **v1.0.4** | **Batch 3: Full Library Views (Albums, Local Files, Favorites, Playlists)** | Library & Content | - **Albums Page**: Dedicated responsive grid of square album cards with track count and release year.<br>- **Local Files Table**: Clean tabular view of all scanned audio files with format badges (FLAC, MP3, WAV), duration, and instant play.<br>- **Favorites View**: Starred tracks collection with quick Play All and Shuffle triggers.<br>- **Playlists View**: Playlist manager and queue viewer, eliminating all underfitting issues. | **Planned** | Batch 3: Library Suite |
+| **v1.0.5** | **Batch 4: Comprehensive Settings Suite & Variant Polish** | Settings & Variants | - **Rich Settings View**: Multi-tab preferences covering Audio Engine (WASAPI buffer, sample rate), Appearance (accent colors, glassmorphism), Streaming Cache (limit slider, clear cache), and Gaming Mode (process whitelist, trim interval).<br>- **Docked Bottom Bar (Variant A2) Polish**: Full viewport adaptation when right queue is hidden. | **Planned** | Batch 4: Configuration Suite |
 | **v1.1.0** | **Streaming Provider Tier 2 (Optional Cookie Sync)** | Feature Enhancement | - Optional session cookie import to fetch user's private YouTube Music playlists and Liked Songs.<br>- Local caching of private library metadata without embedded browser overhead. | **Planned** | Future Minor Release |
 | **v1.2.0** | **Audio Visualizer & Equalizer Customization** | Audio Enhancement | - Optional 10-band parametric equalizer.<br>- Low-overhead FFT audio spectrum visualizer for Normal Mode and Companion HUD with auto-disable during Gaming Mode. | **Planned** | Future Minor Release |
 
 ---
 
 ## Change Log & Revision History
+
+### Version: v1.0.2 (Batch 1: Search Engine Fix, Strict Window Geometry & Layout Rules)
+- **Date**: 2026-11-06
+- **Category**: Core Engine, Window Architecture & Search Fix
+- **What Was Done**:
+  - **YouTube Music Innertube Search Resolved**:
+    - Discovered root cause of empty search results: removed invalid URL-encoded `params` token that was forcing YouTube Music to return "No results".
+    - Implemented multi-layered resilient `videoId` extractor (checking `playlistItemData`, `thumbnailOverlay`, and flexColumn navigation endpoints).
+    - Added clean parsing for track title, artist, album, and duration.
+  - **Unified Search Engine**:
+    - Querying search now simultaneously searches local scanned audio files from disk and online YouTube Music streams.
+    - Local tracks are marked with "Local Library" badge; online tracks with "YouTube Music" badge.
+    - Clicking any local search result instantly plays the file with Symphonia decoders; clicking any streaming track streams via `SlidingStreamBuffer`.
+  - **Mini Mode Strict Window Geometry**:
+    - Discovered root cause of Photo 5 (maximized 1920x1080 window staying huge upon mode switch): Slint preferred sizes do not automatically resize open OS windows without explicit OS calls.
+    - Implemented native Win32 `enforce_window_geometry()` in `src/main.rs`: on switching to Mini Mode, issues `ShowWindow(SW_RESTORE)` to un-maximize, sets `HWND_TOPMOST`, and enforces fixed compact dimensions (`326x116px` outer).
+    - Locked Slint `Window` constraints in `ui/app.slint` with `min_width == max_width == 310px` and `min_height == max_height == 84px` (Card) / `280x48px` (Pill), rendering the window permanently fixed and unresizable.
+  - **Search Results Viewport Polish**:
+    - Added dedicated empty/loading state card with search icon and prompt when query is being typed.
+    - Added 52px structured track cards displaying play icon, artwork color hue, title, artist, album, format badge, and duration.
+  - **Packaging**: Verified all 25 unit tests pass, built optimized release binary, and packaged `dist/AURI-v1.0.2-Windows-x64.zip`.
 
 ### Version: v1.0.1 (UI/UX Overhaul & Reference Fidelity)
 - **Date**: 2026-11-06

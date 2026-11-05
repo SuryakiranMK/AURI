@@ -75,9 +75,7 @@ impl MusicProvider for InnertubeProvider {
                     "gl": "US"
                 }
             },
-            "query": query,
-            // Filter strictly for Songs (params token for YouTube Music songs shelf)
-            "params": "Eg-KAQwIABAAGAAgACgAMABqChAEEAMQCRAFEAo%3D"
+            "query": query
         });
 
         let resp = ureq::post(INNERTUBE_SEARCH_URL)
@@ -102,11 +100,21 @@ impl MusicProvider for InnertubeProvider {
                 _ => continue,
             };
 
-            // Extract Video ID
+            // Extract Video ID with multiple resilient strategies
             let video_id = item
                 .get("playlistItemData")
                 .and_then(|d| d.get("videoId"))
                 .and_then(|v| v.as_str())
+                .or_else(|| {
+                    item.get("overlay")
+                        .and_then(|o| o.get("musicItemThumbnailOverlayRenderer"))
+                        .and_then(|m| m.get("content"))
+                        .and_then(|c| c.get("musicPlayButtonRenderer"))
+                        .and_then(|p| p.get("playNavigationEndpoint"))
+                        .and_then(|ne| ne.get("watchEndpoint"))
+                        .and_then(|w| w.get("videoId"))
+                        .and_then(|v| v.as_str())
+                })
                 .or_else(|| {
                     flex_cols[0]
                         .get("musicResponsiveListItemFlexColumnRenderer")
@@ -117,6 +125,31 @@ impl MusicProvider for InnertubeProvider {
                         .and_then(|ne| ne.get("watchEndpoint"))
                         .and_then(|w| w.get("videoId"))
                         .and_then(|v| v.as_str())
+                })
+                .or_else(|| {
+                    // Search all flexColumns runs for watchEndpoint
+                    for col in flex_cols {
+                        if let Some(runs) = col
+                            .get("musicResponsiveListItemFlexColumnRenderer")
+                            .and_then(|r| r.get("text"))
+                            .and_then(|t| t.get("runs"))
+                            .and_then(|r| r.as_array())
+                        {
+                            for run in runs {
+                                if let Some(vid) = run
+                                    .get("navigationEndpoint")
+                                    .and_then(|ne| ne.get("watchEndpoint"))
+                                    .and_then(|w| w.get("videoId"))
+                                    .and_then(|v| v.as_str())
+                                {
+                                    if !vid.is_empty() {
+                                        return Some(vid);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    None
                 });
 
             let video_id = match video_id {
@@ -147,21 +180,35 @@ impl MusicProvider for InnertubeProvider {
             let mut duration_str = "0:00".to_string();
 
             if let Some(runs) = col1_runs {
-                if let Some(first_run) = runs.get(0).and_then(|r| r.get("text")).and_then(|v| v.as_str()) {
-                    artist = first_run.to_string();
-                }
+                let text_runs: Vec<&str> = runs
+                    .iter()
+                    .filter_map(|r| r.get("text").and_then(|v| v.as_str()))
+                    .filter(|s| *s != " • " && !s.trim().is_empty())
+                    .collect();
 
-                // If runs has 3 or more entries: [artist, " • ", album, " • ", duration]
-                if runs.len() >= 3 {
-                    if let Some(album_run) = runs.get(2).and_then(|r| r.get("text")).and_then(|v| v.as_str()) {
-                        album = album_run.to_string();
+                // Check for duration (last run containing ':')
+                for s in text_runs.iter().rev() {
+                    if s.contains(':') && s.chars().all(|c| c.is_ascii_digit() || c == ':') {
+                        duration_str = s.to_string();
+                        break;
                     }
                 }
 
-                // The last run is usually the duration (e.g. "3:42")
-                if let Some(last_run) = runs.last().and_then(|r| r.get("text")).and_then(|v| v.as_str()) {
-                    if last_run.contains(':') {
-                        duration_str = last_run.to_string();
+                // Clean artist (first non-type text)
+                for s in &text_runs {
+                    if *s != "Song" && *s != "Video" && !s.contains("views") && !s.contains(':') {
+                        artist = s.to_string();
+                        break;
+                    }
+                }
+
+                // Clean album if present
+                if text_runs.len() >= 3 {
+                    for s in &text_runs[1..] {
+                        if *s != artist.as_str() && *s != "Song" && *s != "Video" && !s.contains("views") && !s.contains(':') {
+                            album = s.to_string();
+                            break;
+                        }
                     }
                 }
             }

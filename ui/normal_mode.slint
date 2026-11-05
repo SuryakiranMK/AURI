@@ -763,12 +763,50 @@ export component NormalModeView inherits Rectangle {
                             }
                         }
 
+                        // Search Empty or Results State
+                        if root.search_results.length == 0: Rectangle {
+                            height: 180px;
+                            border-radius: Theme.radius_md;
+                            background: Theme.bg_surface;
+                            border-width: 1px;
+                            border-color: Theme.border_subtle;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 8px;
+
+                                Image {
+                                    source: @image-url("../assets/icons/search.svg");
+                                    width: 28px;
+                                    height: 28px;
+                                    image-fit: contain;
+                                    colorize: Theme.text_muted;
+                                    x: (parent.width - self.width) / 2;
+                                }
+
+                                Text {
+                                    text: root.search_query == "" ? "Type a song or artist name in the top search bar" : "Searching for \"" + root.search_query + "\" across YouTube Music & local library...";
+                                    font_size: 13px;
+                                    font_weight: 600;
+                                    color: #FFFFFF;
+                                    horizontal_alignment: center;
+                                }
+
+                                Text {
+                                    text: "Press Enter to query online Innertube audio streams and scanned local audio files.";
+                                    font_size: 11px;
+                                    color: Theme.text_muted;
+                                    horizontal_alignment: center;
+                                }
+                            }
+                        }
+
                         // Search Results List
-                        VerticalLayout {
+                        if root.search_results.length > 0: VerticalLayout {
                             spacing: 6px;
 
                             for track in root.search_results: Rectangle {
-                                height: 50px;
+                                height: 52px;
                                 border-radius: Theme.radius_md;
                                 background: item_touch.has_hover ? Theme.bg_surface_hover : Theme.bg_surface;
                                 border-width: 1px;
@@ -788,17 +826,33 @@ export component NormalModeView inherits Rectangle {
 
                                     Image {
                                         source: @image-url("../assets/icons/play.svg");
-                                        width: 14px;
-                                        height: 14px;
+                                        width: 16px;
+                                        height: 16px;
                                         image-fit: contain;
                                         colorize: item_touch.has_hover ? Theme.accent : Theme.text_muted;
                                         y: (parent.height - self.height) / 2;
                                     }
 
+                                    // Thumbnail / Hue indicator
+                                    Rectangle {
+                                        width: 34px;
+                                        height: 34px;
+                                        border-radius: 6px;
+                                        background: track.cover_hue;
+                                        clip: true;
+
+                                        Text {
+                                            text: "🎵";
+                                            font_size: 14px;
+                                            horizontal_alignment: center;
+                                            vertical_alignment: center;
+                                        }
+                                    }
+
                                     VerticalLayout {
                                         horizontal_stretch: 1;
                                         alignment: center;
-                                        spacing: 1px;
+                                        spacing: 2px;
 
                                         Text {
                                             text: track.title;
@@ -809,10 +863,27 @@ export component NormalModeView inherits Rectangle {
                                         }
 
                                         Text {
-                                            text: track.artist;
+                                            text: track.artist + (track.album != "" ? " • " + track.album : "");
                                             font_size: 11px;
                                             color: Theme.text_secondary;
                                             overflow: elide;
+                                        }
+                                    }
+
+                                    // Source badge
+                                    Rectangle {
+                                        height: 20px;
+                                        width: badge_lbl.preferred_width + 12px;
+                                        border-radius: 10px;
+                                        background: Theme.bg_surface_elevated;
+
+                                        badge_lbl := Text {
+                                            text: track.format_badge;
+                                            font_size: 10px;
+                                            font_weight: 600;
+                                            color: Theme.badge_text;
+                                            horizontal_alignment: center;
+                                            vertical_alignment: center;
                                         }
                                     }
 

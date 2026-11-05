@@ -27,6 +27,52 @@ fn format_duration(seconds: f64) -> String {
     format!("{}:{:02}", mins, secs)
 }
 
+#[cfg(windows)]
+fn enforce_window_geometry(mode: i32) {
+    #[link(name = "user32")]
+    extern "system" {
+        fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> *mut std::ffi::c_void;
+        fn SetWindowPos(
+            hwnd: *mut std::ffi::c_void,
+            hwnd_insert_after: *mut std::ffi::c_void,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            u_flags: u32,
+        ) -> i32;
+        fn ShowWindow(hwnd: *mut std::ffi::c_void, n_cmd_show: i32) -> i32;
+    }
+
+    const SW_RESTORE: i32 = 9;
+    const HWND_TOPMOST: *mut std::ffi::c_void = -1isize as *mut std::ffi::c_void;
+    const HWND_NOTOPMOST: *mut std::ffi::c_void = -2isize as *mut std::ffi::c_void;
+    const SWP_NOMOVE: u32 = 0x0002;
+    const SWP_SHOWWINDOW: u32 = 0x0040;
+
+    unsafe {
+        let title_wide: Vec<u16> = "AURI\0".encode_utf16().collect();
+        let hwnd = FindWindowW(std::ptr::null(), title_wide.as_ptr());
+        if !hwnd.is_null() {
+            if mode == 1 {
+                // Mini Mode: Restore from maximized if needed, pin top-most, fixed compact size
+                ShowWindow(hwnd, SW_RESTORE);
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 326, 116, SWP_NOMOVE | SWP_SHOWWINDOW);
+            } else if mode == 0 {
+                // Normal Mode: Un-pin top-most, standard window size
+                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 1120, 720, SWP_NOMOVE | SWP_SHOWWINDOW);
+            } else if mode == 2 {
+                // Gaming HUD: Restore, pin top-most, compact HUD size
+                ShowWindow(hwnd, SW_RESTORE);
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 420, 380, SWP_NOMOVE | SWP_SHOWWINDOW);
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn enforce_window_geometry(_mode: i32) {}
+
 fn main() -> Result<(), slint::PlatformError> {
     println!("========================================================");
     println!("  AURI Desktop Music Player - v1.0.0 OFFICIAL RELEASE   ");
@@ -220,6 +266,8 @@ fn main() -> Result<(), slint::PlatformError> {
             _ => "Unknown",
         };
         println!("[AURI Mode] Switched to {}", name);
+        enforce_window_geometry(mode);
+
         if mode >= 2 {
             if let Ok(report) = trim_working_set() {
                 println!("[AURI Memory] Working set trimmed on mode switch: {:.1} MB", report.after_mb());
@@ -266,52 +314,90 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // Wire: YouTube Music Streaming Search
+    // Wire: Search (Unified Local Library + YouTube Music Streaming)
     let provider_search = provider.clone();
+    let library_search = library.clone();
     let ui_search_weak = ui.as_weak();
     ui.on_perform_search(move |query| {
         let q = query.to_string();
         let provider = provider_search.clone();
+        let library = library_search.clone();
         let ui_weak = ui_search_weak.clone();
 
         std::thread::Builder::new()
-            .name("auri-stream-search".to_string())
+            .name("auri-unified-search".to_string())
             .spawn(move || {
-                println!("[AURI Streaming] Querying YouTube Music for: \"{}\"", q);
-                match provider.search(&q) {
+                let trimmed = q.trim();
+                if trimmed.is_empty() {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = ui_weak.upgrade() {
+                            ui.set_search_results(std::rc::Rc::new(slint::VecModel::default()).into());
+                        }
+                    });
+                    return;
+                }
+
+                println!("[AURI Search] Executing unified search for: \"{}\"", trimmed);
+                let mut combined_results: Vec<TrackData> = Vec::new();
+
+                // 1. Search Local Scanned Library
+                let q_lower = trimmed.to_lowercase();
+                let local_tracks = library.library_tracks().lock().unwrap().clone();
+                for track in local_tracks {
+                    if track.title.to_lowercase().contains(&q_lower)
+                        || track.artist.to_lowercase().contains(&q_lower)
+                        || track.album.to_lowercase().contains(&q_lower)
+                    {
+                        let dur_str = track.formatted_duration();
+                        combined_results.push(TrackData {
+                            id: format!("local:{}", track.path.to_string_lossy()).into(),
+                            title: track.title.into(),
+                            artist: track.artist.into(),
+                            album: track.album.into(),
+                            duration: dur_str.into(),
+                            duration_secs: track.duration_secs as i32,
+                            format_badge: "Local Library".into(),
+                            is_favorite: false,
+                            cover_hue: slint::Color::from_rgb_u8(16, 185, 129),
+                        });
+                    }
+                }
+
+                // 2. Search Online YouTube Music via Innertube
+                match provider.search(trimmed) {
                     Ok(items) => {
                         println!("[AURI Streaming] Retrieved {} results from Innertube", items.len());
-                        let slint_items: Vec<TrackData> = items
-                            .into_iter()
-                            .map(|item| TrackData {
+                        for item in items {
+                            combined_results.push(TrackData {
                                 id: item.id.into(),
                                 title: item.title.into(),
                                 artist: item.artist.into(),
                                 album: item.album.into(),
                                 duration: item.formatted_duration.into(),
                                 duration_secs: item.duration_secs as i32,
-                                format_badge: "WebM 160k".into(),
+                                format_badge: "YouTube Music".into(),
                                 is_favorite: false,
                                 cover_hue: slint::Color::from_rgb_u8(139, 92, 246),
-                            })
-                            .collect();
-
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = ui_weak.upgrade() {
-                                let model = std::rc::Rc::new(slint::VecModel::from(slint_items));
-                                ui.set_search_results(model.into());
-                            }
-                        });
+                            });
+                        }
                     }
                     Err(e) => {
                         eprintln!("[AURI Streaming Search Error] {}", e);
                     }
                 }
+
+                println!("[AURI Search] Dispatching {} total search results to UI", combined_results.len());
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        let model = std::rc::Rc::new(slint::VecModel::from(combined_results));
+                        ui.set_search_results(model.into());
+                    }
+                });
             })
             .expect("Failed to spawn search thread");
     });
 
-    // Wire: Play Stream Track
+    // Wire: Play Stream Track (Unified Local + Online Streaming)
     let provider_resolve = provider.clone();
     let audio_stream = audio.clone();
     let integration_stream = integration.clone();
@@ -326,6 +412,30 @@ fn main() -> Result<(), slint::PlatformError> {
         let integration = integration_stream.clone();
         let ui_weak = ui_stream_weak.clone();
 
+        // Check if this is a local track
+        if id_str.starts_with("local:") {
+            let file_path = id_str.trim_start_matches("local:").to_string();
+            println!("[AURI Local] Playing selected search track from disk: {}", file_path);
+            let path = std::path::PathBuf::from(file_path);
+            if path.exists() {
+                audio.play_file(&path);
+                integration.update_tray_tooltip(&title_str, &artist_str);
+                let title_disp = title_str.clone();
+                let artist_disp = artist_str.clone();
+                let dur_disp = format_duration(dur);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = ui_weak.upgrade() {
+                        ui.set_track_title(title_disp.into());
+                        ui.set_track_artist(artist_disp.into());
+                        ui.set_track_duration(dur_disp.into());
+                        ui.set_is_playing(true);
+                    }
+                });
+            }
+            return;
+        }
+
+        // Online YouTube Music streaming
         std::thread::Builder::new()
             .name("auri-stream-resolver".to_string())
             .spawn(move || {
@@ -366,7 +476,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         });
                     }
                     Err(e) => {
-                        eprintln!("[AURI Streaming Error] Failed to resolve stream: {}", e);
+                        eprintln!("[AURI Streaming Error] Failed to resolve stream for {}: {}", title_str, e);
                     }
                 }
             })
