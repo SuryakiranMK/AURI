@@ -16,6 +16,9 @@ export component NormalModeView inherits Rectangle {
     in property <bool> is_favorite: true;
     in property <bool> is_shuffle: false;
     in property <bool> is_repeat: false;
+    in-out property <bool> auto_game_mode: true;
+    in-out property <string> active_game: "";
+    in-out property <string> ram_usage: "35.0 MB";
 
     // Callbacks
     callback navigate(string);
@@ -29,6 +32,8 @@ export component NormalModeView inherits Rectangle {
     callback toggle_repeat();
     callback switch_to_mini();
     callback switch_to_gaming();
+    callback toggle_auto_game();
+    callback trim_ram();
 
     background: Theme.bg_app;
 
@@ -820,6 +825,131 @@ export component NormalModeView inherits Rectangle {
                                             padding: 8px; alignment: center;
                                             Text { text: "GAMING MODE RAM"; font_size: 9px; color: Theme.text_muted; }
                                             Text { text: "< 35 MB (0.0% GPU)"; font_size: 12px; font_weight: 700; color: #8B5CF6; }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Anti-Cheat Safe Game Detection & Working Set Trimmer Card
+                        Rectangle {
+                            border-radius: Theme.radius_md;
+                            background: Theme.bg_surface;
+                            border-width: 1px;
+                            border-color: Theme.border_subtle;
+
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 12px;
+
+                                HorizontalLayout {
+                                    Text {
+                                        text: "🎮 Anti-Cheat Safe Game Detection & Working Set Purge";
+                                        font_size: 14px;
+                                        font_weight: 700;
+                                        color: Theme.text_primary;
+                                        horizontal_stretch: 1;
+                                    }
+
+                                    // Auto Game Mode Toggle Pill
+                                    Rectangle {
+                                        width: 140px;
+                                        height: 28px;
+                                        border-radius: 14px;
+                                        background: root.auto_game_mode ? #10B98126 : Theme.bg_card;
+                                        border-width: 1px;
+                                        border-color: root.auto_game_mode ? #10B981 : Theme.border_subtle;
+
+                                        TouchArea {
+                                            clicked => { root.toggle_auto_game(); }
+                                        }
+
+                                        Text {
+                                            text: root.auto_game_mode ? "Auto-Gaming: ON" : "Auto-Gaming: OFF";
+                                            font_size: 11px;
+                                            font_weight: 700;
+                                            color: root.auto_game_mode ? #10B981 : Theme.text_muted;
+                                            horizontal_alignment: center;
+                                            vertical_alignment: center;
+                                        }
+                                    }
+                                }
+
+                                Text {
+                                    text: "Passively monitors foreground window via Win32 SetWinEventHook. Zero DLL injection, zero game memory access, 100% compliant with EAC, BattlEye & Vanguard.";
+                                    font_size: 11px;
+                                    color: Theme.text_muted;
+                                }
+
+                                HorizontalLayout {
+                                    spacing: 12px;
+
+                                    Rectangle {
+                                        horizontal_stretch: 1;
+                                        height: 46px;
+                                        border-radius: Theme.radius_sm;
+                                        background: Theme.bg_card;
+
+                                        HorizontalLayout {
+                                            padding: 10px;
+                                            spacing: 8px;
+                                            Text { text: "🎯"; font_size: 14px; vertical_alignment: center; }
+                                            VerticalLayout {
+                                                alignment: center;
+                                                Text { text: "DETECTED GAME"; font_size: 9px; color: Theme.text_muted; }
+                                                Text {
+                                                    text: root.active_game == "" ? "No game running in foreground" : root.active_game;
+                                                    font_size: 11px;
+                                                    font_weight: 600;
+                                                    color: root.active_game == "" ? Theme.text_secondary : #10B981;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        horizontal_stretch: 1;
+                                        height: 46px;
+                                        border-radius: Theme.radius_sm;
+                                        background: Theme.bg_card;
+
+                                        HorizontalLayout {
+                                            padding: 10px;
+                                            spacing: 8px;
+                                            Text { text: "💾"; font_size: 14px; vertical_alignment: center; }
+                                            VerticalLayout {
+                                                alignment: center;
+                                                Text { text: "WORKING SET (RAM)"; font_size: 9px; color: Theme.text_muted; }
+                                                Text {
+                                                    text: root.ram_usage;
+                                                    font_size: 11px;
+                                                    font_weight: 700;
+                                                    color: #8B5CF6;
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Trim RAM Button
+                                    Rectangle {
+                                        width: 120px;
+                                        height: 46px;
+                                        border-radius: Theme.radius_sm;
+                                        background: #8B5CF626;
+                                        border-width: 1px;
+                                        border-color: #8B5CF6;
+
+                                        TouchArea {
+                                            clicked => { root.trim_ram(); }
+                                        }
+
+                                        Text {
+                                            text: "⚡ Purge RAM";
+                                            font_size: 11px;
+                                            font_weight: 700;
+                                            color: #A855F7;
+                                            horizontal_alignment: center;
+                                            vertical_alignment: center;
                                         }
                                     }
                                 }

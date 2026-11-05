@@ -1,7 +1,8 @@
 // Project AURI: Minimalist, Ultra-Lightweight, Gaming-First Music Player
-// Milestone v0.2.0: Minimal Audio Engine (Symphonia Codecs & WASAPI Sink)
+// Milestone v0.5.0: Anti-Cheat Safe Game Detection & Working Set Trimmer
 
 pub mod audio;
+pub mod gaming;
 pub mod integration;
 pub mod library;
 
@@ -9,6 +10,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use audio::{AudioEngine, PlaybackState};
+use gaming::{get_working_set_size_bytes, trim_working_set, GameDetector, GameEvent};
 use integration::{HotkeyAction, TrayAction, WindowsIntegration};
 use library::{LibraryManager, RepeatMode};
 use slint::Timer;
@@ -24,8 +26,8 @@ fn format_duration(seconds: f64) -> String {
 
 fn main() -> Result<(), slint::PlatformError> {
     println!("========================================================");
-    println!("  AURI Desktop Music Player - v0.4.0 Windows Integration");
-    println!("  System Tray • SMTC Media Keys • Global Hotkeys • Headless");
+    println!("  AURI Desktop Music Player - v0.5.0 Gaming Subsystem");
+    println!("  Anti-Cheat Safe Game Detector • Working Set RAM Trimmer");
     println!("========================================================");
 
     // Initialize native audio engine
@@ -54,11 +56,23 @@ fn main() -> Result<(), slint::PlatformError> {
     let integration = Arc::new(WindowsIntegration::new());
     let is_window_visible = Arc::new(AtomicBool::new(true));
 
+    // Initialize Anti-Cheat Safe Game Detector
+    let (game_detector, game_rx) = GameDetector::start();
+    let game_detector = Arc::new(game_detector);
+    let game_rx_sync = Arc::new(std::sync::Mutex::new(game_rx));
+    println!("[AURI Gaming] Anti-Cheat Safe Game Detector active (Win32 EVENT_SYSTEM_FOREGROUND)");
+
     let ui = AppWindow::new()?;
 
     // Sync initial state from discovered library
     let initial_status = audio.get_status();
     ui.set_volume(initial_status.volume);
+
+    if let Some(ws) = get_working_set_size_bytes() {
+        let mb = ws as f64 / (1024.0 * 1024.0);
+        println!("[AURI Memory] Initial Working Set: {:.1} MB", mb);
+        ui.set_ram_usage(format!("{:.1} MB", mb).into());
+    }
 
     if let Some(first_track) = library.queue().lock().unwrap().current_track().cloned() {
         ui.set_track_title(first_track.title.as_str().into());
@@ -197,6 +211,11 @@ fn main() -> Result<(), slint::PlatformError> {
             _ => "Unknown",
         };
         println!("[AURI Mode] Switched to {}", name);
+        if mode >= 2 {
+            if let Ok(report) = trim_working_set() {
+                println!("[AURI Memory] Working set trimmed on mode switch: {:.1} MB", report.after_mb());
+            }
+        }
     });
 
     ui.on_set_normal_layout(move |layout| {
@@ -213,6 +232,31 @@ fn main() -> Result<(), slint::PlatformError> {
         println!("[AURI Navigation] Destination: {}", dest);
     });
 
+    let detector_toggle = game_detector.clone();
+    ui.on_toggle_auto_game(move || {
+        let current = detector_toggle.is_enabled();
+        detector_toggle.set_enabled(!current);
+        println!("[AURI Gaming] Auto Game Detection toggled -> {}", !current);
+    });
+
+    let ui_ram_weak = ui.as_weak();
+    ui.on_trim_ram(move || {
+        match trim_working_set() {
+            Ok(report) => {
+                println!(
+                    "[AURI Memory Trimmer] Working Set purged: {:.1} MB -> {:.1} MB (Freed: {:.1} MB)",
+                    report.before_bytes as f64 / (1024.0 * 1024.0),
+                    report.after_mb(),
+                    report.freed_mb()
+                );
+                if let Some(ui) = ui_ram_weak.upgrade() {
+                    ui.set_ram_usage(format!("{:.1} MB", report.after_mb()).into());
+                }
+            }
+            Err(e) => eprintln!("[AURI Memory Error] {}", e),
+        }
+    });
+
     let ui_handle_headless = ui.as_weak();
     let vis_headless = is_window_visible.clone();
     ui.on_enter_headless(move || {
@@ -220,6 +264,10 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(ui) = ui_handle_headless.upgrade() {
             let _ = ui.hide();
             vis_headless.store(false, Ordering::SeqCst);
+            if let Ok(report) = trim_working_set() {
+                println!("[AURI Memory] Purged working set in headless mode: {:.1} MB", report.after_mb());
+                ui.set_ram_usage(format!("{:.1} MB", report.after_mb()).into());
+            }
         }
     });
 
@@ -230,12 +278,46 @@ fn main() -> Result<(), slint::PlatformError> {
     let integration_sync = integration.clone();
     let vis_sync = is_window_visible.clone();
     let play_helper_sync = play_track_helper.clone();
+    let game_detector_sync = game_detector.clone();
+    let game_rx_poll = game_rx_sync.clone();
+    let mut tick_counter: u64 = 0;
 
     let sync_timer = Timer::default();
     sync_timer.start(
         slint::TimerMode::Repeated,
         Duration::from_millis(100),
         move || {
+            // 0. Process Anti-Cheat Safe Game Detection Events
+            if let Ok(rx_guard) = game_rx_poll.try_lock() {
+                while let Ok(event) = rx_guard.try_recv() {
+                    match event {
+                        GameEvent::GameFocused { process_name } => {
+                            println!("[AURI Gaming] Foreground game detected: {}", process_name);
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_active_game(process_name.as_str().into());
+                                if game_detector_sync.is_enabled() {
+                                    let cur_mode = ui.get_current_mode();
+                                    if cur_mode == 0 {
+                                        // Auto-transition to Gaming HUD Mode (Mode 2)
+                                        ui.set_current_mode(2);
+                                        println!("[AURI Gaming] Auto-transitioned to Gaming HUD for {}", process_name);
+                                        if let Ok(report) = trim_working_set() {
+                                            println!("[AURI Memory] Working set trimmed: {:.1} MB", report.after_mb());
+                                            ui.set_ram_usage(format!("{:.1} MB", report.after_mb()).into());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        GameEvent::GameUnfocused => {
+                            println!("[AURI Gaming] Game unfocused.");
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_active_game("".into());
+                            }
+                        }
+                    }
+                }
+            }
             // 1. Process Global Hotkeys
             while let Some(action) = integration_sync.poll_hotkey() {
                 match action {
@@ -407,6 +489,15 @@ fn main() -> Result<(), slint::PlatformError> {
                     ui.set_track_progress(progress);
                     ui.set_track_elapsed(format_duration(status.position_secs).into());
                     ui.set_track_duration(format_duration(status.duration_secs).into());
+                }
+
+                // Periodic RAM display update (every 1 second / 10 ticks)
+                tick_counter = tick_counter.wrapping_add(1);
+                if tick_counter % 10 == 0 {
+                    if let Some(ws) = get_working_set_size_bytes() {
+                        let mb = ws as f64 / (1024.0 * 1024.0);
+                        ui.set_ram_usage(format!("{:.1} MB", mb).into());
+                    }
                 }
             }
         },

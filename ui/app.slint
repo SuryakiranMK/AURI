@@ -34,6 +34,9 @@ export component AppWindow inherits Window {
     in-out property <bool> is_pinned: false;
     in-out property <bool> enable_dimming: true;
     in-out property <bool> show_visualizer: true;
+    in-out property <bool> auto_game_mode: true;
+    in-out property <string> active_game: "";
+    in-out property <string> ram_usage: "35.0 MB";
 
     // Callbacks to Rust Core
     callback toggle_play();
@@ -49,6 +52,8 @@ export component AppWindow inherits Window {
     callback set_mini_layout(int);
     callback navigate(string);
     callback enter_headless();
+    callback toggle_auto_game();
+    callback trim_ram();
 
     // Responsive dimensions based on active mode
     min_width: root.current_mode == 0 ? 920px : (root.current_mode == 1 ? 320px : 380px);
@@ -72,6 +77,9 @@ export component AppWindow inherits Window {
         is_favorite: root.is_favorite;
         is_shuffle: root.is_shuffle;
         is_repeat: root.is_repeat;
+        auto_game_mode: root.auto_game_mode;
+        active_game: root.active_game;
+        ram_usage: root.ram_usage;
 
         navigate(nav) => {
             if (nav == "set_var_0") {
@@ -93,6 +101,8 @@ export component AppWindow inherits Window {
         toggle_repeat => { root.is_repeat = !root.is_repeat; root.toggle_repeat(); }
         switch_to_mini => { root.current_mode = 1; root.switch_mode(1); }
         switch_to_gaming => { root.current_mode = 2; root.switch_mode(2); }
+        toggle_auto_game => { root.auto_game_mode = !root.auto_game_mode; root.toggle_auto_game(); }
+        trim_ram => { root.trim_ram(); }
     }
 
     // ==========================================
