@@ -71,6 +71,7 @@ fn main() -> Result<(), slint::PlatformError> {
     println!("[AURI Gaming] Anti-Cheat Safe Game Detector active (Win32 EVENT_SYSTEM_FOREGROUND)");
 
     let ui = AppWindow::new()?;
+    let _ = trim_working_set(); // Purge GPU driver initialization overhead from working set
 
     // Sync initial state from discovered library
     let initial_status = audio.get_status();
