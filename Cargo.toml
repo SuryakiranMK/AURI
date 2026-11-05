@@ -1,12 +1,15 @@
 [package]
 name = "auri"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["SuryakiranMK", "Antigravity"]
 description = "A Minimalist, Ultra-Lightweight, Gaming-First Desktop Music Player"
 
 [dependencies]
 slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
+cpal = "0.18.2"
+symphonia = { version = "0.6.1", default-features = false, features = ["mp3", "flac", "aac", "isomp4", "vorbis", "wav", "pcm", "mkv", "opt-simd"] }
+ringbuf = "0.6.0"
 
 [build-dependencies]
 slint-build = "1.18.1"
