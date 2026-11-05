@@ -21,17 +21,26 @@
 **Objective**: Build a responsive, dark-first UI matching the design aesthetic using mock data before coupling to the audio engine.
 
 - [ ] Setup UI scaffolding with dark theme tokens (`#0F0F12` background, refined borders, neon accents).
-- [ ] Implement **Normal Mode**:
-  - Left navigation sidebar (Home, Albums, Artists, Local, Favorites, Playlists, Settings).
+- [ ] Implement **Normal Mode** with layout variants:
+  - Variant A1: Right-sidebar embedded player card (Reference 1 style).
+  - Variant A2: Classic persistent bottom playback bar.
+  - Left navigation sidebar (Home, Albums, Artists, Local, Favorites, Playlists, Settings) + lower-left quick library shortcuts.
   - Top header with search bar and user profile.
   - Hero artist/album banner with action buttons.
   - Album grid and popular track list with hover interactions.
-  - Right sidebar Play Queue with integrated now-playing card.
-- [ ] Implement **Mini Mode**:
-  - Compact floating card with artwork thumbnail, title, artist, seekbar, and transport controls.
+- [ ] Implement **Mini Mode** with compact variants:
+  - Variant B1: Compact card with artwork thumbnail, title, artist, seekbar, and controls.
+  - Variant B2: Ultra-thin micro-pill without artwork.
+  - Quick collapse toggle (switch between B1 and B2).
+  - Configurable idle opacity dimming (~80% unhovered vs 100% hovered).
   - Borderless window dragging support and Always-on-Top toggle.
 - [ ] Implement **Gaming Mode HUD**:
   - Minimal HUD widget / floating pill with translucent dark glass aesthetic.
+  - Hotkey HUD overlay toggle (`Win + Alt + M`).
+- [ ] Implement **Settings Panel**:
+  - Live variant switcher for Normal Mode (Right-panel card vs. Bottom bar).
+  - Live variant switcher for Mini Mode (Card vs. Micro-pill, Opacity dimming).
+  - Gaming Mode preference (Pure Headless vs. Companion HUD).
 - [ ] Implement seamless window transitions between Normal, Mini, and Gaming modes.
 - [ ] Benchmark prototype idle memory and GPU repaint rates.
 
@@ -81,3 +90,4 @@
 - [ ] Profile and eliminate memory allocations, unneeded font glyphs, and redraw triggers.
 - [ ] Execute real-world gaming stress test: Run AURI in Gaming Mode alongside demanding AAA games (with anti-cheat active) to verify 0.0% GPU load and zero audio dropouts.
 - [ ] Compile release binaries with aggressive LTO and size optimizations.
+

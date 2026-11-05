@@ -19,3 +19,4 @@ $RECYCLE.BIN/
 # Environment and secrets
 .env
 *.local
+

@@ -35,11 +35,13 @@ AURI features three distinct, meticulously tuned operating modes:
 
 ### 2.1 Mode A: Normal Mode (Full Desktop Player)
 - **Target Audience**: Active browsing, playlist curating, music discovery, library exploration.
+- **Configurable Layout Variants (User Settings)**:
+  - **Variant A1 (Reference 1 Style)**: Now-playing card embedded in the right-hand Play Queue panel. Sidebar features clean navigation with lower-left Quick Library Shortcuts (*Downloads, Local Folders, Recently Added*).
+  - **Variant A2 (Classic Docked Bar)**: Persistent sleek 64px bottom playback bar across the window; the right-hand Play Queue panel is toggleable.
 - **Visual Design**:
   - Dark-first aesthetic (`#0F0F12` background, `#17171C` cards, `#23232B` borders, refined neon/vibrant accent).
   - Left navigation sidebar: Home, Albums, Artists, Playlists, Favorites, Local Files, Settings.
   - Center workspace: Search bar, hero artist/album banner, grid view for albums/playlists, sorted table for tracks with duration, artist, and heart icon.
-  - Right sidebar: Interactive Play Queue with embedded mini-controller card.
 - **Performance Characteristics**:
   - Lazy rendering: Only visible list items are laid out and rendered.
   - Artwork thumbnail caching: Bounded LRU memory cache (max 16 MB).
@@ -47,32 +49,38 @@ AURI features three distinct, meticulously tuned operating modes:
 
 ### 2.2 Mode B: Mini Mode (Floating Controller)
 - **Target Audience**: Multitasking, working across spreadsheets or code editors, casual browsing.
-- **Visual Design**:
-  - Compact rounded card (e.g., 360 x 96 px or 320 x 64 px micro variant).
-  - High-res square artwork thumbnail, smooth scrolling marquee for long track titles, artist name.
-  - Seek slider with elapsed and remaining duration (`2:15 / 4:30`).
-  - Transport controls: Previous, Play/Pause toggle, Next, Favorite toggle, Volume slider.
-  - Draggable from any blank surface; optional "Always on Top" (`WS_EX_TOPMOST`) toggle.
+- **Configurable Layout Variants (User Settings)**:
+  - **Variant B1 (Compact Card - Reference 2A)**: 340 x 88 px card with high-res album art thumbnail, smooth title marquee, artist, seekbar with elapsed/total time (`2:15 / 4:30`), favorite heart, Previous, Play/Pause, Next, and Volume.
+  - **Variant B2 (Micro-Pill - Reference 2B)**: Ultra-thin 300 x 54 px strip without artwork for zero desktop distraction.
+- **Configurable Behaviors**:
+  - **Quick Collapse**: Double-click or click chevron to switch instantly between Variant B1 and B2.
+  - **Idle Dimming**: Toggle between 100% solid opacity and subtle ~80% translucent dimming when cursor is not hovering.
+  - **Always-on-Top (`WS_EX_TOPMOST`)**: Subtle pin button to stay above windowed games/apps.
+  - **Edge Snapping**: Snaps to desktop edges/corners within 15px.
 - **Performance Characteristics**:
   - Zero heavy background layout updates.
   - Render updates capped to seekbar step (1 second or hover interactions).
   - Memory target: < 50 MB.
 
-### 2.3 Mode C: Gaming / Performance Mode (Signature Feature)
+### 2.3 Mode C: Gaming / Performance Mode (Signature Dual-Paradigm)
 - **Target Audience**: Competitive and intensive PC gaming, high-load rendering, benchmarking.
-- **Operation**:
-  - **Headless Core**: Main window is hidden (`ShowWindow(SW_HIDE)`).
-  - **GPU Render Loop Halted**: Swapchain presentation stops entirely. GPU consumption is strictly **0.0%**.
-  - **Working Set Trimmed**: Invokes Windows `SetProcessWorkingSetSize` / `EmptyWorkingSet` to purge transient UI memory pages.
-  - **Background Work Suspended**: Artwork loading, non-critical metadata scraping, lyrics synchronization, and all non-playback timers are suspended.
-  - **Interaction**:
-    - Controlled via global Windows media keys (Play, Pause, Prev, Next, Mute, Volume Up/Down).
-    - Windows System Media Transport Controls (SMTC) overlay for native Windows volume popup.
-    - System tray icon with right-click context menu (Play/Pause, Next, Switch Mode, Exit).
-    - Optional zero-overhead click-through companion HUD (on secondary monitor or top-corner edge).
+- **Configurable Execution Paradigms (User Settings)**:
+  - **Paradigm C1: Pure Headless / Invisible**:
+    - Main window is completely hidden (`ShowWindow(SW_HIDE)`).
+    - GPU Render Loop halted; frame swapchain is frozen or destroyed. GPU load = **0.0%**.
+    - OS Working Set trimmed immediately via `EmptyWorkingSet(GetCurrentProcess())`, dropping memory to **< 35 MB**.
+    - Audio continues seamlessly via real-time MMCSS WASAPI output.
+    - Controlled via keyboard media keys, system tray, and native Windows SMTC volume popup.
+  - **Paradigm C2: Companion HUD (Reference 3 Vision)**:
+    - Ultra-lightweight translucent dark HUD card designed for a secondary monitor or summoned on demand.
+    - Features: Hi-res format badge (*"FLAC 96kHz / 24-bit"* or *"OPUS 160kbps"*), track title, artist, seekbar, and transport controls.
+    - Updates throttled to 1 FPS; optional audio spectrum visualizer (disabled by default in Gaming Mode to save CPU).
+  - **On-Demand Hotkey HUD**:
+    - Regardless of whether C1 or C2 is set, pressing a global hotkey (default: `Win + Alt + M`) displays the translucent HUD for 4 seconds as a temporary overlay over your game, then auto-fades back to 0.0% GPU.
   - **Anti-Cheat Safe Game Detection**:
     - Uses standard Win32 `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` and `QueryFullProcessImageNameW`.
     - **Never** injects code, hooks memory, creates overlays in game processes, or violates anti-cheat policies (EasyAntiCheat, BattlEye, Denuvo, Vanguard).
+    - User setting: "Auto-activate Gaming Mode when fullscreen game is detected" (On/Off).
 
 ---
 
@@ -90,49 +98,25 @@ AURI features three distinct, meticulously tuned operating modes:
 
 ---
 
-## 4. Provider-Independent Architecture & Streaming Analysis
-
-### 4.1 Abstract Provider Design
-To prevent architectural lock-in, AURI isolates the playback engine from the content source using an abstract, asynchronous `MusicProvider` contract:
+## 4. Music Provider Architecture
 
 ```
                  +-----------------------+
-                 |    MusicProvider      |  (Abstract Rust Trait)
+                 |    MusicProvider      |  (Abstract Trait / Interface)
                  +-----------+-----------+
                              |
              +---------------+---------------+
              |                               |
     +--------v--------+             +--------v--------+
-    |  LocalProvider  |             | AuthorizedStream|
-    |  (Filesystem,   |             | (Subsonic/Jelly,|
-    |   ID3/FLAC Tags)|             |  Web Radio/HTTP)|
+    |  LocalProvider  |             |  StreamProvider |
+    |  (Filesystem,   |             | (YouTube Music, |
+    |   ID3/FLAC Tags)|             |  Modular HTTP)  |
     +-----------------+             +-----------------+
 ```
 
-- **Sliding-Window Bounded Buffering**: For authorized HTTP progressive audio streams, AURI uses an **8 MB sliding memory window** ring buffer. Chunks ahead of the playhead are prefetched via HTTP range requests while older consumed chunks are reclaimed, ensuring memory usage never balloons regardless of track length.
-- **Local Provider (Core First-Class)**: Direct filesystem streaming with ID3v2/Vorbis comment metadata indexing. 100% offline, zero network latency, zero external API risks.
-
----
-
-### 4.2 Comprehensive YouTube Music Integration Analysis
-
-As required by our core engineering principles, we evaluated the feasibility of an officially supported or explicitly authorized YouTube Music integration:
-
-1. **Official YouTube API Evaluation**:
-   - **YouTube Data API v3**: Google provides video search and playlist management, but explicitly does *not* provide audio streams or YouTube Music specific entities. Furthermore, terms mandate that all video content be played using an official YouTube player.
-   - **YouTube IFrame Player API (Embedded Webview)**: The only authorized playback vehicle. Requires an embedded Chromium / WebView2 engine, mandatory rendering of video frames and visual advertisements, and strictly prohibits background playback (screen-off or hidden window).
-   - **YouTube API Terms of Service (Section III.A.1-2)**: Explicitly states that applications must *not* "separate, isolate, or modify the audio or video components of any YouTube audiovisual content" and must not facilitate background audio playback.
-   - **Dedicated YouTube Music API**: Google offers **no official developer API** for programmatic third-party audio streaming.
-
-2. **The Undocumented Innertube Approach (Rejected)**:
-   - Extracting raw Opus/WebM audio streams via reverse-engineered internal Innertube endpoints is neither authorized nor compliant.
-   - It strips video ads, separates audio from video, bypasses display rules, is brittle against YouTube signature/token updates, and carries IP rate-limiting risks.
-
-3. **Conclusion & Documented Limitation**:
-   - **YouTube Music cannot natively support AURI's intended background-native playback experience through any authorized integration.**
-   - An authorized integration would require embedding a full Chromium/WebView2 instance, actively presenting video frames, displaying ads, and preventing background suspension—completely defeating AURI’s core lightweight gaming performance targets.
-   - **AURI will not compromise its lightweight native architecture to force YouTube Music integration.**
-   - The streaming architecture remains ready for authorized providers (such as Subsonic, Navidrome, Jellyfin, and open web streams) while local playback delivers the ultimate zero-overhead gaming experience.
+- **Modular Design**: The audio core relies entirely on a generic `MusicProvider` trait.
+- **Local Provider**: Direct file access, ID3/Vorbis tag parsing, directory indexing with low-memory SQLite or binary cache.
+- **Streaming Provider**: Modular HTTP stream resolver. Designed to parse stream URLs and metadata without embedding a browser. Complies with security policies: no credential scraping, no DRM circumvention, and no ads injection.
 
 ---
 

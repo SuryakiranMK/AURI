@@ -61,3 +61,4 @@ To ensure scientific rigor, performance must be verified using reproducible scri
    - Monitored via Windows D3D Performance Counters (`\GPU Engine(*)\Utilization Percentage`) to ensure 0.0% in Gaming Mode.
 4. **Automated Benchmark Script**:
    - A dedicated PowerShell/Python profiling script (`scripts/benchmark.ps1`) will be integrated into the repository to run automated stress tests across all three operating modes.
+
