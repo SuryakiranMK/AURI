@@ -19,6 +19,8 @@ export component NormalModeView inherits Rectangle {
     in-out property <bool> auto_game_mode: true;
     in-out property <string> active_game: "";
     in-out property <string> ram_usage: "35.0 MB";
+    in-out property <string> search_query: "";
+    in-out property <[TrackData]> search_results: [];
 
     // Callbacks
     callback navigate(string);
@@ -34,6 +36,8 @@ export component NormalModeView inherits Rectangle {
     callback switch_to_gaming();
     callback toggle_auto_game();
     callback trim_ram();
+    callback perform_search(string);
+    callback play_stream_track(string, string, string, int);
 
     background: Theme.bg_app;
 
@@ -323,12 +327,24 @@ export component NormalModeView inherits Rectangle {
                                     color: Theme.text_muted;
                                     vertical_alignment: center;
                                 }
-                                Text {
-                                    text: "Search songs, albums, artists, or local files...";
+
+                                search_input := TextInput {
+                                    text <=> root.search_query;
                                     font_size: 13px;
-                                    color: Theme.text_muted;
+                                    color: Theme.text_primary;
                                     vertical_alignment: center;
                                     horizontal_stretch: 1;
+                                    accepted => {
+                                        root.navigate("search");
+                                        root.perform_search(self.text);
+                                    }
+                                }
+
+                                if search_input.text == "": Text {
+                                    text: "Search YouTube Music & local library (press Enter)...";
+                                    font_size: 12px;
+                                    color: Theme.text_muted;
+                                    vertical_alignment: center;
                                 }
                             }
                         }
@@ -951,6 +967,135 @@ export component NormalModeView inherits Rectangle {
                                             horizontal_alignment: center;
                                             vertical_alignment: center;
                                         }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Search Results View
+                    if root.current_nav == "search": VerticalLayout {
+                        spacing: 16px;
+                        vertical_stretch: 1;
+
+                        HorizontalLayout {
+                            alignment: center;
+                            spacing: 12px;
+
+                            Text {
+                                text: "🌐 YouTube Music Streaming Results";
+                                font_size: 20px;
+                                font_weight: 800;
+                                color: Theme.text_primary;
+                                horizontal_stretch: 1;
+                            }
+
+                            Text {
+                                text: root.search_query == "" ? "Type a song name in the search bar above" : "Showing results for \"" + root.search_query + "\"";
+                                font_size: 12px;
+                                color: Theme.text_muted;
+                                vertical_alignment: center;
+                            }
+                        }
+
+                        // Tracks List
+                        VerticalLayout {
+                            spacing: 8px;
+
+                            for track in root.search_results: Rectangle {
+                                height: 52px;
+                                border-radius: Theme.radius_md;
+                                background: Theme.bg_surface;
+                                border-width: 1px;
+                                border-color: Theme.border_subtle;
+
+                                HorizontalLayout {
+                                    padding_left: 14px;
+                                    padding_right: 14px;
+                                    spacing: 14px;
+
+                                    // Play Stream Button
+                                    Rectangle {
+                                        width: 32px;
+                                        height: 32px;
+                                        border-radius: 16px;
+                                        background: Theme.accent;
+                                        y: (parent.height - self.height) / 2;
+
+                                        TouchArea {
+                                            clicked => {
+                                                root.play_stream_track(track.id, track.title, track.artist, track.duration_secs);
+                                            }
+                                        }
+
+                                        Text {
+                                            text: "▶";
+                                            font_size: 12px;
+                                            color: #FFFFFF;
+                                            horizontal_alignment: center;
+                                            vertical_alignment: center;
+                                        }
+                                    }
+
+                                    // Title & Artist
+                                    VerticalLayout {
+                                        alignment: center;
+                                        horizontal_stretch: 2;
+                                        spacing: 3px;
+
+                                        Text {
+                                            text: track.title;
+                                            font_size: 13px;
+                                            font_weight: 700;
+                                            color: Theme.text_primary;
+                                            overflow: elide;
+                                        }
+                                        Text {
+                                            text: track.artist;
+                                            font_size: 11px;
+                                            color: Theme.text_secondary;
+                                            overflow: elide;
+                                        }
+                                    }
+
+                                    // Album
+                                    Text {
+                                        text: track.album;
+                                        font_size: 12px;
+                                        color: Theme.text_muted;
+                                        vertical_alignment: center;
+                                        horizontal_stretch: 1;
+                                        overflow: elide;
+                                    }
+
+                                    // Format Tag
+                                    Rectangle {
+                                        width: 80px;
+                                        height: 22px;
+                                        border-radius: 11px;
+                                        background: #8B5CF626;
+                                        border-width: 1px;
+                                        border-color: #8B5CF6;
+                                        y: (parent.height - self.height) / 2;
+
+                                        Text {
+                                            text: track.format_badge;
+                                            font_size: 9px;
+                                            font_weight: 700;
+                                            color: #A855F7;
+                                            horizontal_alignment: center;
+                                            vertical_alignment: center;
+                                        }
+                                    }
+
+                                    // Duration
+                                    Text {
+                                        text: track.duration;
+                                        font_size: 12px;
+                                        color: Theme.text_muted;
+                                        vertical_alignment: center;
+                                        width: 45px;
+                                        horizontal_alignment: right;
                                     }
                                 }
                             }

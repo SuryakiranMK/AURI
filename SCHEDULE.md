@@ -25,8 +25,8 @@ This document is the **single source of truth** for all planned, in-progress, co
 | **v0.3.0** | **Local Music Library & Queue Manager** | Library & Queue | - Sleek AURI placeholder application icon (high-res PNG & Windows `.ico` format).<br>- Embed icon into Windows executable resources via `winres` / `build.rs` and Slint window icon.<br>- Local folder scanner and indexer (recursive multi-directory scan).<br>- Pure-Rust ID3v2, Vorbis comment, and FLAC metadata parser via `symphonia` / `id3` / `metaflac`.<br>- Bounded artwork memory cache (max 16 MB LRU cache) avoiding RAM bloat.<br>- Dynamic Playback Queue: Next, Previous, Shuffle (Fisher-Yates), Repeat (Off, One, All).<br>- Connect Local Files view in Normal Mode to the real audio engine.<br>- Automatic continuous playback: seamlessly advances to next track on EOF. | **Completed** | Local Playback Complete |
 | **v0.4.0** | **Windows Deep Integration & Headless Playback** | OS Integration | - Decouple UI lifecycle from audio: Closing/hiding windows leaves playback running.<br>- System Tray integration (`Shell_NotifyIconW`) with dark context menu (Play/Pause, Next, Modes, Exit).<br>- Windows System Media Transport Controls (SMTC) integration for native volume flyout and keyboard media keys.<br>- Global hotkeys via `RegisterHotKey` (`Win+Alt+Space`, `Win+Alt+Right`, etc.). | **Completed** | Background Engine Ready |
 | **v0.5.0** | **Anti-Cheat Safe Game Detection & Working Set Trimmer** | Performance & Gaming | - `SetWinEventHook` foreground listener detecting active fullscreen games without code injection.<br>- Configurable game process detection list.<br>- Automatic transition to Gaming Mode upon game focus.<br>- Window hiding (`SW_HIDE`) and swapchain suspension (0.0% GPU load).<br>- Memory purging via Windows `EmptyWorkingSet()` down to < 35 MB RAM. | **Completed** | Gaming Mode Complete |
-| **v0.6.0** | **Streaming Provider Tier 1 (YouTube Music Innertube)** | Streaming Engine | - Define abstract `MusicProvider` trait.<br>- Async Innertube API client for YouTube Music search and metadata.<br>- Progressive audio stream resolution (WebM Opus 160kbps / MP4 AAC 128kbps).<br>- Sliding 8 MB memory window buffer for network streams.<br>- Unified queue supporting seamless mixing of local and streaming tracks. | **Next Up** | Online Streaming Ready |
-| **v0.7.0** | **Performance Benchmarking Suite & Latency Tuning** | Optimization & QA | - Implement automated profiling script (`scripts/benchmark.ps1`).<br>- Measure Private Bytes, Working Set, CPU%, and GPU% across all 3 modes.<br>- Live testing alongside demanding AAA games with active anti-cheat.<br>- Binary optimization: strip symbols, LTO enabled, panic abort. | **Planned** | Hardening & Tuning |
+| **v0.6.0** | **Streaming Provider Tier 1 (YouTube Music Innertube)** | Streaming Engine | - Define abstract `MusicProvider` trait.<br>- Async Innertube API client for YouTube Music search and metadata.<br>- Progressive audio stream resolution (WebM Opus 160kbps / MP4 AAC 128kbps).<br>- Sliding 8 MB memory window buffer for network streams.<br>- Unified queue supporting seamless mixing of local and streaming tracks. | **Completed** | Online Streaming Ready |
+| **v0.7.0** | **Performance Benchmarking Suite & Latency Tuning** | Optimization & QA | - Implement automated profiling script (`scripts/benchmark.ps1`).<br>- Measure Private Bytes, Working Set, CPU%, and GPU% across all 3 modes.<br>- Live testing alongside demanding AAA games with active anti-cheat.<br>- Binary optimization: strip symbols, LTO enabled, panic abort. | **Next Up** | Hardening & Tuning |
 | **v1.0.0** | **AURI Initial Official Release** | Major Release | - Complete, unified desktop application (Normal Mode, Mini Mode, Gaming Mode).<br>- Full UI variant switcher in Settings.<br>- Dual-mode local and YouTube Music streaming.<br>- Release binary package (.exe installer / standalone portable zip).<br>- Finalized user documentation and performance benchmark reports. | **Planned** | **AURI 1.0.0 Baseline** |
 | **v1.0.1** | **Hotfixes & Immediate Post-Launch Refinements** | Maintenance | - Address any edge-case playback glitches or UI DPI scaling issues reported during initial testing.<br>- Audio buffer auto-tuning based on host system load. | **Planned** | Post-1.0 Patch |
 | **v1.1.0** | **Streaming Provider Tier 2 (Optional Cookie Sync)** | Feature Enhancement | - Optional session cookie import to fetch user's private YouTube Music playlists and Liked Songs.<br>- Local caching of private library metadata without embedded browser overhead. | **Planned** | Future Minor Release |
@@ -35,6 +35,27 @@ This document is the **single source of truth** for all planned, in-progress, co
 ---
 
 ## Change Log & Revision History
+
+### Version: v0.6.0 (Completed Milestone)
+- **Date**: 2026-11-05
+- **Category**: Streaming Provider Tier 1 (YouTube Music Innertube) & Sliding Buffer
+- **What Was Done**:
+  - **Abstract Music Provider Architecture** (`src/provider/mod.rs`): Defined extensible `MusicProvider` trait with decoupled `search` and `resolve_stream` interfaces, enabling unified playback across local and cloud sources.
+  - **Native Innertube API Client** (`src/provider/innertube.rs`): Built zero-browser YouTube Music API client using lightweight `ureq` + `serde_json` (no Electron, no Chromium, no Node.js/Python helper processes).
+    - Querying `WEB_REMIX` search endpoint with song shelf parameters (`params=Eg-KAQwIABAAGAAgACgAMABqChAEEAMQCRAFEAo%3D`).
+    - Robust nested renderer parser extracting video ID, title, artist, album, duration, and thumbnail artwork.
+    - Direct stream resolution via `ANDROID_MUSIC` player context, extracting high-fidelity audio streams (WebM Opus ~160kbps / MP4 AAC ~128kbps) with plain HTTPS stream URLs.
+  - **Sliding 8 MB Memory Stream Buffer** (`src/provider/buffer.rs`): Implemented `SlidingStreamBuffer` satisfying `std::io::Read`, `std::io::Seek`, and Symphonia `MediaSource`.
+    - Enforced strict < 8 MB memory ceiling from `PERFORMANCE_TARGETS.md` with automatic chunk eviction of ranges behind current playback position.
+    - Instant playback startup via 256 KB–512 KB pre-buffering.
+  - **Seamless Audio Engine Integration** (`src/audio/mod.rs`, `src/audio/decoder.rs`):
+    - Added `AudioDecoder::open_stream` supporting WebM Opus and MP4 AAC formats.
+    - Decoded network audio is resampled and fed directly into the existing lock-free WASAPI ring buffer with MMCSS real-time thread priority.
+  - **Normal Mode UI Search & Stream Player** (`ui/normal_mode.slint`, `ui/app.slint`):
+    - Added interactive `TextInput` to the Search Pill bar in the top navigation.
+    - Added YouTube Music Search Results view with track cards displaying play button, title, artist, album, format badge (`"WebM 160k"`), and duration.
+    - Wired background async search and stream resolution threads preventing UI jank.
+  - **Expanded Test Suite**: Added 3 new unit tests (25 total tests passing in 0.01s) covering buffer seek mathematics, duration string parsing, and mock Innertube response parsing.
 
 ### Version: v0.5.0 (Completed Milestone)
 - **Date**: 2026-11-05

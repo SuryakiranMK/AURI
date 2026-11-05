@@ -32,6 +32,23 @@ impl AudioDecoder {
             hint.with_extension(ext);
         }
 
+        Self::from_media_source(mss, hint)
+    }
+
+    pub fn open_stream(
+        source: Box<dyn symphonia::core::io::MediaSource>,
+        extension_hint: Option<&str>,
+    ) -> Result<Self, String> {
+        let mss = MediaSourceStream::new(source, Default::default());
+        let mut hint = Hint::new();
+        if let Some(ext) = extension_hint {
+            hint.with_extension(ext);
+        }
+
+        Self::from_media_source(mss, hint)
+    }
+
+    fn from_media_source(mss: MediaSourceStream<'static>, hint: Hint) -> Result<Self, String> {
         let format_opts = FormatOptions::default();
         let metadata_opts = MetadataOptions::default();
 

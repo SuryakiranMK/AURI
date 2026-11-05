@@ -1,10 +1,11 @@
 // Project AURI: Minimalist, Ultra-Lightweight, Gaming-First Music Player
-// Milestone v0.5.0: Anti-Cheat Safe Game Detection & Working Set Trimmer
+// Milestone v0.6.0: Streaming Provider Tier 1 (YouTube Music Innertube)
 
 pub mod audio;
 pub mod gaming;
 pub mod integration;
 pub mod library;
+pub mod provider;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -13,6 +14,8 @@ use audio::{AudioEngine, PlaybackState};
 use gaming::{get_working_set_size_bytes, trim_working_set, GameDetector, GameEvent};
 use integration::{HotkeyAction, TrayAction, WindowsIntegration};
 use library::{LibraryManager, RepeatMode};
+use provider::innertube::InnertubeProvider;
+use provider::MusicProvider;
 use slint::Timer;
 
 slint::include_modules!();
@@ -26,8 +29,9 @@ fn format_duration(seconds: f64) -> String {
 
 fn main() -> Result<(), slint::PlatformError> {
     println!("========================================================");
-    println!("  AURI Desktop Music Player - v0.5.0 Gaming Subsystem");
-    println!("  Anti-Cheat Safe Game Detector • Working Set RAM Trimmer");
+    println!("  AURI Desktop Music Player - v0.6.0 Streaming Engine");
+    println!("  YouTube Music Innertube • Sliding 8MB Stream Buffer");
+    println!("========================================================");
     println!("========================================================");
 
     // Initialize native audio engine
@@ -55,6 +59,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // Initialize Windows System Integration (System Tray & Global Hotkeys)
     let integration = Arc::new(WindowsIntegration::new());
     let is_window_visible = Arc::new(AtomicBool::new(true));
+
+    // Initialize YouTube Music Innertube Streaming Provider
+    let provider = Arc::new(InnertubeProvider::new());
+    println!("[AURI Streaming] Innertube Streaming Engine online (Tier 1 Provider)");
 
     // Initialize Anti-Cheat Safe Game Detector
     let (game_detector, game_rx) = GameDetector::start();
@@ -255,6 +263,113 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             Err(e) => eprintln!("[AURI Memory Error] {}", e),
         }
+    });
+
+    // Wire: YouTube Music Streaming Search
+    let provider_search = provider.clone();
+    let ui_search_weak = ui.as_weak();
+    ui.on_perform_search(move |query| {
+        let q = query.to_string();
+        let provider = provider_search.clone();
+        let ui_weak = ui_search_weak.clone();
+
+        std::thread::Builder::new()
+            .name("auri-stream-search".to_string())
+            .spawn(move || {
+                println!("[AURI Streaming] Querying YouTube Music for: \"{}\"", q);
+                match provider.search(&q) {
+                    Ok(items) => {
+                        println!("[AURI Streaming] Retrieved {} results from Innertube", items.len());
+                        let slint_items: Vec<TrackData> = items
+                            .into_iter()
+                            .map(|item| TrackData {
+                                id: item.id.into(),
+                                title: item.title.into(),
+                                artist: item.artist.into(),
+                                album: item.album.into(),
+                                duration: item.formatted_duration.into(),
+                                duration_secs: item.duration_secs as i32,
+                                format_badge: "WebM 160k".into(),
+                                is_favorite: false,
+                                cover_hue: slint::Color::from_rgb_u8(139, 92, 246),
+                            })
+                            .collect();
+
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                let model = std::rc::Rc::new(slint::VecModel::from(slint_items));
+                                ui.set_search_results(model.into());
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("[AURI Streaming Search Error] {}", e);
+                    }
+                }
+            })
+            .expect("Failed to spawn search thread");
+    });
+
+    // Wire: Play Stream Track
+    let provider_resolve = provider.clone();
+    let audio_stream = audio.clone();
+    let integration_stream = integration.clone();
+    let ui_stream_weak = ui.as_weak();
+    ui.on_play_stream_track(move |id, title, artist, duration_secs| {
+        let id_str = id.to_string();
+        let title_str = title.to_string();
+        let artist_str = artist.to_string();
+        let dur = duration_secs as f64;
+        let provider = provider_resolve.clone();
+        let audio = audio_stream.clone();
+        let integration = integration_stream.clone();
+        let ui_weak = ui_stream_weak.clone();
+
+        std::thread::Builder::new()
+            .name("auri-stream-resolver".to_string())
+            .spawn(move || {
+                println!("[AURI Streaming] Resolving stream for \"{}\" (id: {})...", title_str, id_str);
+                match provider.resolve_stream(&id_str) {
+                    Ok(stream) => {
+                        println!(
+                            "[AURI Streaming] Resolved audio stream: {:?} (bitrate: {} bps)",
+                            stream.format, stream.bitrate_bps
+                        );
+                        let hint = match stream.format {
+                            provider::AudioStreamFormat::WebmOpus => Some("webm".to_string()),
+                            provider::AudioStreamFormat::Mp4Aac => Some("m4a".to_string()),
+                            _ => None,
+                        };
+
+                        let stream_dur = if dur > 0.0 { dur } else { stream.duration_secs };
+                        audio.play_stream(
+                            stream.stream_url,
+                            title_str.clone(),
+                            artist_str.clone(),
+                            stream_dur,
+                            hint,
+                        );
+
+                        integration.update_tray_tooltip(&title_str, &artist_str);
+
+                        let title_disp = title_str.clone();
+                        let artist_disp = artist_str.clone();
+                        let dur_disp = format_duration(stream_dur);
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = ui_weak.upgrade() {
+                                ui.set_track_title(title_disp.into());
+                                ui.set_track_artist(artist_disp.into());
+                                ui.set_track_duration(dur_disp.into());
+                                ui.set_is_playing(true);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        eprintln!("[AURI Streaming Error] Failed to resolve stream: {}", e);
+                    }
+                }
+            })
+            .expect("Failed to spawn stream resolver thread");
     });
 
     let ui_handle_headless = ui.as_weak();

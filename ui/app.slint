@@ -1,5 +1,6 @@
 // AURI Main Application Window
 import { Theme } from "theme.slint";
+import { TrackData } from "models.slint";
 import { NormalModeView } from "normal_mode.slint";
 import { MiniModeView } from "mini_mode.slint";
 import { GamingHudView } from "gaming_mode.slint";
@@ -37,6 +38,8 @@ export component AppWindow inherits Window {
     in-out property <bool> auto_game_mode: true;
     in-out property <string> active_game: "";
     in-out property <string> ram_usage: "35.0 MB";
+    in-out property <string> search_query: "";
+    in-out property <[TrackData]> search_results: [];
 
     // Callbacks to Rust Core
     callback toggle_play();
@@ -54,6 +57,8 @@ export component AppWindow inherits Window {
     callback enter_headless();
     callback toggle_auto_game();
     callback trim_ram();
+    callback perform_search(string);
+    callback play_stream_track(string, string, string, int);
 
     // Responsive dimensions based on active mode
     min_width: root.current_mode == 0 ? 920px : (root.current_mode == 1 ? 320px : 380px);
@@ -80,6 +85,8 @@ export component AppWindow inherits Window {
         auto_game_mode: root.auto_game_mode;
         active_game: root.active_game;
         ram_usage: root.ram_usage;
+        search_query: root.search_query;
+        search_results: root.search_results;
 
         navigate(nav) => {
             if (nav == "set_var_0") {
@@ -103,6 +110,8 @@ export component AppWindow inherits Window {
         switch_to_gaming => { root.current_mode = 2; root.switch_mode(2); }
         toggle_auto_game => { root.auto_game_mode = !root.auto_game_mode; root.toggle_auto_game(); }
         trim_ram => { root.trim_ram(); }
+        perform_search(query) => { root.perform_search(query); }
+        play_stream_track(id, title, artist, dur) => { root.play_stream_track(id, title, artist, dur); }
     }
 
     // ==========================================

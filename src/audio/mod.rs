@@ -18,6 +18,7 @@ use crate::audio::decoder::AudioDecoder;
 use crate::audio::generator::ToneGenerator;
 use crate::audio::resampler::LinearResampler;
 use crate::audio::wasapi_sink::WasapiSink;
+use crate::provider::buffer::SlidingStreamBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaybackState {
@@ -41,6 +42,13 @@ pub struct AudioStatus {
 
 enum AudioCommand {
     PlayFile(PathBuf),
+    PlayStream {
+        url: String,
+        title: String,
+        artist: String,
+        duration_secs: f64,
+        format_hint: Option<String>,
+    },
     PlayTone { freq_hz: f32, duration_secs: f32 },
     Pause,
     Resume,
@@ -139,6 +147,23 @@ impl AudioEngine {
         let _ = self.cmd_tx.send(AudioCommand::PlayFile(path.as_ref().to_path_buf()));
     }
 
+    pub fn play_stream(
+        &self,
+        url: String,
+        title: String,
+        artist: String,
+        duration_secs: f64,
+        format_hint: Option<String>,
+    ) {
+        let _ = self.cmd_tx.send(AudioCommand::PlayStream {
+            url,
+            title,
+            artist,
+            duration_secs,
+            format_hint,
+        });
+    }
+
     pub fn play_test_tone(&self, freq_hz: f32, duration_secs: f32) {
         let _ = self.cmd_tx.send(AudioCommand::PlayTone { freq_hz, duration_secs });
     }
@@ -231,6 +256,31 @@ impl AudioEngine {
                             }
                             Err(e) => {
                                 eprintln!("[AURI Audio Error] Failed to decode file: {}", e);
+                            }
+                        }
+                    }
+                    AudioCommand::PlayStream { url, title, artist, duration_secs: dur, format_hint } => {
+                        println!("[AURI Audio] Streaming audio: {} - {}", artist, title);
+                        let mut stream_buf = SlidingStreamBuffer::new(url, None);
+                        let _ = stream_buf.prefetch_initial();
+
+                        match AudioDecoder::open_stream(Box::new(stream_buf), format_hint.as_deref()) {
+                            Ok(decoder) => {
+                                let total_dur = if dur > 0.0 { dur } else { decoder.duration_secs() };
+                                duration.store((total_dur as f32).to_bits(), Ordering::Relaxed);
+                                position.store(0.0f32.to_bits(), Ordering::Relaxed);
+
+                                *current_title.lock().unwrap() = title;
+                                *current_artist.lock().unwrap() = artist;
+
+                                resampler = LinearResampler::new(decoder.sample_rate(), sink_sample_rate, sink_channels);
+                                source = AudioSource::Decoder(decoder);
+
+                                *state.lock().unwrap() = PlaybackState::Playing;
+                                sink.set_playing(true);
+                            }
+                            Err(e) => {
+                                eprintln!("[AURI Audio Error] Failed to decode stream: {}", e);
                             }
                         }
                     }

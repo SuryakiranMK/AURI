@@ -3,7 +3,7 @@
 
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -77,7 +77,7 @@ extern "system" {
 }
 
 pub struct GlobalHotkeys {
-    action_rx: Receiver<HotkeyAction>,
+    action_rx: Mutex<Receiver<HotkeyAction>>,
     is_running: Arc<AtomicBool>,
     thread_handle: Option<JoinHandle<()>>,
     thread_id: Arc<std::sync::atomic::AtomicU32>,
@@ -100,7 +100,7 @@ impl GlobalHotkeys {
             .ok();
 
         Self {
-            action_rx,
+            action_rx: Mutex::new(action_rx),
             is_running,
             thread_handle: handle,
             thread_id,
@@ -108,7 +108,7 @@ impl GlobalHotkeys {
     }
 
     pub fn try_recv(&self) -> Option<HotkeyAction> {
-        self.action_rx.try_recv().ok()
+        self.action_rx.lock().ok()?.try_recv().ok()
     }
 
     fn run_listener(
