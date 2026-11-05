@@ -1,5 +1,5 @@
 // Project AURI: Minimalist, Ultra-Lightweight, Gaming-First Music Player
-// Milestone v0.6.0: Streaming Provider Tier 1 (YouTube Music Innertube)
+// Official Release v1.0.0
 
 pub mod audio;
 pub mod gaming;
@@ -29,8 +29,8 @@ fn format_duration(seconds: f64) -> String {
 
 fn main() -> Result<(), slint::PlatformError> {
     println!("========================================================");
-    println!("  AURI Desktop Music Player - v0.6.0 Streaming Engine");
-    println!("  YouTube Music Innertube • Sliding 8MB Stream Buffer");
+    println!("  AURI Desktop Music Player - v1.0.0 OFFICIAL RELEASE   ");
+    println!("  Ultra-Lightweight • Gaming-First • WASAPI & Innertube ");
     println!("========================================================");
     println!("========================================================");
 

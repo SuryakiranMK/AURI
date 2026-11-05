@@ -27,14 +27,25 @@ This document is the **single source of truth** for all planned, in-progress, co
 | **v0.5.0** | **Anti-Cheat Safe Game Detection & Working Set Trimmer** | Performance & Gaming | - `SetWinEventHook` foreground listener detecting active fullscreen games without code injection.<br>- Configurable game process detection list.<br>- Automatic transition to Gaming Mode upon game focus.<br>- Window hiding (`SW_HIDE`) and swapchain suspension (0.0% GPU load).<br>- Memory purging via Windows `EmptyWorkingSet()` down to < 35 MB RAM. | **Completed** | Gaming Mode Complete |
 | **v0.6.0** | **Streaming Provider Tier 1 (YouTube Music Innertube)** | Streaming Engine | - Define abstract `MusicProvider` trait.<br>- Async Innertube API client for YouTube Music search and metadata.<br>- Progressive audio stream resolution (WebM Opus 160kbps / MP4 AAC 128kbps).<br>- Sliding 8 MB memory window buffer for network streams.<br>- Unified queue supporting seamless mixing of local and streaming tracks. | **Completed** | Online Streaming Ready |
 | **v0.7.0** | **Performance Benchmarking Suite & Latency Tuning** | Optimization & QA | - Implement automated profiling script (`scripts/benchmark.ps1`).<br>- Measure Private Bytes, Working Set, CPU%, and GPU% across all 3 modes.<br>- Live testing alongside demanding AAA games with active anti-cheat.<br>- Binary optimization: strip symbols, LTO enabled, panic abort. | **Completed** | Hardening & Tuning |
-| **v1.0.0** | **AURI Initial Official Release** | Major Release | - Complete, unified desktop application (Normal Mode, Mini Mode, Gaming Mode).<br>- Full UI variant switcher in Settings.<br>- Dual-mode local and YouTube Music streaming.<br>- Release binary package (.exe installer / standalone portable zip).<br>- Finalized user documentation and performance benchmark reports. | **Next Up** | **AURI 1.0.0 Baseline** |
-| **v1.0.1** | **Hotfixes & Immediate Post-Launch Refinements** | Maintenance | - Address any edge-case playback glitches or UI DPI scaling issues reported during initial testing.<br>- Audio buffer auto-tuning based on host system load. | **Planned** | Post-1.0 Patch |
+| **v1.0.0** | **AURI Initial Official Release** | Major Release | - Complete, unified desktop application (Normal Mode, Mini Mode, Gaming Mode).<br>- Full UI variant switcher in Settings.<br>- Dual-mode local and YouTube Music streaming.<br>- Release binary package (.exe installer / standalone portable zip).<br>- Finalized user documentation and performance benchmark reports. | **Completed** | **AURI 1.0.0 Baseline** |
+| **v1.0.1** | **Hotfixes & Immediate Post-Launch Refinements** | Maintenance | - Address any edge-case playback glitches or UI DPI scaling issues reported during initial testing.<br>- Audio buffer auto-tuning based on host system load. | **Next Up** | Post-1.0 Patch |
 | **v1.1.0** | **Streaming Provider Tier 2 (Optional Cookie Sync)** | Feature Enhancement | - Optional session cookie import to fetch user's private YouTube Music playlists and Liked Songs.<br>- Local caching of private library metadata without embedded browser overhead. | **Planned** | Future Minor Release |
 | **v1.2.0** | **Audio Visualizer & Equalizer Customization** | Audio Enhancement | - Optional 10-band parametric equalizer.<br>- Low-overhead FFT audio spectrum visualizer for Normal Mode and Companion HUD with auto-disable during Gaming Mode. | **Planned** | Future Minor Release |
 
 ---
 
 ## Change Log & Revision History
+
+### Version: v1.0.0 (Official Baseline Release)
+- **Date**: 2026-11-05
+- **Category**: Major Release: Unified Native Application & Distribution Package
+- **What Was Done**:
+  - **Complete Unified Desktop Application**: Unified all three operating modes (Normal Mode with Variants A1 and A2, Mini Mode with Variants B1 and B2, and Gaming Mode with Pure Headless and Companion HUD) into a single cohesive native Windows executable.
+  - **Dual-Engine Playback Integration**: Seamless unified queue supporting continuous playback mixing local files (FLAC, MP3, AAC, Opus, Vorbis, WAV) and cloud YouTube Music streams (WebM Opus ~160kbps / MP4 AAC ~128kbps).
+  - **Anti-Cheat Safe Game Integration**: Fully certified passive Win32 foreground game detector and native Windows `EmptyWorkingSet()` memory purging ensuring zero anti-cheat friction and < 35 MB RAM footprint in Gaming Mode.
+  - **Hardware Media Keys & System Tray**: Full Windows SMTC, hardware media keys (`Play/Pause`, `Next`, `Prev`), gaming shortcuts (`Win+Alt+Space`, `Win+Alt+M`), and dark Win32 system tray popup menu with live hover track tooltip.
+  - **Performance Certification**: Audited via `scripts/benchmark.ps1` with official report `BENCHMARK_REPORT.md` confirming 0.0% GPU when hidden, 59.8 MB private bytes, and 12.5 MB binary size.
+  - **Packaging & Documentation**: Upgraded `README.md` with full technical documentation, user guides, keyboard shortcut reference, MIT License, and built standalone portable distribution archive (`dist/AURI-v1.0.0-Windows-x64.zip`).
 
 ### Version: v0.7.0 (Completed Milestone)
 - **Date**: 2026-11-05
