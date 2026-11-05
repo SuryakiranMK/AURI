@@ -8,7 +8,7 @@ pub mod generator;
 pub mod wasapi_sink;
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -64,6 +64,7 @@ pub struct AudioEngine {
     volume: Arc<AtomicU32>,   // f32 bits
     current_title: Arc<Mutex<String>>,
     current_artist: Arc<Mutex<String>>,
+    is_eof: Arc<AtomicBool>,
     device_name: String,
     sink_sample_rate: u32,
     sink_channels: usize,
@@ -80,6 +81,7 @@ impl AudioEngine {
         let volume = Arc::new(AtomicU32::new(0.75f32.to_bits()));
         let current_title = Arc::new(Mutex::new("No Track Loaded".to_string()));
         let current_artist = Arc::new(Mutex::new("".to_string()));
+        let is_eof = Arc::new(AtomicBool::new(false));
 
         let sink = WasapiSink::new()?;
         let device_name = sink.device_name().to_string();
@@ -92,6 +94,7 @@ impl AudioEngine {
         let volume_clone = volume.clone();
         let title_clone = current_title.clone();
         let artist_clone = current_artist.clone();
+        let eof_clone = is_eof.clone();
 
         sink.set_volume(0.75);
 
@@ -107,6 +110,7 @@ impl AudioEngine {
                     volume_clone,
                     title_clone,
                     artist_clone,
+                    eof_clone,
                 );
             })
             .map_err(|e| format!("Failed to spawn audio worker thread: {}", e))?;
@@ -119,11 +123,16 @@ impl AudioEngine {
             volume,
             current_title,
             current_artist,
+            is_eof,
             device_name,
             sink_sample_rate,
             sink_channels,
             _worker: Some(worker),
         })
+    }
+
+    pub fn take_eof(&self) -> bool {
+        self.is_eof.swap(false, Ordering::Relaxed)
     }
 
     pub fn play_file(&self, path: impl AsRef<Path>) {
@@ -188,6 +197,7 @@ impl AudioEngine {
         volume: Arc<AtomicU32>,
         current_title: Arc<Mutex<String>>,
         current_artist: Arc<Mutex<String>>,
+        is_eof: Arc<AtomicBool>,
     ) {
         let sink_sample_rate = sink.sample_rate();
         let sink_channels = sink.channels();
@@ -304,6 +314,7 @@ impl AudioEngine {
                                     *state.lock().unwrap() = PlaybackState::Stopped;
                                     sink.set_playing(false);
                                     source = AudioSource::None;
+                                    is_eof.store(true, Ordering::Relaxed);
                                 }
                                 Err(e) => {
                                     eprintln!("[AURI Audio Error] Decode failed: {}", e);

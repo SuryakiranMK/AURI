@@ -1,6 +1,6 @@
 [package]
 name = "auri"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["SuryakiranMK", "Antigravity"]
 description = "A Minimalist, Ultra-Lightweight, Gaming-First Desktop Music Player"
@@ -13,6 +13,7 @@ ringbuf = "0.6.0"
 
 [build-dependencies]
 slint-build = "1.18.1"
+winres = "0.1"
 
 [profile.release]
 opt-level = 3
