@@ -1,18 +1,18 @@
-// AURI Normal Mode View (Complete Desktop Experience)
+// AURI Normal Mode View (Apple Music & YouTube Music Sleek Aesthetic)
 import { Theme } from "theme.slint";
-import { TrackData, AlbumData, ArtistData, QueueItemData } from "models.slint";
+import { TrackData } from "models.slint";
 import { AuriIconButton, AuriPlayButton, AuriSlider, AuriNavButton } from "components.slint";
 
 export component NormalModeView inherits Rectangle {
-    in property <int> layout_variant: 0; // 0 = Variant A1 (Right Card Ref 1), 1 = Variant A2 (Docked Bottom Bar)
+    in property <int> layout_variant: 0; // 0 = Variant A1 (Right Queue Panel), 1 = Variant A2 (Docked Bottom Bar)
     in property <string> current_nav: "home";
     in property <bool> is_playing: false;
     in property <string> track_title: "Saldo 0,7";
-    in property <string> track_artist: "Taco Hemingway, Szprycer";
+    in property <string> track_artist: "Taco Hemingway";
     in property <string> track_duration: "3:34";
     in property <string> track_elapsed: "1:18";
     in property <float> track_progress: 0.36;
-    in property <float> volume: 0.72;
+    in property <float> volume: 0.75;
     in property <bool> is_favorite: true;
     in property <bool> is_shuffle: false;
     in property <bool> is_repeat: false;
@@ -42,16 +42,12 @@ export component NormalModeView inherits Rectangle {
     background: Theme.bg_app;
 
     VerticalLayout {
-        spacing: 0;
-        padding: 0;
-
-        // Top main split (Sidebar + Main + Optional Right Queue)
+        // Main Horizontal Split: Left Sidebar | Center Content | Right Panel
         HorizontalLayout {
-            spacing: 0;
-            horizontal_stretch: 1;
+            vertical_stretch: 1;
 
             // ==========================================
-            // LEFT SIDEBAR
+            // LEFT SIDEBAR: SLEEK NAVIGATION
             // ==========================================
             Rectangle {
                 width: 220px;
@@ -60,12 +56,12 @@ export component NormalModeView inherits Rectangle {
                 border-color: Theme.border_subtle;
 
                 VerticalLayout {
-                    padding: 18px;
+                    padding: 16px;
                     spacing: 16px;
 
-                    // Brand Logo
+                    // Brand Logo & Version
                     HorizontalLayout {
-                        spacing: 8px;
+                        spacing: 10px;
                         alignment: start;
 
                         Rectangle {
@@ -76,9 +72,9 @@ export component NormalModeView inherits Rectangle {
 
                             Text {
                                 text: "A";
-                                font_size: 16px;
+                                font_size: 15px;
                                 font_weight: 800;
-                                color: Theme.text_primary;
+                                color: #FFFFFF;
                                 horizontal_alignment: center;
                                 vertical_alignment: center;
                             }
@@ -88,8 +84,8 @@ export component NormalModeView inherits Rectangle {
                             text: "AURI";
                             font_size: 18px;
                             font_weight: 800;
-                            letter_spacing: 1px;
-                            color: Theme.text_primary;
+                            letter_spacing: 1.2px;
+                            color: #FFFFFF;
                             vertical_alignment: center;
                         }
 
@@ -101,8 +97,9 @@ export component NormalModeView inherits Rectangle {
                             y: (parent.height - self.height) / 2;
 
                             Text {
-                                text: "0.1.0";
+                                text: "1.0.1";
                                 font_size: 10px;
+                                font_weight: 600;
                                 color: Theme.badge_text;
                                 horizontal_alignment: center;
                                 vertical_alignment: center;
@@ -110,12 +107,12 @@ export component NormalModeView inherits Rectangle {
                         }
                     }
 
-                    // Main Menu Section
+                    // Navigation Menu
                     VerticalLayout {
-                        spacing: 4px;
+                        spacing: 3px;
 
                         Text {
-                            text: "MENU";
+                            text: "LIBRARY";
                             font_size: 11px;
                             font_weight: 700;
                             letter_spacing: 0.8px;
@@ -123,933 +120,694 @@ export component NormalModeView inherits Rectangle {
                         }
 
                         AuriNavButton {
-                            icon: "⌂";
+                            icon_source: @image-url("../assets/icons/music.svg");
                             label: "Home";
                             is_selected: root.current_nav == "home";
+                            tooltip: "Home (Featured & Quick Picks)";
                             clicked => { root.navigate("home"); }
                         }
                         AuriNavButton {
-                            icon: "◎";
+                            icon_source: @image-url("../assets/icons/search.svg");
+                            label: "Search";
+                            is_selected: root.current_nav == "search";
+                            tooltip: "YouTube Music & Local Search";
+                            clicked => { root.navigate("search"); }
+                        }
+                        AuriNavButton {
+                            icon_source: @image-url("../assets/icons/album.svg");
                             label: "Albums";
                             is_selected: root.current_nav == "albums";
+                            tooltip: "Music Albums";
                             clicked => { root.navigate("albums"); }
                         }
                         AuriNavButton {
-                            icon: "🖿";
+                            icon_source: @image-url("../assets/icons/folder.svg");
                             label: "Local Files";
                             badge: "482";
                             is_selected: root.current_nav == "local";
+                            tooltip: "Scanned Local Audio Files";
                             clicked => { root.navigate("local"); }
                         }
                         AuriNavButton {
-                            icon: "♥";
+                            icon_source: @image-url("../assets/icons/heart.svg");
                             label: "Favorites";
                             is_selected: root.current_nav == "favorites";
+                            tooltip: "Starred & Favorite Tracks";
                             clicked => { root.navigate("favorites"); }
                         }
                         AuriNavButton {
-                            icon: "≡";
+                            icon_source: @image-url("../assets/icons/queue.svg");
                             label: "Playlists";
                             is_selected: root.current_nav == "playlists";
+                            tooltip: "Custom Playlists";
                             clicked => { root.navigate("playlists"); }
-                        }
-                    }
-
-                    // Quick Library (Replacing Removed Friends Panel)
-                    VerticalLayout {
-                        spacing: 4px;
-
-                        Text {
-                            text: "LIBRARY SHORTCUTS";
-                            font_size: 11px;
-                            font_weight: 700;
-                            letter_spacing: 0.8px;
-                            color: Theme.text_muted;
-                        }
-
-                        AuriNavButton {
-                            icon: "↓";
-                            label: "Downloads";
-                            is_selected: root.current_nav == "downloads";
-                            clicked => { root.navigate("downloads"); }
-                        }
-                        AuriNavButton {
-                            icon: "⏱";
-                            label: "Recently Added";
-                            is_selected: root.current_nav == "recent";
-                            clicked => { root.navigate("recent"); }
-                        }
-                        AuriNavButton {
-                            icon: "◈";
-                            label: "Hi-Res FLACs";
-                            badge: "96k";
-                            is_selected: root.current_nav == "hires";
-                            clicked => { root.navigate("hires"); }
                         }
                     }
 
                     // Spacer
                     Rectangle { vertical_stretch: 1; }
 
-                    // Mode Switcher Controls
-                    VerticalLayout {
-                        spacing: 6px;
+                    // System Performance Pill & RAM Optimization
+                    Rectangle {
+                        height: 70px;
+                        border-radius: Theme.radius_md;
+                        background: Theme.bg_surface;
+                        border-width: 1px;
+                        border-color: Theme.border_subtle;
 
-                        Text {
-                            text: "OPERATING MODES";
-                            font_size: 11px;
-                            font_weight: 700;
-                            letter_spacing: 0.8px;
-                            color: Theme.text_muted;
-                        }
-
-                        Rectangle {
-                            height: 36px;
-                            border-radius: Theme.radius_md;
-                            background: Theme.bg_surface;
-                            border-width: 1px;
-                            border-color: Theme.border_subtle;
-
-                            TouchArea {
-                                clicked => { root.switch_to_mini(); }
-                            }
+                        VerticalLayout {
+                            padding: 8px;
+                            spacing: 4px;
 
                             HorizontalLayout {
-                                padding_left: 10px;
-                                padding_right: 10px;
-                                spacing: 8px;
-
                                 Text {
-                                    text: "◱";
-                                    font_size: 14px;
-                                    color: Theme.accent_hover;
-                                    vertical_alignment: center;
-                                }
-                                Text {
-                                    text: "Mini Player";
-                                    font_size: 12px;
-                                    font_weight: 600;
-                                    color: Theme.text_primary;
-                                    vertical_alignment: center;
-                                    horizontal_stretch: 1;
-                                }
-                                Text {
-                                    text: "50 MB";
-                                    font_size: 10px;
+                                    text: "RAM COMMITTED";
+                                    font_size: 9px;
+                                    font_weight: 700;
+                                    letter_spacing: 0.5px;
                                     color: Theme.text_muted;
+                                    horizontal_stretch: 1;
                                     vertical_alignment: center;
                                 }
-                            }
-                        }
 
-                        Rectangle {
-                            height: 36px;
-                            border-radius: Theme.radius_md;
-                            background: #1A1325;
-                            border-width: 1px;
-                            border-color: #4C1D95;
-
-                            TouchArea {
-                                clicked => { root.switch_to_gaming(); }
+                                Text {
+                                    text: root.ram_usage;
+                                    font_size: 11px;
+                                    font_weight: 700;
+                                    color: #10B981;
+                                    vertical_alignment: center;
+                                }
                             }
 
                             HorizontalLayout {
-                                padding_left: 10px;
-                                padding_right: 10px;
-                                spacing: 8px;
+                                spacing: 6px;
 
-                                Text {
-                                    text: "⚡";
-                                    font_size: 14px;
-                                    color: #A855F7;
-                                    vertical_alignment: center;
-                                }
-                                Text {
-                                    text: "Gaming Mode";
-                                    font_size: 12px;
-                                    font_weight: 600;
-                                    color: #E9D5FF;
-                                    vertical_alignment: center;
+                                Rectangle {
                                     horizontal_stretch: 1;
-                                }
-                                Text {
-                                    text: "0% GPU";
-                                    font_size: 10px;
-                                    color: #A855F7;
-                                    vertical_alignment: center;
+                                    height: 24px;
+                                    border-radius: 6px;
+                                    background: trim_touch.has_hover ? Theme.bg_surface_hover : Theme.bg_surface_elevated;
+
+                                    trim_touch := TouchArea {
+                                        clicked => { root.trim_ram(); }
+                                    }
+
+                                    Text {
+                                        text: "Trim Working Set";
+                                        font_size: 10px;
+                                        font_weight: 600;
+                                        color: Theme.text_secondary;
+                                        horizontal_alignment: center;
+                                        vertical_alignment: center;
+                                    }
                                 }
                             }
                         }
+                    }
 
-                        AuriNavButton {
-                            icon: "⚙";
-                            label: "Settings";
-                            is_selected: root.current_nav == "settings";
-                            clicked => { root.navigate("settings"); }
-                        }
+                    // Settings Button
+                    AuriNavButton {
+                        icon_source: @image-url("../assets/icons/settings.svg");
+                        label: "Settings";
+                        is_selected: root.current_nav == "settings";
+                        tooltip: "App & Performance Preferences";
+                        clicked => { root.navigate("settings"); }
                     }
                 }
             }
 
             // ==========================================
-            // CENTER MAIN CONTENT WORKSPACE
+            // CENTER CONTENT: SLEEK APPLE/YOUTUBE MUSIC
             // ==========================================
             Rectangle {
                 horizontal_stretch: 1;
                 background: Theme.bg_app;
 
                 VerticalLayout {
-                    padding: 24px;
-                    spacing: 20px;
+                    padding: 20px;
+                    spacing: 16px;
 
-                    // Top Bar (Search + Quick Status + Volume + Profile)
+                    // Top Bar (Search + Volume + Fast Mode Switchers)
                     HorizontalLayout {
-                        spacing: 16px;
+                        spacing: 14px;
                         height: 40px;
 
-                        // Search Pill Input
-                        Rectangle {
+                        // Clickable Search Bar
+                        search_box := Rectangle {
                             horizontal_stretch: 1;
                             height: 38px;
                             border-radius: Theme.radius_pill;
                             background: Theme.bg_surface;
                             border-width: 1px;
-                            border-color: Theme.border_subtle;
+                            border-color: search_input.has_focus ? Theme.accent : Theme.border_subtle;
+                            animate border-color { duration: 120ms; }
+
+                            // Entire container touch area forwards focus
+                            TouchArea {
+                                clicked => { search_input.focus(); }
+                            }
 
                             HorizontalLayout {
-                                padding_left: 16px;
-                                padding_right: 16px;
+                                padding_left: 14px;
+                                padding_right: 14px;
                                 spacing: 10px;
 
-                                Text {
-                                    text: "🔍";
-                                    font_size: 13px;
-                                    color: Theme.text_muted;
-                                    vertical_alignment: center;
+                                Image {
+                                    source: @image-url("../assets/icons/search.svg");
+                                    width: 16px;
+                                    height: 16px;
+                                    image-fit: contain;
+                                    colorize: search_input.has_focus ? Theme.accent : Theme.text_muted;
+                                    y: (parent.height - self.height) / 2;
                                 }
 
-                                search_input := TextInput {
-                                    text <=> root.search_query;
-                                    font_size: 13px;
-                                    color: Theme.text_primary;
-                                    vertical_alignment: center;
+                                Rectangle {
                                     horizontal_stretch: 1;
-                                    accepted => {
-                                        root.navigate("search");
-                                        root.perform_search(self.text);
+
+                                    if search_input.text == "": Text {
+                                        x: 0;
+                                        width: 100%;
+                                        height: 100%;
+                                        text: "Search YouTube Music & local files (press Enter)...";
+                                        font_size: 13px;
+                                        color: Theme.text_muted;
+                                        vertical_alignment: center;
+                                    }
+
+                                    search_input := TextInput {
+                                        x: 0;
+                                        width: 100%;
+                                        height: 100%;
+                                        text <=> root.search_query;
+                                        font_size: 13px;
+                                        color: Theme.text_primary;
+                                        vertical_alignment: center;
+                                        accepted => {
+                                            root.navigate("search");
+                                            root.perform_search(self.text);
+                                        }
                                     }
                                 }
 
-                                if search_input.text == "": Text {
-                                    text: "Search YouTube Music & local library (press Enter)...";
-                                    font_size: 12px;
-                                    color: Theme.text_muted;
-                                    vertical_alignment: center;
+                                if search_input.text != "": AuriIconButton {
+                                    icon_source: @image-url("../assets/icons/close.svg");
+                                    icon_size: 12px;
+                                    btn_size: 24px;
+                                    tooltip: "Clear Search";
+                                    clicked => {
+                                        search_input.text = "";
+                                        root.perform_search("");
+                                    }
                                 }
                             }
                         }
 
-                        // Volume Control
+                        // Volume Control Slider
                         HorizontalLayout {
                             spacing: 8px;
                             width: 130px;
+                            alignment: center;
 
-                            Text {
-                                text: "🔊";
-                                font_size: 13px;
-                                color: Theme.text_secondary;
-                                vertical_alignment: center;
+                            AuriIconButton {
+                                icon_source: root.volume == 0.0 ? @image-url("../assets/icons/volume-mute.svg") : @image-url("../assets/icons/volume.svg");
+                                icon_size: 16px;
+                                btn_size: 28px;
+                                tooltip: root.volume == 0.0 ? "Unmute Volume" : "Mute Volume";
+                                clicked => {
+                                    if (root.volume > 0.0) {
+                                        root.volume_changed(0.0);
+                                    } else {
+                                        root.volume_changed(0.75);
+                                    }
+                                }
                             }
+
                             AuriSlider {
                                 value: root.volume;
+                                horizontal_stretch: 1;
                                 value_changed(val) => { root.volume_changed(val); }
                             }
                         }
 
-                        // User Avatar
-                        Rectangle {
-                            width: 38px;
-                            height: 38px;
-                            border-radius: 19px;
-                            background: #3B82F6;
+                        // Fast Mode Switchers
+                        HorizontalLayout {
+                            spacing: 6px;
+                            alignment: center;
 
-                            Text {
-                                text: "A";
-                                font_size: 15px;
-                                font_weight: 700;
-                                color: Theme.text_primary;
-                                horizontal_alignment: center;
-                                vertical_alignment: center;
+                            // Mini Mode Switch
+                            AuriIconButton {
+                                icon_source: @image-url("../assets/icons/mini.svg");
+                                icon_size: 16px;
+                                btn_size: 32px;
+                                tooltip: "Switch to Floating Mini Player (Ref 2)";
+                                clicked => { root.switch_to_mini(); }
+                            }
+
+                            // Gaming HUD Switch
+                            AuriIconButton {
+                                icon_source: @image-url("../assets/icons/gamepad.svg");
+                                icon_size: 16px;
+                                btn_size: 32px;
+                                tooltip: "Switch to Gaming HUD (Ultra-Low RAM)";
+                                clicked => { root.switch_to_gaming(); }
                             }
                         }
                     }
 
-                    // Content Viewport
+                    // Content Viewport: HOME VIEW (Clean Apple / YouTube Music Simplicity)
                     if root.current_nav == "home": VerticalLayout {
-                        spacing: 22px;
+                        spacing: 20px;
                         vertical_stretch: 1;
 
-                        // Hero Artist Header (Reference 1 style)
-                        Rectangle {
-                            height: 100px;
-                            border-radius: Theme.radius_lg;
-                            background: Theme.bg_surface;
-                            border-width: 1px;
-                            border-color: Theme.border_subtle;
+                        // Quick Picks / Popular Tracks Table (Clean, sleek rows)
+                        VerticalLayout {
+                            spacing: 8px;
 
                             HorizontalLayout {
-                                padding: 16px;
-                                spacing: 20px;
-
-                                // Artist Avatar
-                                Rectangle {
-                                    width: 68px;
-                                    height: 68px;
-                                    border-radius: 34px;
-                                    background: #D97706;
-
-                                    Text {
-                                        text: "🎤";
-                                        font_size: 28px;
-                                        horizontal_alignment: center;
-                                        vertical_alignment: center;
-                                    }
+                                Text {
+                                    text: "Quick Picks & Trending";
+                                    font_size: 18px;
+                                    font_weight: 800;
+                                    color: #FFFFFF;
+                                    horizontal_stretch: 1;
+                                    vertical_alignment: center;
                                 }
 
-                                VerticalLayout {
-                                    alignment: center;
-                                    spacing: 6px;
-                                    horizontal_stretch: 1;
+                                Text {
+                                    text: "Click any song to play instantly";
+                                    font_size: 11px;
+                                    color: Theme.text_muted;
+                                    vertical_alignment: center;
+                                }
+                            }
 
-                                    Text {
-                                        text: "Taco Hemingway";
-                                        font_size: 26px;
-                                        font_weight: 800;
-                                        color: Theme.text_primary;
+                            // Songs Table
+                            VerticalLayout {
+                                spacing: 4px;
+
+                                // Song Row 1
+                                Rectangle {
+                                    height: 48px;
+                                    border-radius: Theme.radius_md;
+                                    background: row1_touch.has_hover ? Theme.bg_surface_hover : Theme.bg_surface;
+                                    border-width: 1px;
+                                    border-color: Theme.border_subtle;
+
+                                    row1_touch := TouchArea {
+                                        clicked => {
+                                            root.play_stream_track("mock-1", "Saldo 0,7", "Taco Hemingway", 214);
+                                        }
                                     }
 
                                     HorizontalLayout {
-                                        spacing: 12px;
+                                        padding_left: 14px;
+                                        padding_right: 14px;
+                                        spacing: 14px;
+                                        alignment: center;
+
+                                        Text { text: "1"; font_size: 13px; font_weight: 600; color: Theme.text_muted; width: 16px; vertical_alignment: center; }
 
                                         Rectangle {
-                                            width: 74px;
-                                            height: 26px;
-                                            border-radius: 13px;
-                                            background: Theme.bg_surface_elevated;
-
-                                            Text {
-                                                text: "+ Follow";
-                                                font_size: 11px;
-                                                font_weight: 600;
-                                                color: Theme.text_secondary;
-                                                horizontal_alignment: center;
-                                                vertical_alignment: center;
-                                            }
+                                            width: 32px;
+                                            height: 32px;
+                                            border-radius: 6px;
+                                            background: #EC4899;
+                                            clip: true;
+                                            Text { text: "🎵"; font_size: 14px; horizontal_alignment: center; vertical_alignment: center; }
                                         }
 
-                                        Text {
-                                            text: "1,842,109 monthly listeners • 6 Studio Albums";
-                                            font_size: 12px;
-                                            color: Theme.text_muted;
-                                            vertical_alignment: center;
+                                        VerticalLayout {
+                                            horizontal_stretch: 1;
+                                            alignment: center;
+                                            spacing: 1px;
+                                            Text { text: "Saldo 0,7"; font_size: 13px; font_weight: 600; color: #FFFFFF; }
+                                            Text { text: "Taco Hemingway • Szprycer"; font_size: 11px; color: Theme.text_secondary; }
+                                        }
+
+                                        Text { text: "3:34"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
+
+                                        AuriIconButton {
+                                            icon_source: @image-url("../assets/icons/play.svg");
+                                            icon_size: 14px;
+                                            btn_size: 28px;
+                                            tooltip: "Play Saldo 0,7";
+                                            clicked => {
+                                                root.play_stream_track("mock-1", "Saldo 0,7", "Taco Hemingway", 214);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Song Row 2
+                                Rectangle {
+                                    height: 48px;
+                                    border-radius: Theme.radius_md;
+                                    background: row2_touch.has_hover ? Theme.bg_surface_hover : Theme.bg_surface;
+                                    border-width: 1px;
+                                    border-color: Theme.border_subtle;
+
+                                    row2_touch := TouchArea {
+                                        clicked => {
+                                            root.play_stream_track("mock-2", "Tamagotchi", "Taco Hemingway ft. Quebonafide", 198);
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        padding_left: 14px;
+                                        padding_right: 14px;
+                                        spacing: 14px;
+                                        alignment: center;
+
+                                        Text { text: "2"; font_size: 13px; font_weight: 600; color: Theme.text_muted; width: 16px; vertical_alignment: center; }
+
+                                        Rectangle {
+                                            width: 32px;
+                                            height: 32px;
+                                            border-radius: 6px;
+                                            background: #8B5CF6;
+                                            clip: true;
+                                            Text { text: "🎵"; font_size: 14px; horizontal_alignment: center; vertical_alignment: center; }
+                                        }
+
+                                        VerticalLayout {
+                                            horizontal_stretch: 1;
+                                            alignment: center;
+                                            spacing: 1px;
+                                            Text { text: "Tamagotchi"; font_size: 13px; font_weight: 600; color: #FFFFFF; }
+                                            Text { text: "Taco Hemingway, Quebonafide • Soma 0,5"; font_size: 11px; color: Theme.text_secondary; }
+                                        }
+
+                                        Text { text: "3:18"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
+
+                                        AuriIconButton {
+                                            icon_source: @image-url("../assets/icons/play.svg");
+                                            icon_size: 14px;
+                                            btn_size: 28px;
+                                            tooltip: "Play Tamagotchi";
+                                            clicked => {
+                                                root.play_stream_track("mock-2", "Tamagotchi", "Taco Hemingway ft. Quebonafide", 198);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Song Row 3
+                                Rectangle {
+                                    height: 48px;
+                                    border-radius: Theme.radius_md;
+                                    background: row3_touch.has_hover ? Theme.bg_surface_hover : Theme.bg_surface;
+                                    border-width: 1px;
+                                    border-color: Theme.border_subtle;
+
+                                    row3_touch := TouchArea {
+                                        clicked => {
+                                            root.play_stream_track("mock-3", "Wszystko na niby", "Taco Hemingway", 222);
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        padding_left: 14px;
+                                        padding_right: 14px;
+                                        spacing: 14px;
+                                        alignment: center;
+
+                                        Text { text: "3"; font_size: 13px; font_weight: 600; color: Theme.text_muted; width: 16px; vertical_alignment: center; }
+
+                                        Rectangle {
+                                            width: 32px;
+                                            height: 32px;
+                                            border-radius: 6px;
+                                            background: #10B981;
+                                            clip: true;
+                                            Text { text: "🎵"; font_size: 14px; horizontal_alignment: center; vertical_alignment: center; }
+                                        }
+
+                                        VerticalLayout {
+                                            horizontal_stretch: 1;
+                                            alignment: center;
+                                            spacing: 1px;
+                                            Text { text: "Wszystko na niby"; font_size: 13px; font_weight: 600; color: #FFFFFF; }
+                                            Text { text: "Taco Hemingway • Café Belga"; font_size: 11px; color: Theme.text_secondary; }
+                                        }
+
+                                        Text { text: "3:42"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
+
+                                        AuriIconButton {
+                                            icon_source: @image-url("../assets/icons/play.svg");
+                                            icon_size: 14px;
+                                            btn_size: 28px;
+                                            tooltip: "Play Wszystko na niby";
+                                            clicked => {
+                                                root.play_stream_track("mock-3", "Wszystko na niby", "Taco Hemingway", 222);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // Song Row 4: Gemini (Elder)
+                                Rectangle {
+                                    height: 48px;
+                                    border-radius: Theme.radius_md;
+                                    background: row4_touch.has_hover ? Theme.bg_surface_hover : Theme.bg_surface;
+                                    border-width: 1px;
+                                    border-color: Theme.border_subtle;
+
+                                    row4_touch := TouchArea {
+                                        clicked => {
+                                            root.play_stream_track("mock-4", "Gemini", "Elder", 580);
+                                        }
+                                    }
+
+                                    HorizontalLayout {
+                                        padding_left: 14px;
+                                        padding_right: 14px;
+                                        spacing: 14px;
+                                        alignment: center;
+
+                                        Text { text: "4"; font_size: 13px; font_weight: 600; color: Theme.text_muted; width: 16px; vertical_alignment: center; }
+
+                                        Rectangle {
+                                            width: 32px;
+                                            height: 32px;
+                                            border-radius: 6px;
+                                            background: #F59E0B;
+                                            clip: true;
+                                            Text { text: "🎵"; font_size: 14px; horizontal_alignment: center; vertical_alignment: center; }
+                                        }
+
+                                        VerticalLayout {
+                                            horizontal_stretch: 1;
+                                            alignment: center;
+                                            spacing: 1px;
+                                            Text { text: "Gemini"; font_size: 13px; font_weight: 600; color: #FFFFFF; }
+                                            Text { text: "Elder • Dead Roots Stirring"; font_size: 11px; color: Theme.text_secondary; }
+                                        }
+
+                                        Text { text: "9:40"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
+
+                                        AuriIconButton {
+                                            icon_source: @image-url("../assets/icons/play.svg");
+                                            icon_size: 14px;
+                                            btn_size: 28px;
+                                            tooltip: "Play Gemini";
+                                            clicked => {
+                                                root.play_stream_track("mock-4", "Gemini", "Elder", 580);
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
 
-                        // Albums Row (Reference 1 Style)
+                        // Featured Albums Row (Reference 1 style)
                         VerticalLayout {
-                            spacing: 12px;
+                            spacing: 8px;
 
-                            HorizontalLayout {
-                                Text {
-                                    text: "Albums";
-                                    font_size: 18px;
-                                    font_weight: 700;
-                                    color: Theme.text_primary;
-                                    horizontal_stretch: 1;
-                                }
-                                Text {
-                                    text: "Sort by ▾";
-                                    font_size: 12px;
-                                    color: Theme.text_muted;
-                                }
+                            Text {
+                                text: "Featured Albums";
+                                font_size: 16px;
+                                font_weight: 800;
+                                color: #FFFFFF;
                             }
 
-                            // 5 Album Cards in a clean row
                             HorizontalLayout {
                                 spacing: 14px;
 
+                                // Album 1
                                 Rectangle {
                                     horizontal_stretch: 1;
-                                    height: 140px;
-                                    border-radius: Theme.radius_md;
-                                    background: #EF444426;
-                                    border-width: 1px;
-                                    border-color: Theme.border_subtle;
-
-                                    VerticalLayout {
-                                        padding: 10px;
-                                        spacing: 6px;
-                                        Rectangle {
-                                            horizontal_stretch: 1;
-                                            height: 80px;
-                                            border-radius: Theme.radius_sm;
-                                            background: #EF4444;
-                                        }
-                                        Text { text: "Pocztówka z WWA"; font_size: 11px; font_weight: 600; color: Theme.text_primary; overflow: elide; }
-                                        Text { text: "2019"; font_size: 10px; color: Theme.text_muted; }
-                                    }
-                                }
-
-                                Rectangle {
-                                    horizontal_stretch: 1;
-                                    height: 140px;
-                                    border-radius: Theme.radius_md;
-                                    background: #3B82F626;
-                                    border-width: 1px;
-                                    border-color: Theme.border_subtle;
-
-                                    VerticalLayout {
-                                        padding: 10px;
-                                        spacing: 6px;
-                                        Rectangle {
-                                            horizontal_stretch: 1;
-                                            height: 80px;
-                                            border-radius: Theme.radius_sm;
-                                            background: #3B82F6;
-                                        }
-                                        Text { text: "Café Belga"; font_size: 11px; font_weight: 600; color: Theme.text_primary; overflow: elide; }
-                                        Text { text: "2018"; font_size: 10px; color: Theme.text_muted; }
-                                    }
-                                }
-
-                                Rectangle {
-                                    horizontal_stretch: 1;
-                                    height: 140px;
-                                    border-radius: Theme.radius_md;
-                                    background: #10B98126;
-                                    border-width: 1px;
-                                    border-color: Theme.border_subtle;
-
-                                    VerticalLayout {
-                                        padding: 10px;
-                                        spacing: 6px;
-                                        Rectangle {
-                                            horizontal_stretch: 1;
-                                            height: 80px;
-                                            border-radius: Theme.radius_sm;
-                                            background: #10B981;
-                                        }
-                                        Text { text: "Flagey EP"; font_size: 11px; font_weight: 600; color: Theme.text_primary; overflow: elide; }
-                                        Text { text: "2018"; font_size: 10px; color: Theme.text_muted; }
-                                    }
-                                }
-
-                                Rectangle {
-                                    horizontal_stretch: 1;
-                                    height: 140px;
-                                    border-radius: Theme.radius_md;
-                                    background: #8B5CF626;
-                                    border-width: 1px;
-                                    border-color: Theme.border_subtle;
-
-                                    VerticalLayout {
-                                        padding: 10px;
-                                        spacing: 6px;
-                                        Rectangle {
-                                            horizontal_stretch: 1;
-                                            height: 80px;
-                                            border-radius: Theme.radius_sm;
-                                            background: #8B5CF6;
-                                        }
-                                        Text { text: "Szprycer"; font_size: 11px; font_weight: 600; color: Theme.text_primary; overflow: elide; }
-                                        Text { text: "2017"; font_size: 10px; color: Theme.text_muted; }
-                                    }
-                                }
-
-                                Rectangle {
-                                    horizontal_stretch: 1;
-                                    height: 140px;
-                                    border-radius: Theme.radius_md;
-                                    background: #F59E0B26;
-                                    border-width: 1px;
-                                    border-color: Theme.border_subtle;
-
-                                    VerticalLayout {
-                                        padding: 10px;
-                                        spacing: 6px;
-                                        Rectangle {
-                                            horizontal_stretch: 1;
-                                            height: 80px;
-                                            border-radius: Theme.radius_sm;
-                                            background: #F59E0B;
-                                        }
-                                        Text { text: "Marmur"; font_size: 11px; font_weight: 600; color: Theme.text_primary; overflow: elide; }
-                                        Text { text: "2016"; font_size: 10px; color: Theme.text_muted; }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Lower Two-Column Section: Popular Tracks + Similar Artists
-                        HorizontalLayout {
-                            spacing: 20px;
-                            vertical_stretch: 1;
-
-                            // Popular Tracks
-                            VerticalLayout {
-                                horizontal_stretch: 3;
-                                spacing: 8px;
-
-                                Text {
-                                    text: "Popular Tracks";
-                                    font_size: 16px;
-                                    font_weight: 700;
-                                    color: Theme.text_primary;
-                                }
-
-                                // Track Item 1
-                                Rectangle {
-                                    height: 38px;
+                                    height: 110px;
                                     border-radius: Theme.radius_md;
                                     background: Theme.bg_surface;
-                                    HorizontalLayout {
-                                        padding_left: 12px;
-                                        padding_right: 12px;
-                                        spacing: 12px;
-                                        Text { text: "1"; font_size: 12px; color: Theme.accent; font_weight: 700; vertical_alignment: center; }
-                                        Text { text: "Tamagotchi"; font_size: 13px; font_weight: 600; color: Theme.text_primary; vertical_alignment: center; horizontal_stretch: 1; }
-                                        Text { text: "Quebonafide, Soma 0,5"; font_size: 11px; color: Theme.text_muted; vertical_alignment: center; }
-                                        Text { text: "♥"; font_size: 13px; color: Theme.favorite_active; vertical_alignment: center; }
-                                        Text { text: "3:22"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
-                                    }
-                                }
+                                    border-width: 1px;
+                                    border-color: Theme.border_subtle;
 
-                                // Track Item 2
-                                Rectangle {
-                                    height: 38px;
-                                    border-radius: Theme.radius_md;
-                                    background: Colors.transparent;
-                                    HorizontalLayout {
-                                        padding_left: 12px;
-                                        padding_right: 12px;
-                                        spacing: 12px;
-                                        Text { text: "2"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
-                                        Text { text: "Wszystko na niby"; font_size: 13px; font_weight: 600; color: Theme.text_primary; vertical_alignment: center; horizontal_stretch: 1; }
-                                        Text { text: "Café Belga"; font_size: 11px; color: Theme.text_muted; vertical_alignment: center; }
-                                        Text { text: "♡"; font_size: 13px; color: Theme.text_muted; vertical_alignment: center; }
-                                        Text { text: "3:45"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
-                                    }
-                                }
-
-                                // Track Item 3
-                                Rectangle {
-                                    height: 38px;
-                                    border-radius: Theme.radius_md;
-                                    background: Colors.transparent;
-                                    HorizontalLayout {
-                                        padding_left: 12px;
-                                        padding_right: 12px;
-                                        spacing: 12px;
-                                        Text { text: "3"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
-                                        Text { text: "W piątki leżę w wannie"; font_size: 13px; font_weight: 600; color: Theme.text_primary; vertical_alignment: center; horizontal_stretch: 1; }
-                                        Text { text: "Dawid Podsiadło"; font_size: 11px; color: Theme.text_muted; vertical_alignment: center; }
-                                        Text { text: "♥"; font_size: 13px; color: Theme.favorite_active; vertical_alignment: center; }
-                                        Text { text: "4:10"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
-                                    }
-                                }
-                            }
-
-                            // Similar Artists
-                            VerticalLayout {
-                                horizontal_stretch: 2;
-                                spacing: 8px;
-
-                                Text {
-                                    text: "Similar Artists";
-                                    font_size: 16px;
-                                    font_weight: 700;
-                                    color: Theme.text_primary;
-                                }
-
-                                HorizontalLayout {
-                                    spacing: 10px;
-                                    Rectangle { width: 34px; height: 34px; border-radius: 17px; background: #6366F1; }
                                     VerticalLayout {
-                                        alignment: center;
-                                        horizontal_stretch: 1;
-                                        Text { text: "Dawid Podsiadło"; font_size: 12px; font_weight: 600; color: Theme.text_primary; }
-                                        Text { text: "2.4M Listeners"; font_size: 10px; color: Theme.text_muted; }
-                                    }
-                                    Rectangle {
-                                        width: 60px; height: 24px; border-radius: 12px; background: Theme.bg_surface;
-                                        y: (parent.height - self.height) / 2;
-                                        Text { text: "+ Follow"; font_size: 10px; color: Theme.text_secondary; horizontal_alignment: center; vertical_alignment: center; }
+                                        padding: 10px;
+                                        spacing: 6px;
+
+                                        Rectangle {
+                                            height: 54px;
+                                            border-radius: 6px;
+                                            background: #3B82F6;
+                                            clip: true;
+                                            Text { text: "💿"; font_size: 20px; horizontal_alignment: center; vertical_alignment: center; }
+                                        }
+
+                                        Text { text: "Pocztówka z WWA"; font_size: 12px; font_weight: 700; color: #FFFFFF; overflow: elide; }
+                                        Text { text: "2019 • 11 tracks"; font_size: 10px; color: Theme.text_muted; }
                                     }
                                 }
 
-                                HorizontalLayout {
-                                    spacing: 10px;
-                                    Rectangle { width: 34px; height: 34px; border-radius: 17px; background: #EC4899; }
+                                // Album 2
+                                Rectangle {
+                                    horizontal_stretch: 1;
+                                    height: 110px;
+                                    border-radius: Theme.radius_md;
+                                    background: Theme.bg_surface;
+                                    border-width: 1px;
+                                    border-color: Theme.border_subtle;
+
                                     VerticalLayout {
-                                        alignment: center;
-                                        horizontal_stretch: 1;
-                                        Text { text: "Billie Eilish"; font_size: 12px; font_weight: 600; color: Theme.text_primary; }
-                                        Text { text: "85M Listeners"; font_size: 10px; color: Theme.text_muted; }
+                                        padding: 10px;
+                                        spacing: 6px;
+
+                                        Rectangle {
+                                            height: 54px;
+                                            border-radius: 6px;
+                                            background: #10B981;
+                                            clip: true;
+                                            Text { text: "💿"; font_size: 20px; horizontal_alignment: center; vertical_alignment: center; }
+                                        }
+
+                                        Text { text: "Café Belga"; font_size: 12px; font_weight: 700; color: #FFFFFF; overflow: elide; }
+                                        Text { text: "2018 • 11 tracks"; font_size: 10px; color: Theme.text_muted; }
                                     }
-                                    Rectangle {
-                                        width: 60px; height: 24px; border-radius: 12px; background: Theme.bg_surface;
-                                        y: (parent.height - self.height) / 2;
-                                        Text { text: "+ Follow"; font_size: 10px; color: Theme.text_secondary; horizontal_alignment: center; vertical_alignment: center; }
+                                }
+
+                                // Album 3
+                                Rectangle {
+                                    horizontal_stretch: 1;
+                                    height: 110px;
+                                    border-radius: Theme.radius_md;
+                                    background: Theme.bg_surface;
+                                    border-width: 1px;
+                                    border-color: Theme.border_subtle;
+
+                                    VerticalLayout {
+                                        padding: 10px;
+                                        spacing: 6px;
+
+                                        Rectangle {
+                                            height: 54px;
+                                            border-radius: 6px;
+                                            background: #F59E0B;
+                                            clip: true;
+                                            Text { text: "💿"; font_size: 20px; horizontal_alignment: center; vertical_alignment: center; }
+                                        }
+
+                                        Text { text: "Szprycer"; font_size: 12px; font_weight: 700; color: #FFFFFF; overflow: elide; }
+                                        Text { text: "2017 • 9 tracks"; font_size: 10px; color: Theme.text_muted; }
+                                    }
+                                }
+
+                                // Album 4
+                                Rectangle {
+                                    horizontal_stretch: 1;
+                                    height: 110px;
+                                    border-radius: Theme.radius_md;
+                                    background: Theme.bg_surface;
+                                    border-width: 1px;
+                                    border-color: Theme.border_subtle;
+
+                                    VerticalLayout {
+                                        padding: 10px;
+                                        spacing: 6px;
+
+                                        Rectangle {
+                                            height: 54px;
+                                            border-radius: 6px;
+                                            background: #8B5CF6;
+                                            clip: true;
+                                            Text { text: "💿"; font_size: 20px; horizontal_alignment: center; vertical_alignment: center; }
+                                        }
+
+                                        Text { text: "Marmur"; font_size: 12px; font_weight: 700; color: #FFFFFF; overflow: elide; }
+                                        Text { text: "2016 • 18 tracks"; font_size: 10px; color: Theme.text_muted; }
                                     }
                                 }
                             }
                         }
                     }
 
-                    // Settings View (When settings tab is selected)
-                    if root.current_nav == "settings": VerticalLayout {
-                        spacing: 16px;
-                        vertical_stretch: 1;
-
-                        Text {
-                            text: "AURI Settings & Live UI Variants";
-                            font_size: 20px;
-                            font_weight: 800;
-                            color: Theme.text_primary;
-                        }
-
-                        // Normal Mode Switcher Card
-                        Rectangle {
-                            border-radius: Theme.radius_md;
-                            background: Theme.bg_surface;
-                            border-width: 1px;
-                            border-color: Theme.border_subtle;
-
-                            VerticalLayout {
-                                padding: 16px;
-                                spacing: 10px;
-
-                                Text {
-                                    text: "Normal Mode Layout Variant";
-                                    font_size: 14px;
-                                    font_weight: 700;
-                                    color: Theme.text_primary;
-                                }
-                                Text {
-                                    text: "Choose how the playback controls are positioned in Normal Mode:";
-                                    font_size: 12px;
-                                    color: Theme.text_muted;
-                                }
-
-                                HorizontalLayout {
-                                    spacing: 14px;
-
-                                    Rectangle {
-                                        horizontal_stretch: 1;
-                                        height: 48px;
-                                        border-radius: Theme.radius_md;
-                                        background: root.layout_variant == 0 ? Theme.bg_surface_elevated : Theme.bg_card;
-                                        border-width: root.layout_variant == 0 ? 2px : 1px;
-                                        border-color: root.layout_variant == 0 ? Theme.accent : Theme.border_subtle;
-
-                                        TouchArea {
-                                            clicked => { root.navigate("set_var_0"); }
-                                        }
-
-                                        HorizontalLayout {
-                                            padding: 12px;
-                                            spacing: 10px;
-                                            Text { text: "▶"; font_size: 14px; color: Theme.accent; vertical_alignment: center; }
-                                            VerticalLayout {
-                                                alignment: center;
-                                                Text { text: "Variant A1 (Reference 1 Style)"; font_size: 12px; font_weight: 600; color: Theme.text_primary; }
-                                                Text { text: "Embedded now-playing card inside the Right Play Queue"; font_size: 10px; color: Theme.text_muted; }
-                                            }
-                                        }
-                                    }
-
-                                    Rectangle {
-                                        horizontal_stretch: 1;
-                                        height: 48px;
-                                        border-radius: Theme.radius_md;
-                                        background: root.layout_variant == 1 ? Theme.bg_surface_elevated : Theme.bg_card;
-                                        border-width: root.layout_variant == 1 ? 2px : 1px;
-                                        border-color: root.layout_variant == 1 ? Theme.accent : Theme.border_subtle;
-
-                                        TouchArea {
-                                            clicked => { root.navigate("set_var_1"); }
-                                        }
-
-                                        HorizontalLayout {
-                                            padding: 12px;
-                                            spacing: 10px;
-                                            Text { text: "⎍"; font_size: 14px; color: Theme.accent; vertical_alignment: center; }
-                                            VerticalLayout {
-                                                alignment: center;
-                                                Text { text: "Variant A2 (Classic Docked Bar)"; font_size: 12px; font_weight: 600; color: Theme.text_primary; }
-                                                Text { text: "Persistent 70px bottom bar with full controls & collapsible queue"; font_size: 10px; color: Theme.text_muted; }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Performance & Engine Status Card
-                        Rectangle {
-                            border-radius: Theme.radius_md;
-                            background: Theme.bg_surface;
-                            border-width: 1px;
-                            border-color: Theme.border_subtle;
-
-                            VerticalLayout {
-                                padding: 16px;
-                                spacing: 10px;
-
-                                Text {
-                                    text: "Engine Diagnostics & Performance Target";
-                                    font_size: 14px;
-                                    font_weight: 700;
-                                    color: Theme.text_primary;
-                                }
-
-                                HorizontalLayout {
-                                    spacing: 12px;
-
-                                    Rectangle {
-                                        horizontal_stretch: 1; height: 50px; border-radius: Theme.radius_sm; background: Theme.bg_card;
-                                        VerticalLayout {
-                                            padding: 8px; alignment: center;
-                                            Text { text: "UI RENDERER"; font_size: 9px; color: Theme.text_muted; }
-                                            Text { text: "Femtovg / Hardware 2D"; font_size: 12px; font_weight: 700; color: Theme.accent_hover; }
-                                        }
-                                    }
-                                    Rectangle {
-                                        horizontal_stretch: 1; height: 50px; border-radius: Theme.radius_sm; background: Theme.bg_card;
-                                        VerticalLayout {
-                                            padding: 8px; alignment: center;
-                                            Text { text: "IDLE CPU BUDGET"; font_size: 9px; color: Theme.text_muted; }
-                                            Text { text: "< 0.5% (0% when idle)"; font_size: 12px; font_weight: 700; color: #10B981; }
-                                        }
-                                    }
-                                    Rectangle {
-                                        horizontal_stretch: 1; height: 50px; border-radius: Theme.radius_sm; background: Theme.bg_card;
-                                        VerticalLayout {
-                                            padding: 8px; alignment: center;
-                                            Text { text: "GAMING MODE RAM"; font_size: 9px; color: Theme.text_muted; }
-                                            Text { text: "< 35 MB (0.0% GPU)"; font_size: 12px; font_weight: 700; color: #8B5CF6; }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Anti-Cheat Safe Game Detection & Working Set Trimmer Card
-                        Rectangle {
-                            border-radius: Theme.radius_md;
-                            background: Theme.bg_surface;
-                            border-width: 1px;
-                            border-color: Theme.border_subtle;
-
-                            VerticalLayout {
-                                padding: 16px;
-                                spacing: 12px;
-
-                                HorizontalLayout {
-                                    Text {
-                                        text: "🎮 Anti-Cheat Safe Game Detection & Working Set Purge";
-                                        font_size: 14px;
-                                        font_weight: 700;
-                                        color: Theme.text_primary;
-                                        horizontal_stretch: 1;
-                                    }
-
-                                    // Auto Game Mode Toggle Pill
-                                    Rectangle {
-                                        width: 140px;
-                                        height: 28px;
-                                        border-radius: 14px;
-                                        background: root.auto_game_mode ? #10B98126 : Theme.bg_card;
-                                        border-width: 1px;
-                                        border-color: root.auto_game_mode ? #10B981 : Theme.border_subtle;
-
-                                        TouchArea {
-                                            clicked => { root.toggle_auto_game(); }
-                                        }
-
-                                        Text {
-                                            text: root.auto_game_mode ? "Auto-Gaming: ON" : "Auto-Gaming: OFF";
-                                            font_size: 11px;
-                                            font_weight: 700;
-                                            color: root.auto_game_mode ? #10B981 : Theme.text_muted;
-                                            horizontal_alignment: center;
-                                            vertical_alignment: center;
-                                        }
-                                    }
-                                }
-
-                                Text {
-                                    text: "Passively monitors foreground window via Win32 SetWinEventHook. Zero DLL injection, zero game memory access, 100% compliant with EAC, BattlEye & Vanguard.";
-                                    font_size: 11px;
-                                    color: Theme.text_muted;
-                                }
-
-                                HorizontalLayout {
-                                    spacing: 12px;
-
-                                    Rectangle {
-                                        horizontal_stretch: 1;
-                                        height: 46px;
-                                        border-radius: Theme.radius_sm;
-                                        background: Theme.bg_card;
-
-                                        HorizontalLayout {
-                                            padding: 10px;
-                                            spacing: 8px;
-                                            Text { text: "🎯"; font_size: 14px; vertical_alignment: center; }
-                                            VerticalLayout {
-                                                alignment: center;
-                                                Text { text: "DETECTED GAME"; font_size: 9px; color: Theme.text_muted; }
-                                                Text {
-                                                    text: root.active_game == "" ? "No game running in foreground" : root.active_game;
-                                                    font_size: 11px;
-                                                    font_weight: 600;
-                                                    color: root.active_game == "" ? Theme.text_secondary : #10B981;
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    Rectangle {
-                                        horizontal_stretch: 1;
-                                        height: 46px;
-                                        border-radius: Theme.radius_sm;
-                                        background: Theme.bg_card;
-
-                                        HorizontalLayout {
-                                            padding: 10px;
-                                            spacing: 8px;
-                                            Text { text: "💾"; font_size: 14px; vertical_alignment: center; }
-                                            VerticalLayout {
-                                                alignment: center;
-                                                Text { text: "WORKING SET (RAM)"; font_size: 9px; color: Theme.text_muted; }
-                                                Text {
-                                                    text: root.ram_usage;
-                                                    font_size: 11px;
-                                                    font_weight: 700;
-                                                    color: #8B5CF6;
-                                                }
-                                            }
-                                        }
-                                    }
-
-                                    // Trim RAM Button
-                                    Rectangle {
-                                        width: 120px;
-                                        height: 46px;
-                                        border-radius: Theme.radius_sm;
-                                        background: #8B5CF626;
-                                        border-width: 1px;
-                                        border-color: #8B5CF6;
-
-                                        TouchArea {
-                                            clicked => { root.trim_ram(); }
-                                        }
-
-                                        Text {
-                                            text: "⚡ Purge RAM";
-                                            font_size: 11px;
-                                            font_weight: 700;
-                                            color: #A855F7;
-                                            horizontal_alignment: center;
-                                            vertical_alignment: center;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Search Results View
+                    // Content Viewport: SEARCH RESULTS VIEW
                     if root.current_nav == "search": VerticalLayout {
-                        spacing: 16px;
+                        spacing: 14px;
                         vertical_stretch: 1;
 
                         HorizontalLayout {
-                            alignment: center;
-                            spacing: 12px;
-
                             Text {
-                                text: "🌐 YouTube Music Streaming Results";
-                                font_size: 20px;
+                                text: root.search_query == "" ? "Search Music" : "Search Results for \"" + root.search_query + "\"";
+                                font_size: 18px;
                                 font_weight: 800;
-                                color: Theme.text_primary;
+                                color: #FFFFFF;
                                 horizontal_stretch: 1;
+                                vertical_alignment: center;
                             }
 
                             Text {
-                                text: root.search_query == "" ? "Type a song name in the search bar above" : "Showing results for \"" + root.search_query + "\"";
-                                font_size: 12px;
+                                text: "Powered by Innertube & Local Engine";
+                                font_size: 11px;
                                 color: Theme.text_muted;
                                 vertical_alignment: center;
                             }
                         }
 
-                        // Tracks List
+                        // Search Results List
                         VerticalLayout {
-                            spacing: 8px;
+                            spacing: 6px;
 
                             for track in root.search_results: Rectangle {
-                                height: 52px;
+                                height: 50px;
                                 border-radius: Theme.radius_md;
-                                background: Theme.bg_surface;
+                                background: item_touch.has_hover ? Theme.bg_surface_hover : Theme.bg_surface;
                                 border-width: 1px;
                                 border-color: Theme.border_subtle;
+
+                                item_touch := TouchArea {
+                                    clicked => {
+                                        root.play_stream_track(track.id, track.title, track.artist, track.duration_secs);
+                                    }
+                                }
 
                                 HorizontalLayout {
                                     padding_left: 14px;
                                     padding_right: 14px;
-                                    spacing: 14px;
+                                    spacing: 12px;
+                                    alignment: center;
 
-                                    // Play Stream Button
-                                    Rectangle {
-                                        width: 32px;
-                                        height: 32px;
-                                        border-radius: 16px;
-                                        background: Theme.accent;
+                                    Image {
+                                        source: @image-url("../assets/icons/play.svg");
+                                        width: 14px;
+                                        height: 14px;
+                                        image-fit: contain;
+                                        colorize: item_touch.has_hover ? Theme.accent : Theme.text_muted;
                                         y: (parent.height - self.height) / 2;
-
-                                        TouchArea {
-                                            clicked => {
-                                                root.play_stream_track(track.id, track.title, track.artist, track.duration_secs);
-                                            }
-                                        }
-
-                                        Text {
-                                            text: "▶";
-                                            font_size: 12px;
-                                            color: #FFFFFF;
-                                            horizontal_alignment: center;
-                                            vertical_alignment: center;
-                                        }
                                     }
 
-                                    // Title & Artist
                                     VerticalLayout {
+                                        horizontal_stretch: 1;
                                         alignment: center;
-                                        horizontal_stretch: 2;
-                                        spacing: 3px;
+                                        spacing: 1px;
 
                                         Text {
                                             text: track.title;
                                             font_size: 13px;
-                                            font_weight: 700;
-                                            color: Theme.text_primary;
+                                            font_weight: 600;
+                                            color: #FFFFFF;
                                             overflow: elide;
                                         }
+
                                         Text {
                                             text: track.artist;
                                             font_size: 11px;
@@ -1058,44 +816,74 @@ export component NormalModeView inherits Rectangle {
                                         }
                                     }
 
-                                    // Album
-                                    Text {
-                                        text: track.album;
-                                        font_size: 12px;
-                                        color: Theme.text_muted;
-                                        vertical_alignment: center;
-                                        horizontal_stretch: 1;
-                                        overflow: elide;
-                                    }
-
-                                    // Format Tag
-                                    Rectangle {
-                                        width: 80px;
-                                        height: 22px;
-                                        border-radius: 11px;
-                                        background: #8B5CF626;
-                                        border-width: 1px;
-                                        border-color: #8B5CF6;
-                                        y: (parent.height - self.height) / 2;
-
-                                        Text {
-                                            text: track.format_badge;
-                                            font_size: 9px;
-                                            font_weight: 700;
-                                            color: #A855F7;
-                                            horizontal_alignment: center;
-                                            vertical_alignment: center;
-                                        }
-                                    }
-
-                                    // Duration
                                     Text {
                                         text: track.duration;
                                         font_size: 12px;
                                         color: Theme.text_muted;
                                         vertical_alignment: center;
-                                        width: 45px;
-                                        horizontal_alignment: right;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Content Viewport: SETTINGS VIEW
+                    if root.current_nav == "settings": VerticalLayout {
+                        spacing: 16px;
+                        vertical_stretch: 1;
+
+                        Text {
+                            text: "AURI Preferences";
+                            font_size: 18px;
+                            font_weight: 800;
+                            color: #FFFFFF;
+                        }
+
+                        Rectangle {
+                            height: 180px;
+                            border-radius: Theme.radius_md;
+                            background: Theme.bg_surface;
+                            border-width: 1px;
+                            border-color: Theme.border_subtle;
+
+                            VerticalLayout {
+                                padding: 16px;
+                                spacing: 14px;
+
+                                HorizontalLayout {
+                                    VerticalLayout {
+                                        horizontal_stretch: 1;
+                                        Text { text: "Normal Mode Layout"; font_size: 13px; font_weight: 600; color: #FFFFFF; }
+                                        Text { text: "Switch between Embedded Right Queue (Ref 1) and Classic Docked Bottom Bar"; font_size: 11px; color: Theme.text_muted; }
+                                    }
+
+                                    AuriIconButton {
+                                        icon_source: @image-url("../assets/icons/queue.svg");
+                                        tooltip: "Embedded Right Queue";
+                                        is_active: root.layout_variant == 0;
+                                        clicked => { root.navigate("set_var_0"); }
+                                    }
+                                    AuriIconButton {
+                                        icon_source: @image-url("../assets/icons/expand.svg");
+                                        tooltip: "Classic Bottom Bar";
+                                        is_active: root.layout_variant == 1;
+                                        clicked => { root.navigate("set_var_1"); }
+                                    }
+                                }
+
+                                HorizontalLayout {
+                                    VerticalLayout {
+                                        horizontal_stretch: 1;
+                                        Text { text: "Gaming Mode Auto-Detection"; font_size: 13px; font_weight: 600; color: #FFFFFF; }
+                                        Text { text: "Automatically trim RAM and drop GPU usage to 0% when games are running"; font_size: 11px; color: Theme.text_muted; }
+                                    }
+
+                                    AuriIconButton {
+                                        icon_source: @image-url("../assets/icons/gamepad.svg");
+                                        tooltip: "Toggle Game Auto-Detect";
+                                        is_active: root.auto_game_mode;
+                                        active_color: #10B981;
+                                        clicked => { root.toggle_auto_game(); }
                                     }
                                 }
                             }
@@ -1105,7 +893,7 @@ export component NormalModeView inherits Rectangle {
             }
 
             // ==========================================
-            // RIGHT SIDEBAR: PLAY QUEUE (Variant A1 Style)
+            // RIGHT SIDEBAR: PLAY QUEUE (Reference 1 Style)
             // ==========================================
             if root.layout_variant == 0: Rectangle {
                 width: 280px;
@@ -1115,7 +903,7 @@ export component NormalModeView inherits Rectangle {
 
                 VerticalLayout {
                     padding: 18px;
-                    spacing: 16px;
+                    spacing: 14px;
 
                     // Header
                     HorizontalLayout {
@@ -1123,7 +911,7 @@ export component NormalModeView inherits Rectangle {
                             text: "Play queue";
                             font_size: 16px;
                             font_weight: 800;
-                            color: Theme.text_primary;
+                            color: #FFFFFF;
                             horizontal_stretch: 1;
                             vertical_alignment: center;
                         }
@@ -1135,9 +923,9 @@ export component NormalModeView inherits Rectangle {
                         }
                     }
 
-                    // EMBEDDED NOW-PLAYING CARD (Exact Reference 1 layout)
+                    // EMBEDDED NOW-PLAYING CARD (Exact Reference 1 Layout)
                     Rectangle {
-                        height: 180px;
+                        height: 190px;
                         border-radius: Theme.radius_md;
                         background: Theme.bg_card;
                         border-width: 1px;
@@ -1145,19 +933,20 @@ export component NormalModeView inherits Rectangle {
 
                         VerticalLayout {
                             padding: 14px;
-                            spacing: 10px;
+                            spacing: 8px;
 
-                            // Circular Artwork Thumbnail
+                            // Circular Vinyl Artwork (Ref 1 signature)
                             Rectangle {
-                                width: 54px;
-                                height: 54px;
-                                border-radius: 27px;
+                                width: 52px;
+                                height: 52px;
+                                border-radius: 26px;
                                 background: #EC4899;
                                 x: (parent.width - self.width) / 2;
+                                clip: true;
 
                                 Text {
                                     text: "🎵";
-                                    font_size: 22px;
+                                    font_size: 20px;
                                     horizontal_alignment: center;
                                     vertical_alignment: center;
                                 }
@@ -1165,49 +954,67 @@ export component NormalModeView inherits Rectangle {
 
                             // Title & Subtitle
                             VerticalLayout {
-                                spacing: 2px;
+                                spacing: 1px;
                                 Text {
                                     text: root.track_title;
                                     font_size: 13px;
                                     font_weight: 700;
-                                    color: Theme.text_primary;
+                                    color: #FFFFFF;
                                     horizontal_alignment: center;
+                                    overflow: elide;
                                 }
                                 Text {
                                     text: root.track_artist;
                                     font_size: 11px;
                                     color: Theme.text_muted;
                                     horizontal_alignment: center;
+                                    overflow: elide;
                                 }
                             }
 
-                            // Transport Controls
+                            // Transport Controls with Vector Icons
                             HorizontalLayout {
                                 alignment: center;
-                                spacing: 14px;
+                                spacing: 10px;
 
                                 AuriIconButton {
-                                    icon_text: "♥";
+                                    icon_source: root.is_favorite ? @image-url("../assets/icons/heart-filled.svg") : @image-url("../assets/icons/heart.svg");
+                                    icon_size: 14px;
+                                    btn_size: 28px;
                                     is_active: root.is_favorite;
                                     active_color: Theme.favorite_active;
+                                    tooltip: "Favorite";
                                     clicked => { root.toggle_favorite(); }
                                 }
                                 AuriIconButton {
-                                    icon_text: "⏮";
+                                    icon_source: @image-url("../assets/icons/prev.svg");
+                                    icon_size: 14px;
+                                    btn_size: 28px;
+                                    tooltip: "Previous Track";
+                                    shortcut: "Alt+Left";
                                     clicked => { root.prev_track(); }
                                 }
                                 AuriPlayButton {
                                     is_playing: root.is_playing;
                                     button_size: 32px;
+                                    tooltip: root.is_playing ? "Pause" : "Play";
+                                    shortcut: "Space";
                                     clicked => { root.toggle_play(); }
                                 }
                                 AuriIconButton {
-                                    icon_text: "⏭";
+                                    icon_source: @image-url("../assets/icons/next.svg");
+                                    icon_size: 14px;
+                                    btn_size: 28px;
+                                    tooltip: "Next Track";
+                                    shortcut: "Alt+Right";
                                     clicked => { root.next_track(); }
                                 }
                                 AuriIconButton {
-                                    icon_text: "⇄";
+                                    icon_source: @image-url("../assets/icons/shuffle.svg");
+                                    icon_size: 14px;
+                                    btn_size: 28px;
                                     is_active: root.is_shuffle;
+                                    tooltip: "Shuffle";
                                     clicked => { root.toggle_shuffle(); }
                                 }
                             }
@@ -1230,7 +1037,7 @@ export component NormalModeView inherits Rectangle {
                         }
                     }
 
-                    // Upcoming Queue Items
+                    // Upcoming Queue Header
                     Text {
                         text: "NEXT UP";
                         font_size: 10px;
@@ -1239,8 +1046,9 @@ export component NormalModeView inherits Rectangle {
                         color: Theme.text_muted;
                     }
 
+                    // Queue Items
                     VerticalLayout {
-                        spacing: 8px;
+                        spacing: 6px;
                         vertical_stretch: 1;
 
                         Rectangle {
@@ -1248,46 +1056,55 @@ export component NormalModeView inherits Rectangle {
                             border-radius: Theme.radius_sm;
                             background: Theme.bg_surface;
                             HorizontalLayout {
-                                padding_left: 8px; padding_right: 8px; spacing: 8px;
-                                Rectangle { width: 24px; height: 24px; border-radius: 4px; background: #6366F1; y: (parent.height - self.height) / 2; }
+                                padding_left: 10px;
+                                padding_right: 10px;
+                                spacing: 10px;
+                                alignment: center;
+                                Rectangle { width: 22px; height: 22px; border-radius: 11px; background: #6366F1; clip: true; }
                                 VerticalLayout {
-                                    alignment: center; horizontal_stretch: 1;
-                                    Text { text: "all the good girls go to hell"; font_size: 11px; font_weight: 600; color: Theme.text_primary; overflow: elide; }
+                                    horizontal_stretch: 1;
+                                    alignment: center;
+                                    Text { text: "all the good girls go to hell"; font_size: 11px; font_weight: 600; color: #FFFFFF; overflow: elide; }
                                     Text { text: "Billie Eilish"; font_size: 9px; color: Theme.text_muted; }
                                 }
-                                Text { text: "≡"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
                             }
                         }
 
                         Rectangle {
                             height: 38px;
                             border-radius: Theme.radius_sm;
-                            background: Colors.transparent;
+                            background: Theme.bg_surface;
                             HorizontalLayout {
-                                padding_left: 8px; padding_right: 8px; spacing: 8px;
-                                Rectangle { width: 24px; height: 24px; border-radius: 4px; background: #F59E0B; y: (parent.height - self.height) / 2; }
+                                padding_left: 10px;
+                                padding_right: 10px;
+                                spacing: 10px;
+                                alignment: center;
+                                Rectangle { width: 22px; height: 22px; border-radius: 11px; background: #EAB308; clip: true; }
                                 VerticalLayout {
-                                    alignment: center; horizontal_stretch: 1;
-                                    Text { text: "COPYCAT"; font_size: 11px; font_weight: 600; color: Theme.text_primary; overflow: elide; }
+                                    horizontal_stretch: 1;
+                                    alignment: center;
+                                    Text { text: "COPYCAT"; font_size: 11px; font_weight: 600; color: #FFFFFF; overflow: elide; }
                                     Text { text: "Billie Eilish"; font_size: 9px; color: Theme.text_muted; }
                                 }
-                                Text { text: "≡"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
                             }
                         }
 
                         Rectangle {
                             height: 38px;
                             border-radius: Theme.radius_sm;
-                            background: Colors.transparent;
+                            background: Theme.bg_surface;
                             HorizontalLayout {
-                                padding_left: 8px; padding_right: 8px; spacing: 8px;
-                                Rectangle { width: 24px; height: 24px; border-radius: 4px; background: #10B981; y: (parent.height - self.height) / 2; }
+                                padding_left: 10px;
+                                padding_right: 10px;
+                                spacing: 10px;
+                                alignment: center;
+                                Rectangle { width: 22px; height: 22px; border-radius: 11px; background: #EC4899; clip: true; }
                                 VerticalLayout {
-                                    alignment: center; horizontal_stretch: 1;
-                                    Text { text: "900729"; font_size: 11px; font_weight: 600; color: Theme.text_primary; overflow: elide; }
+                                    horizontal_stretch: 1;
+                                    alignment: center;
+                                    Text { text: "900729"; font_size: 11px; font_weight: 600; color: #FFFFFF; overflow: elide; }
                                     Text { text: "Taco Hemingway"; font_size: 9px; color: Theme.text_muted; }
                                 }
-                                Text { text: "≡"; font_size: 12px; color: Theme.text_muted; vertical_alignment: center; }
                             }
                         }
                     }
@@ -1296,28 +1113,28 @@ export component NormalModeView inherits Rectangle {
         }
 
         // ==========================================
-        // DOCKED PERSISTENT BOTTOM BAR (Variant A2 Style)
+        // DOCKED BOTTOM BAR (Variant A2 Alternative)
         // ==========================================
         if root.layout_variant == 1: Rectangle {
-            height: 72px;
+            height: 68px;
             background: Theme.bg_sidebar;
             border-width: 1px;
             border-color: Theme.border_subtle;
 
             HorizontalLayout {
-                padding_left: 20px;
-                padding_right: 20px;
-                spacing: 24px;
+                padding_left: 16px;
+                padding_right: 16px;
+                spacing: 20px;
 
                 // Left: Track Info & Heart
                 HorizontalLayout {
-                    width: 240px;
+                    width: 220px;
                     spacing: 12px;
                     alignment: start;
 
                     Rectangle {
-                        width: 44px;
-                        height: 44px;
+                        width: 42px;
+                        height: 42px;
                         border-radius: Theme.radius_sm;
                         background: #EC4899;
                         y: (parent.height - self.height) / 2;
@@ -1339,7 +1156,7 @@ export component NormalModeView inherits Rectangle {
                             text: root.track_title;
                             font_size: 13px;
                             font_weight: 700;
-                            color: Theme.text_primary;
+                            color: #FFFFFF;
                             overflow: elide;
                         }
                         Text {
@@ -1351,9 +1168,12 @@ export component NormalModeView inherits Rectangle {
                     }
 
                     AuriIconButton {
-                        icon_text: "♥";
+                        icon_source: root.is_favorite ? @image-url("../assets/icons/heart-filled.svg") : @image-url("../assets/icons/heart.svg");
+                        icon_size: 15px;
+                        btn_size: 28px;
                         is_active: root.is_favorite;
                         active_color: Theme.favorite_active;
+                        tooltip: "Favorite";
                         clicked => { root.toggle_favorite(); }
                         y: (parent.height - self.height) / 2;
                     }
@@ -1363,41 +1183,57 @@ export component NormalModeView inherits Rectangle {
                 VerticalLayout {
                     horizontal_stretch: 1;
                     alignment: center;
-                    spacing: 6px;
+                    spacing: 4px;
 
-                    // Buttons
+                    // Transport Buttons
                     HorizontalLayout {
                         alignment: center;
-                        spacing: 18px;
+                        spacing: 16px;
 
                         AuriIconButton {
-                            icon_text: "⇄";
+                            icon_source: @image-url("../assets/icons/shuffle.svg");
+                            icon_size: 14px;
+                            btn_size: 28px;
                             is_active: root.is_shuffle;
+                            tooltip: "Shuffle";
                             clicked => { root.toggle_shuffle(); }
                         }
                         AuriIconButton {
-                            icon_text: "⏮";
+                            icon_source: @image-url("../assets/icons/prev.svg");
+                            icon_size: 14px;
+                            btn_size: 28px;
+                            tooltip: "Previous Track";
+                            shortcut: "Alt+Left";
                             clicked => { root.prev_track(); }
                         }
                         AuriPlayButton {
                             is_playing: root.is_playing;
                             button_size: 32px;
+                            tooltip: root.is_playing ? "Pause" : "Play";
+                            shortcut: "Space";
                             clicked => { root.toggle_play(); }
                         }
                         AuriIconButton {
-                            icon_text: "⏭";
+                            icon_source: @image-url("../assets/icons/next.svg");
+                            icon_size: 14px;
+                            btn_size: 28px;
+                            tooltip: "Next Track";
+                            shortcut: "Alt+Right";
                             clicked => { root.next_track(); }
                         }
                         AuriIconButton {
-                            icon_text: "↻";
+                            icon_source: @image-url("../assets/icons/repeat.svg");
+                            icon_size: 14px;
+                            btn_size: 28px;
                             is_active: root.is_repeat;
+                            tooltip: "Repeat";
                             clicked => { root.toggle_repeat(); }
                         }
                     }
 
-                    // Seek Slider with Timers
+                    // Seek Slider with Timestamps
                     HorizontalLayout {
-                        spacing: 10px;
+                        spacing: 8px;
 
                         Text {
                             text: root.track_elapsed;
@@ -1423,32 +1259,45 @@ export component NormalModeView inherits Rectangle {
 
                 // Right: Volume & Fast Mode Switches
                 HorizontalLayout {
-                    width: 220px;
-                    spacing: 12px;
+                    width: 200px;
+                    spacing: 10px;
                     alignment: end;
 
-                    Text {
-                        text: "🔊";
-                        font_size: 13px;
-                        color: Theme.text_secondary;
-                        vertical_alignment: center;
+                    AuriIconButton {
+                        icon_source: root.volume == 0.0 ? @image-url("../assets/icons/volume-mute.svg") : @image-url("../assets/icons/volume.svg");
+                        icon_size: 14px;
+                        btn_size: 28px;
+                        tooltip: root.volume == 0.0 ? "Unmute Volume" : "Mute Volume";
+                        clicked => {
+                            if (root.volume > 0.0) {
+                                root.volume_changed(0.0);
+                            } else {
+                                root.volume_changed(0.75);
+                            }
+                        }
+                        y: (parent.height - self.height) / 2;
                     }
 
                     AuriSlider {
                         value: root.volume;
                         value_changed(val) => { root.volume_changed(val); }
-                        width: 80px;
+                        width: 70px;
                     }
 
                     AuriIconButton {
-                        icon_text: "◱";
+                        icon_source: @image-url("../assets/icons/mini.svg");
+                        icon_size: 14px;
+                        btn_size: 28px;
+                        tooltip: "Switch to Mini Mode";
                         clicked => { root.switch_to_mini(); }
                         y: (parent.height - self.height) / 2;
                     }
 
                     AuriIconButton {
-                        icon_text: "⚡";
-                        active_color: #A855F7;
+                        icon_source: @image-url("../assets/icons/gamepad.svg");
+                        icon_size: 14px;
+                        btn_size: 28px;
+                        tooltip: "Switch to Gaming HUD";
                         clicked => { root.switch_to_gaming(); }
                         y: (parent.height - self.height) / 2;
                     }

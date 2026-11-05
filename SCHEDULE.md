@@ -28,13 +28,34 @@ This document is the **single source of truth** for all planned, in-progress, co
 | **v0.6.0** | **Streaming Provider Tier 1 (YouTube Music Innertube)** | Streaming Engine | - Define abstract `MusicProvider` trait.<br>- Async Innertube API client for YouTube Music search and metadata.<br>- Progressive audio stream resolution (WebM Opus 160kbps / MP4 AAC 128kbps).<br>- Sliding 8 MB memory window buffer for network streams.<br>- Unified queue supporting seamless mixing of local and streaming tracks. | **Completed** | Online Streaming Ready |
 | **v0.7.0** | **Performance Benchmarking Suite & Latency Tuning** | Optimization & QA | - Implement automated profiling script (`scripts/benchmark.ps1`).<br>- Measure Private Bytes, Working Set, CPU%, and GPU% across all 3 modes.<br>- Live testing alongside demanding AAA games with active anti-cheat.<br>- Binary optimization: strip symbols, LTO enabled, panic abort. | **Completed** | Hardening & Tuning |
 | **v1.0.0** | **AURI Initial Official Release** | Major Release | - Complete, unified desktop application (Normal Mode, Mini Mode, Gaming Mode).<br>- Full UI variant switcher in Settings.<br>- Dual-mode local and YouTube Music streaming.<br>- Release binary package (.exe installer / standalone portable zip).<br>- Finalized user documentation and performance benchmark reports. | **Completed** | **AURI 1.0.0 Baseline** |
-| **v1.0.1** | **Hotfixes & Immediate Post-Launch Refinements** | Maintenance | - Address any edge-case playback glitches or UI DPI scaling issues reported during initial testing.<br>- Audio buffer auto-tuning based on host system load. | **Next Up** | Post-1.0 Patch |
+| **v1.0.1** | **Complete UI/UX Overhaul & Reference Fidelity** | Visual UI / Polish | - **Crisp Vector Iconography**: Replace all unicode/emojis with 23 pure SVG vector path icons (Play, Pause, Next, Prev, Volume, Search, Heart, Shuffle, Repeat, Settings, Pin, Close, Block, etc.).<br>- **Interactive Tooltips**: Add descriptive hover tooltips and shortcuts across all controls.<br>- **Fix Search Bar**: Fix clickability and focus scope for instant search typing and clear button.<br>- **Mini Mode Overhaul (Reference 2 Fidelity)**: Downscale to true compact floating size (310x84px) with full dark glassmorphic styling, 40x40px cover art, clean typography, slim seekbar, and signature solid white circular play button.<br>- **Normal Mode Streamlining (Apple/YouTube Music Polish)**: Strip out mock artist stats/bio clutter; deliver clean, minimalist content table and Reference 1 play queue.<br>- **Glassmorphism**: Translucent dark surfaces with refined borders and subtle shadows. | **Completed** | UI/UX Total Redesign |
+| **v1.0.2** | **Audio Buffer Auto-Tuning & High-DPI Scaling** | Maintenance & QA | - Audio buffer auto-tuning based on host system load.<br>- Verify high-DPI (125%, 150%, 200%) display scaling across multi-monitor setups. | **Next Up** | Post-Launch Patch |
 | **v1.1.0** | **Streaming Provider Tier 2 (Optional Cookie Sync)** | Feature Enhancement | - Optional session cookie import to fetch user's private YouTube Music playlists and Liked Songs.<br>- Local caching of private library metadata without embedded browser overhead. | **Planned** | Future Minor Release |
 | **v1.2.0** | **Audio Visualizer & Equalizer Customization** | Audio Enhancement | - Optional 10-band parametric equalizer.<br>- Low-overhead FFT audio spectrum visualizer for Normal Mode and Companion HUD with auto-disable during Gaming Mode. | **Planned** | Future Minor Release |
 
 ---
 
 ## Change Log & Revision History
+
+### Version: v1.0.1 (UI/UX Overhaul & Reference Fidelity)
+- **Date**: 2026-11-06
+- **Category**: Visual UI / UX Overhaul & Reference Fidelity
+- **What Was Done**:
+  - **Crisp Pure Vector SVG Iconography**: Replaced all unicode characters, emojis, and platform-inconsistent glyphs with 23 precision vector SVGs in `assets/icons/` (`play.svg`, `pause.svg`, `next.svg`, `prev.svg`, `search.svg`, `heart.svg`, `heart-filled.svg`, `shuffle.svg`, `repeat.svg`, `volume.svg`, `volume-mute.svg`, `settings.svg`, `pin.svg`, `mini.svg`, `gamepad.svg`, `music.svg`, `album.svg`, `folder.svg`, `queue.svg`, `expand.svg`, `more.svg`, `close.svg`, `block.svg`).
+  - **Interactive Tooltips**: Added floating dark glassmorphic tooltip pills with subtle borders and keyboard shortcut hints (`Space`, `Alt+Left`, etc.) across all buttons on hover.
+  - **Clickable Search Bar**: Fixed search input click interception by wrapping the entire container in an interactive `TouchArea` forwarding focus, separating placeholder text, and adding a fast one-click clear button.
+  - **Mini Mode Overhaul (Reference 2 Fidelity)**:
+    - Reduced window dimensions to an ultra-compact desert-HUD floating widget (~310px × 84px for Card with Art, ~280px × 46px for Micro-Pill).
+    - True dark glassmorphism (`#14141AEB` background with subtle 1px border `#FFFFFF18` and 16px corner radius).
+    - Replicated Reference 2 iconic circular solid white Play button (`32px` diameter) with black glyph.
+    - Slim 3px seekbar with elapsed and total duration timestamps (`2:22` / `9:40`).
+    - Flanked by vector heart, previous, next, and mute/block buttons.
+  - **Normal Mode Streamlining (Apple / YouTube Music Polish)**:
+    - Eliminated mock artist gossip, followers, and bio clutter.
+    - Implemented clean Quick Picks / Trending songs table with vector playback triggers, duration, and track indexes.
+    - Rebuilt Right Play Queue panel with Reference 1 vinyl circular artwork card and Up Next playlist.
+    - Updated Left Sidebar with pure vector navigation icons and live RAM working set trimmer.
+  - **Updated Release Distribution**: Built optimized `auri.exe` release binary and packaged `dist/AURI-v1.0.1-Windows-x64.zip`.
 
 ### Version: v1.0.0 (Official Baseline Release)
 - **Date**: 2026-11-05

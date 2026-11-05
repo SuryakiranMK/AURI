@@ -2,52 +2,142 @@
 import { Theme } from "theme.slint";
 
 export component AuriIconButton inherits Rectangle {
-    in property <string> icon_text: "▶";
+    in property <image> icon_source;
+    in property <string> icon_text: "";
     in property <bool> is_active: false;
-    in property <length> icon_size: 14px;
+    in property <length> icon_size: 16px;
+    in property <length> btn_size: 32px;
     in property <color> active_color: Theme.accent;
     in property <color> inactive_color: Theme.text_secondary;
+    in property <string> tooltip: "";
+    in property <string> shortcut: "";
     callback clicked();
 
+    width: root.btn_size;
+    height: root.btn_size;
     border-radius: self.height / 2;
     background: touch.has_hover ? Theme.bg_surface_hover : Colors.transparent;
-    animate background { duration: 150ms; }
-
-    touch := TouchArea {
-        clicked => { root.clicked(); }
-    }
-
-    Text {
-        text: root.icon_text;
-        font_size: root.icon_size;
-        color: root.is_active ? root.active_color : (touch.has_hover ? Theme.text_primary : root.inactive_color);
-        horizontal_alignment: center;
-        vertical_alignment: center;
-    }
-}
-
-export component AuriPlayButton inherits Rectangle {
-    in property <bool> is_playing: false;
-    in property <length> button_size: 38px;
-    in property <color> btn_color: Theme.accent;
-    callback clicked();
-
-    width: root.button_size;
-    height: root.button_size;
-    border-radius: self.height / 2;
-    background: touch.has_hover ? Theme.accent_hover : root.btn_color;
     animate background { duration: 120ms; }
 
     touch := TouchArea {
         clicked => { root.clicked(); }
     }
 
-    Text {
-        text: root.is_playing ? "❚❚" : "▶";
-        font_size: root.button_size * 0.42;
-        color: Theme.text_primary;
+    if root.icon_text != "": Text {
+        text: root.icon_text;
+        font_size: root.icon_size;
+        color: root.is_active ? root.active_color : (touch.has_hover ? Theme.text_primary : root.inactive_color);
         horizontal_alignment: center;
         vertical_alignment: center;
+    }
+
+    if root.icon_text == "": Image {
+        source: root.icon_source;
+        width: root.icon_size;
+        height: root.icon_size;
+        image-fit: contain;
+        colorize: root.is_active ? root.active_color : (touch.has_hover ? Theme.text_primary : root.inactive_color);
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    // Tooltip popup
+    if root.tooltip != "" && touch.has_hover: Rectangle {
+        z: 999;
+        y: -24px;
+        x: (parent.width - self.width) / 2;
+        height: 20px;
+        width: tip_layout.preferred_width + 12px;
+        background: #181822F5;
+        border-width: 1px;
+        border-color: #FFFFFF25;
+        border-radius: 4px;
+
+        tip_layout := HorizontalLayout {
+            padding_left: 6px;
+            padding_right: 6px;
+            spacing: 4px;
+            alignment: center;
+
+            Text {
+                text: root.tooltip;
+                font_size: 10px;
+                font_weight: 600;
+                color: #FFFFFF;
+                vertical_alignment: center;
+            }
+
+            if root.shortcut != "": Text {
+                text: "(" + root.shortcut + ")";
+                font_size: 9px;
+                color: #9E9EB2;
+                vertical_alignment: center;
+            }
+        }
+    }
+}
+
+export component AuriPlayButton inherits Rectangle {
+    in property <bool> is_playing: false;
+    in property <length> button_size: 34px;
+    in property <color> btn_color: #FFFFFF;
+    in property <string> tooltip: "Play / Pause";
+    in property <string> shortcut: "Space";
+    callback clicked();
+
+    width: root.button_size;
+    height: root.button_size;
+    border-radius: self.height / 2;
+    background: touch.has_hover ? #E2E8F0 : root.btn_color;
+    animate background { duration: 120ms; }
+
+    touch := TouchArea {
+        clicked => { root.clicked(); }
+    }
+
+    Image {
+        source: root.is_playing ? @image-url("../assets/icons/pause.svg") : @image-url("../assets/icons/play.svg");
+        width: root.button_size * 0.44;
+        height: root.button_size * 0.44;
+        image-fit: contain;
+        colorize: #000000;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+
+    // Tooltip popup
+    if root.tooltip != "" && touch.has_hover: Rectangle {
+        z: 999;
+        y: -24px;
+        x: (parent.width - self.width) / 2;
+        height: 20px;
+        width: tip_layout.preferred_width + 12px;
+        background: #181822F5;
+        border-width: 1px;
+        border-color: #FFFFFF25;
+        border-radius: 4px;
+
+        tip_layout := HorizontalLayout {
+            padding_left: 6px;
+            padding_right: 6px;
+            spacing: 4px;
+            alignment: center;
+
+            Text {
+                text: root.is_playing ? "Pause" : "Play";
+                font_size: 10px;
+                font_weight: 600;
+                color: #FFFFFF;
+                vertical_alignment: center;
+            }
+
+            if root.shortcut != "": Text {
+                text: "(" + root.shortcut + ")";
+                font_size: 9px;
+                color: #9E9EB2;
+                vertical_alignment: center;
+            }
+        }
     }
 }
 
@@ -60,9 +150,9 @@ export component AuriSlider inherits Rectangle {
 
     track := Rectangle {
         y: (parent.height - self.height) / 2;
-        height: touch.has_hover ? 6px : 4px;
+        height: touch.has_hover ? 4px : 3px;
         border-radius: self.height / 2;
-        background: Theme.bg_surface_elevated;
+        background: #333342;
         animate height { duration: 100ms; }
 
         fill := Rectangle {
@@ -70,16 +160,16 @@ export component AuriSlider inherits Rectangle {
             width: parent.width * root.value;
             height: parent.height;
             border-radius: self.height / 2;
-            background: touch.has_hover ? Theme.accent_hover : Theme.accent;
+            background: touch.has_hover ? #FFFFFF : #D1D5DB;
         }
 
         thumb := Rectangle {
             x: fill.width - self.width / 2;
             y: (parent.height - self.height) / 2;
-            width: touch.has_hover ? 12px : 0px;
+            width: touch.has_hover ? 10px : 0px;
             height: self.width;
             border-radius: self.height / 2;
-            background: Theme.text_primary;
+            background: #FFFFFF;
             animate width { duration: 100ms; }
         }
     }
@@ -95,10 +185,13 @@ export component AuriSlider inherits Rectangle {
 }
 
 export component AuriNavButton inherits Rectangle {
-    in property <string> icon: "♪";
+    in property <image> icon_source;
+    in property <string> icon: "";
+    in property <string> icon_text: root.icon;
     in property <string> label: "Item";
     in property <bool> is_selected: false;
     in property <string> badge: "";
+    in property <string> tooltip: "";
     callback clicked();
 
     height: 38px;
@@ -116,11 +209,20 @@ export component AuriNavButton inherits Rectangle {
         spacing: 12px;
         alignment: start;
 
-        Text {
-            text: root.icon;
+        if root.icon_text != "": Text {
+            text: root.icon_text;
             font_size: 15px;
             color: root.is_selected ? Theme.accent_hover : (touch.has_hover ? Theme.text_primary : Theme.text_secondary);
             vertical_alignment: center;
+        }
+
+        if root.icon_text == "": Image {
+            source: root.icon_source;
+            width: 16px;
+            height: 16px;
+            image-fit: contain;
+            colorize: root.is_selected ? Theme.accent_hover : (touch.has_hover ? Theme.text_primary : Theme.text_secondary);
+            y: (parent.height - self.height) / 2;
         }
 
         Text {
@@ -148,5 +250,31 @@ export component AuriNavButton inherits Rectangle {
             }
         }
     }
-}
 
+    // Tooltip popup
+    if root.tooltip != "" && touch.has_hover: Rectangle {
+        z: 999;
+        y: -24px;
+        x: 12px;
+        height: 20px;
+        width: tip_layout.preferred_width + 12px;
+        background: #181822F5;
+        border-width: 1px;
+        border-color: #FFFFFF25;
+        border-radius: 4px;
+
+        tip_layout := HorizontalLayout {
+            padding_left: 6px;
+            padding_right: 6px;
+            alignment: center;
+
+            Text {
+                text: root.tooltip;
+                font_size: 10px;
+                font_weight: 600;
+                color: #FFFFFF;
+                vertical_alignment: center;
+            }
+        }
+    }
+}

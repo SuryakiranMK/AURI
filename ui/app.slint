@@ -61,10 +61,10 @@ export component AppWindow inherits Window {
     callback play_stream_track(string, string, string, int);
 
     // Responsive dimensions based on active mode
-    min_width: root.current_mode == 0 ? 920px : (root.current_mode == 1 ? 320px : 380px);
-    min_height: root.current_mode == 0 ? 580px : (root.current_mode == 1 ? (root.mini_variant == 0 ? 110px : 60px) : 340px);
-    preferred_width: root.current_mode == 0 ? 1120px : (root.current_mode == 1 ? (root.mini_variant == 0 ? 380px : 340px) : 420px);
-    preferred_height: root.current_mode == 0 ? 720px : (root.current_mode == 1 ? (root.mini_variant == 0 ? 120px : 68px) : 380px);
+    min_width: root.current_mode == 0 ? 920px : (root.current_mode == 1 ? 290px : 380px);
+    min_height: root.current_mode == 0 ? 580px : (root.current_mode == 1 ? (root.mini_variant == 0 ? 84px : 48px) : 340px);
+    preferred_width: root.current_mode == 0 ? 1120px : (root.current_mode == 1 ? 320px : 420px);
+    preferred_height: root.current_mode == 0 ? 720px : (root.current_mode == 1 ? (root.mini_variant == 0 ? 88px : 52px) : 380px);
 
     // ==========================================
     // 0: NORMAL MODE VIEW

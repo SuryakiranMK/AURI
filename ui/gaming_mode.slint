@@ -80,8 +80,10 @@ export component GamingHudView inherits Rectangle {
 
             // Return to normal mode
             AuriIconButton {
-                icon_text: "✕";
-                icon_size: 10px;
+                icon_source: @image-url("../assets/icons/close.svg");
+                icon_size: 12px;
+                btn_size: 24px;
+                tooltip: "Close HUD & Return to Normal Mode";
                 clicked => { root.switch_to_normal(); }
             }
         }
@@ -198,29 +200,45 @@ export component GamingHudView inherits Rectangle {
             spacing: 20px;
 
             AuriIconButton {
-                icon_text: "⇄";
+                icon_source: @image-url("../assets/icons/shuffle.svg");
+                icon_size: 16px;
+                btn_size: 32px;
                 is_active: root.is_shuffle;
                 active_color: #A855F7;
+                tooltip: "Shuffle";
                 clicked => { root.toggle_shuffle(); }
             }
             AuriIconButton {
-                icon_text: "⏮";
+                icon_source: @image-url("../assets/icons/prev.svg");
+                icon_size: 16px;
+                btn_size: 32px;
+                tooltip: "Previous Track";
+                shortcut: "Alt+Left";
                 clicked => { root.prev_track(); }
             }
             AuriPlayButton {
                 is_playing: root.is_playing;
                 button_size: 38px;
-                btn_color: #9333EA;
+                btn_color: #FFFFFF;
+                tooltip: root.is_playing ? "Pause" : "Play";
+                shortcut: "Space";
                 clicked => { root.toggle_play(); }
             }
             AuriIconButton {
-                icon_text: "⏭";
+                icon_source: @image-url("../assets/icons/next.svg");
+                icon_size: 16px;
+                btn_size: 32px;
+                tooltip: "Next Track";
+                shortcut: "Alt+Right";
                 clicked => { root.next_track(); }
             }
             AuriIconButton {
-                icon_text: "↻";
+                icon_source: @image-url("../assets/icons/repeat.svg");
+                icon_size: 16px;
+                btn_size: 32px;
                 is_active: root.is_repeat;
                 active_color: #A855F7;
+                tooltip: "Repeat";
                 clicked => { root.toggle_repeat(); }
             }
         }
@@ -230,11 +248,11 @@ export component GamingHudView inherits Rectangle {
             spacing: 12px;
             alignment: center;
 
-            Text {
-                text: "🔊";
-                font_size: 12px;
-                color: #A855F7;
-                vertical_alignment: center;
+            AuriIconButton {
+                icon_source: @image-url("../assets/icons/volume.svg");
+                icon_size: 16px;
+                btn_size: 28px;
+                tooltip: "Volume";
             }
 
             AuriSlider {
