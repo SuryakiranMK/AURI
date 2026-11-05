@@ -93,28 +93,32 @@ Many gamers encounter bans or game crashes caused by intrusive overlay software 
 
 ---
 
-## 4. YouTube Music Provider Architecture
+## 4. Provider-Independent Architecture & Streaming Analysis
+
+### 4.1 Modular Provider Abstraction
+The playback core is decoupled from content providers via an asynchronous Rust trait:
 
 ```
 +-------------------------------------------------------------+
-|                      StreamProvider                         |
+|                      MusicProvider Trait                    |
 +-------------------------------------------------------------+
-|  1. Search & Metadata:                                      |
-|     - HTTP Client (reqwest / hyper) querying Innertube API  |
-|     - Lightweight JSON stream parsing (serde_json)         |
-|     - Extraction of track title, artist, duration, artwork  |
-|                                                             |
-|  2. Audio Stream URL Resolution:                            |
-|     - Fetch audio/webm (Opus) or audio/mp4 (AAC) direct URL |
-|     - Chunked HTTP range-request fetcher                    |
-|     - Pushes chunks to Sliding Window Buffer (8 MB max)     |
-|                                                             |
-|  3. Policy & Stability Guardrails:                          |
-|     - Zero DRM tampering / circumvention                    |
-|     - Modular trait: allows mocking, unit testing, and      |
-|       fallback to alternative providers (SoundCloud/Local)  |
+|  async fn search(&self, query: &str) -> Result<Vec<Track>>; |
+|  async fn resolve_stream(&self, id: &str) -> Result<Stream>;|
+|  async fn get_metadata(&self, id: &str) -> Result<Metadata>;|
 +-------------------------------------------------------------+
 ```
+
+- **Sliding-Window Bounded Buffering**:
+  For authorized network streams, chunks are buffered via an **8 MB sliding memory window**. Prefetching is strictly bounded: as the playhead advances, older samples are reclaimed to ensure memory consumption remains flat regardless of playback duration.
+- **Local File Provider**:
+  Zero-latency native filesystem reader supporting FLAC, MP3, AAC, Opus, and WAV. Metadata is indexed into an in-memory lightweight catalog, avoiding persistent database overhead.
+
+### 4.2 YouTube Music Integration Limitations (Documented)
+Following thorough evaluation of official YouTube developer terms and APIs:
+1. **Terms of Service Restrictions**: YouTube explicitly prohibits audio-only stream extraction, background playback (screen-off or hidden window), and separation of audio from video canvas.
+2. **Absence of Official Audio API**: Google provides no authorized raw audio streaming SDK for YouTube Music.
+3. **Rejection of Undocumented Innertube Extraction**: Scraping undocumented endpoints violates Terms of Service, risks IP throttling, and requires continuous maintenance against token obfuscation changes.
+4. **Architectural Stance**: AURI will **not** compromise its lightweight native architecture or violate compliance to force YouTube Music integration. Authorized streaming endpoints (e.g., Subsonic / Navidrome / Jellyfin personal servers, authorized web streams) will utilize the 8 MB sliding window buffer.
 
 ---
 
@@ -130,3 +134,4 @@ AURI strictly bounds its thread pool to minimize context switching overhead:
 | **Thread 4: WinEvent Hook** | System tray, media keys, game detection listener | Normal |
 
 Total persistent threads: **4 threads**. Compare this with 35–60 threads typical of Electron/Chromium-based players.
+

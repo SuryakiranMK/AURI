@@ -90,25 +90,49 @@ AURI features three distinct, meticulously tuned operating modes:
 
 ---
 
-## 4. Music Provider Architecture
+## 4. Provider-Independent Architecture & Streaming Analysis
+
+### 4.1 Abstract Provider Design
+To prevent architectural lock-in, AURI isolates the playback engine from the content source using an abstract, asynchronous `MusicProvider` contract:
 
 ```
                  +-----------------------+
-                 |    MusicProvider      |  (Abstract Trait / Interface)
+                 |    MusicProvider      |  (Abstract Rust Trait)
                  +-----------+-----------+
                              |
              +---------------+---------------+
              |                               |
     +--------v--------+             +--------v--------+
-    |  LocalProvider  |             |  StreamProvider |
-    |  (Filesystem,   |             | (YouTube Music, |
-    |   ID3/FLAC Tags)|             |  Modular HTTP)  |
+    |  LocalProvider  |             | AuthorizedStream|
+    |  (Filesystem,   |             | (Subsonic/Jelly,|
+    |   ID3/FLAC Tags)|             |  Web Radio/HTTP)|
     +-----------------+             +-----------------+
 ```
 
-- **Modular Design**: The audio core relies entirely on a generic `MusicProvider` trait.
-- **Local Provider**: Direct file access, ID3/Vorbis tag parsing, directory indexing with low-memory SQLite or binary cache.
-- **Streaming Provider**: Modular HTTP stream resolver. Designed to parse stream URLs and metadata without embedding a browser. Complies with security policies: no credential scraping, no DRM circumvention, and no ads injection.
+- **Sliding-Window Bounded Buffering**: For authorized HTTP progressive audio streams, AURI uses an **8 MB sliding memory window** ring buffer. Chunks ahead of the playhead are prefetched via HTTP range requests while older consumed chunks are reclaimed, ensuring memory usage never balloons regardless of track length.
+- **Local Provider (Core First-Class)**: Direct filesystem streaming with ID3v2/Vorbis comment metadata indexing. 100% offline, zero network latency, zero external API risks.
+
+---
+
+### 4.2 Comprehensive YouTube Music Integration Analysis
+
+As required by our core engineering principles, we evaluated the feasibility of an officially supported or explicitly authorized YouTube Music integration:
+
+1. **Official YouTube API Evaluation**:
+   - **YouTube Data API v3**: Google provides video search and playlist management, but explicitly does *not* provide audio streams or YouTube Music specific entities. Furthermore, terms mandate that all video content be played using an official YouTube player.
+   - **YouTube IFrame Player API (Embedded Webview)**: The only authorized playback vehicle. Requires an embedded Chromium / WebView2 engine, mandatory rendering of video frames and visual advertisements, and strictly prohibits background playback (screen-off or hidden window).
+   - **YouTube API Terms of Service (Section III.A.1-2)**: Explicitly states that applications must *not* "separate, isolate, or modify the audio or video components of any YouTube audiovisual content" and must not facilitate background audio playback.
+   - **Dedicated YouTube Music API**: Google offers **no official developer API** for programmatic third-party audio streaming.
+
+2. **The Undocumented Innertube Approach (Rejected)**:
+   - Extracting raw Opus/WebM audio streams via reverse-engineered internal Innertube endpoints is neither authorized nor compliant.
+   - It strips video ads, separates audio from video, bypasses display rules, is brittle against YouTube signature/token updates, and carries IP rate-limiting risks.
+
+3. **Conclusion & Documented Limitation**:
+   - **YouTube Music cannot natively support AURI's intended background-native playback experience through any authorized integration.**
+   - An authorized integration would require embedding a full Chromium/WebView2 instance, actively presenting video frames, displaying ads, and preventing background suspension—completely defeating AURI’s core lightweight gaming performance targets.
+   - **AURI will not compromise its lightweight native architecture to force YouTube Music integration.**
+   - The streaming architecture remains ready for authorized providers (such as Subsonic, Navidrome, Jellyfin, and open web streams) while local playback delivers the ultimate zero-overhead gaming experience.
 
 ---
 
@@ -127,3 +151,4 @@ AURI features three distinct, meticulously tuned operating modes:
 4. **Binary & Deployment**:
    - Single portable executable.
    - Zero external runtime dependencies (no separate WebView2 runtime process, no Chromium, no Electron).
+
