@@ -1,11 +1,111 @@
+// AURI Main Desktop Application Window
+import { Theme } from "theme.slint";
+import { TrackData, AlbumData, ArtistData } from "models.slint";
+import { NormalModeView } from "normal_mode.slint";
+
 export component MainWindow inherits Window {
     title: "AURI";
-    width: 400px;
-    height: 300px;
-    Text {
-        text: "AURI High-Fidelity Audio Core";
-        horizontal-alignment: center;
-        vertical-alignment: center;
+    min_width: 1040px;
+    min_height: 680px;
+    preferred_width: 1180px;
+    preferred_height: 760px;
+    background: Theme.bg_app;
+
+    in-out property <string> current_nav: "home";
+    in-out property <bool> is_playing: false;
+    in-out property <string> track_title: "Midnight Drive";
+    in-out property <string> track_artist: "The Cassettes";
+    in-out property <string> track_album: "Synthwave Dreams";
+    in-out property <string> track_duration: "3:34";
+    in-out property <string> track_elapsed: "1:18";
+    in-out property <float> track_progress: 0.36;
+    in-out property <float> volume: 0.80;
+    in-out property <bool> is_favorite: true;
+    in-out property <bool> is_shuffle: false;
+    in-out property <bool> is_repeat: false;
+    in-out property <string> audio_engine_name: "Native WASAPI";
+    in-out property <string> ram_usage: "28.5 MB";
+    in-out property <string> search_query: "";
+    in-out property <string> local_music_path: "C:\\Users\\user\\Music";
+    in-out property <bool> loudness_norm_enabled: true;
+
+    // Collections
+    in-out property <[TrackData]> search_results: [];
+    in-out property <[TrackData]> queue_tracks: [];
+    in-out property <[TrackData]> home_tracks: [];
+    in-out property <[AlbumData]> home_albums: [];
+    in-out property <[TrackData]> local_tracks: [];
+    in-out property <[TrackData]> favorite_tracks: [];
+    in-out property <[AlbumData]> all_albums: [];
+    in-out property <[ArtistData]> similar_artists: [];
+
+    // Callbacks
+    callback navigate(string);
+    callback toggle_play();
+    callback prev_track();
+    callback next_track();
+    callback seek(float);
+    callback volume_changed(float);
+    callback toggle_favorite();
+    callback toggle_track_favorite(string);
+    callback toggle_shuffle();
+    callback toggle_repeat();
+    callback switch_to_mini();
+    callback switch_to_gaming();
+    callback trim_ram();
+    callback perform_search(string);
+    callback play_track(string, string, string, int);
+    callback switch_audio_engine(int);
+    callback rescan_local(string);
+    callback play_album(string);
+    callback toggle_loudness(bool);
+
+    NormalModeView {
+        current_nav: root.current_nav;
+        is_playing: root.is_playing;
+        track_title: root.track_title;
+        track_artist: root.track_artist;
+        track_album: root.track_album;
+        track_duration: root.track_duration;
+        track_elapsed: root.track_elapsed;
+        track_progress: root.track_progress;
+        volume: root.volume;
+        is_favorite: root.is_favorite;
+        is_shuffle: root.is_shuffle;
+        is_repeat: root.is_repeat;
+        audio_engine_name: root.audio_engine_name;
+        ram_usage: root.ram_usage;
+        search_query <=> root.search_query;
+        local_music_path <=> root.local_music_path;
+        loudness_norm_enabled <=> root.loudness_norm_enabled;
+
+        search_results <=> root.search_results;
+        queue_tracks <=> root.queue_tracks;
+        home_tracks <=> root.home_tracks;
+        home_albums <=> root.home_albums;
+        local_tracks <=> root.local_tracks;
+        favorite_tracks <=> root.favorite_tracks;
+        all_albums <=> root.all_albums;
+        similar_artists <=> root.similar_artists;
+
+        navigate(page) => { root.navigate(page); }
+        toggle_play => { root.toggle_play(); }
+        prev_track => { root.prev_track(); }
+        next_track => { root.next_track(); }
+        seek(pos) => { root.seek(pos); }
+        volume_changed(val) => { root.volume_changed(val); }
+        toggle_favorite => { root.toggle_favorite(); }
+        toggle_track_favorite(id) => { root.toggle_track_favorite(id); }
+        toggle_shuffle => { root.toggle_shuffle(); }
+        toggle_repeat => { root.toggle_repeat(); }
+        switch_to_mini => { root.switch_to_mini(); }
+        switch_to_gaming => { root.switch_to_gaming(); }
+        trim_ram => { root.trim_ram(); }
+        perform_search(q) => { root.perform_search(q); }
+        play_track(id, tit, art, dur) => { root.play_track(id, tit, art, dur); }
+        switch_audio_engine(eng) => { root.switch_audio_engine(eng); }
+        rescan_local(path) => { root.rescan_local(path); }
+        play_album(id) => { root.play_album(id); }
+        toggle_loudness(enabled) => { root.toggle_loudness(enabled); }
     }
 }
-
