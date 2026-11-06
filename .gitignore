@@ -1,0 +1,27 @@
+# target and build outputs
+/target/
+/bin/
+/obj/
+/dist/
+/build/
+
+# IDE and OS files
+.vscode/
+.idea/
+*.suo
+*.user
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.log
+
+# Environment and secrets
+.env
+*.local
+
+
+
+# Added by cargo
+
+/target
