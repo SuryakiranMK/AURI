@@ -5,7 +5,7 @@ use std::fs::File;
 use std::path::Path;
 
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{Decoder, DecoderOptions};
+use symphonia::core::codecs::{CodecRegistry, Decoder, DecoderOptions};
 use symphonia::core::errors::Error as DecodeError;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
@@ -80,7 +80,10 @@ impl AudioDecoder {
             .unwrap_or(0.0);
 
         let decoder_opts = DecoderOptions::default();
-        let decoder = symphonia::default::get_codecs()
+        let mut codecs = CodecRegistry::new();
+        symphonia::default::register_enabled_codecs(&mut codecs);
+        codecs.register_all::<super::opus::OpusStream>();
+        let decoder = codecs
             .make(&track.codec_params, &decoder_opts)
             .map_err(|e| format!("Failed to create audio decoder: {}", e))?;
 

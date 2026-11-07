@@ -1541,4 +1541,49 @@ mod tests {
         assert_eq!(song("(Official Video)", "Someone"), pair("(Official Video)", "Someone"));
         assert_eq!(song("Çağrı (Lyric Video)", "Şehinşah"), pair("Çağrı", "Şehinşah"));
     }
+
+    #[test]
+    fn test_live_stream_download() {
+        let client = Client::new(String::new());
+        let search_res = client.search("dhurandhar").expect("Search should succeed");
+        let songs = search_res.songs();
+        println!("Search returned {} songs", songs.len());
+        assert!(!songs.is_empty(), "Should return songs");
+        let first = &songs[0];
+        println!("Resolving stream for: {} ({})", first.title, first.video_id);
+        let stream = client.stream(&first.video_id).expect("Stream should resolve");
+        // Test direct Opus stream without forcing fallback
+        println!("Stream resolved: URL len={}, opus={}, total_len={}", stream.url.len(), stream.opus, stream.len);
+        assert!(!stream.url.is_empty());
+
+        // Test downloading first chunk with range request
+        let stats = std::sync::Arc::new(crate::provider::buffer::StreamStats::default());
+        let seekable = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let fetch = crate::provider::buffer::Fetch::start(
+            client.agent.clone(),
+            stream.url.clone(),
+            stream.len,
+            client.player_agent(),
+            stats,
+        );
+        let reader = crate::provider::buffer::StreamReader::new(fetch, seekable);
+        let ext = if stream.opus { "webm" } else { "m4a" };
+        println!("Opening AudioDecoder for ext hint: {}", ext);
+        match crate::audio::AudioDecoder::open_stream(Box::new(reader), ext) {
+            Ok(mut decoder) => {
+                println!("AudioDecoder opened successfully! Duration: {}s", decoder.duration_secs());
+                match decoder.next_packet() {
+                    Ok(Some(packet)) => {
+                        println!("Decoded first packet: {} samples, rate={}, channels={}", packet.samples.len(), packet.sample_rate, packet.channels);
+                        assert!(!packet.samples.is_empty());
+                    }
+                    Ok(None) => println!("Decoder returned None packet"),
+                    Err(e) => panic!("Decode error: {}", e),
+                }
+            }
+            Err(e) => {
+                panic!("Failed to open decoder: {}", e);
+            }
+        }
+    }
 }

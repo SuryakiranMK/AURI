@@ -32,6 +32,7 @@ pub struct WasapiSink {
     channels: u16,
     device_name: String,
     eof_flag: Arc<AtomicBool>,
+    flush_flag: Arc<AtomicBool>,
     _mmcss: Option<MmcssRegistration>,
 }
 
@@ -68,6 +69,7 @@ impl WasapiSink {
         let position_frames = Arc::new(AtomicU64::new(0));
         let duration_frames = Arc::new(AtomicU64::new(0));
         let eof_flag = Arc::new(AtomicBool::new(false));
+        let flush_flag = Arc::new(AtomicBool::new(false));
 
         let limiter = SoftLimiter::default();
         let limiter_clone = limiter.clone();
@@ -77,6 +79,7 @@ impl WasapiSink {
         let gain_cb = Arc::clone(&gain_multiplier_bits);
         let pos_cb = Arc::clone(&position_frames);
         let eof_cb = Arc::clone(&eof_flag);
+        let flush_cb = Arc::clone(&flush_flag);
 
         let err_fn = |err| eprintln!("[AURI Audio Sink Error] Stream callback error: {}", err);
 
@@ -84,6 +87,10 @@ impl WasapiSink {
             SampleFormat::F32 => device.build_output_stream(
                 config.clone(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    if flush_cb.swap(false, Ordering::SeqCst) {
+                        while consumer.try_pop().is_some() {}
+                    }
+
                     let current_state = state_cb.load(Ordering::Relaxed);
                     let vol = f32::from_bits(vol_cb.load(Ordering::Relaxed));
                     let gain = f32::from_bits(gain_cb.load(Ordering::Relaxed));
@@ -120,6 +127,10 @@ impl WasapiSink {
             SampleFormat::I16 => device.build_output_stream(
                 config,
                 move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                    if flush_cb.swap(false, Ordering::SeqCst) {
+                        while consumer.try_pop().is_some() {}
+                    }
+
                     let current_state = state_cb.load(Ordering::Relaxed);
                     let vol = f32::from_bits(vol_cb.load(Ordering::Relaxed));
                     let gain = f32::from_bits(gain_cb.load(Ordering::Relaxed));
@@ -182,12 +193,18 @@ impl WasapiSink {
             channels,
             device_name,
             eof_flag,
+            flush_flag,
             _mmcss: mmcss,
         })
     }
 
-    /// Feed decoded PCM samples into the audio sink
-    pub fn push_samples(&self, samples: &[f32], source_rate: u32, source_channels: usize) {
+    pub fn set_duration_secs(&self, secs: f64) {
+        let frames = (secs * self.sample_rate as f64) as u64;
+        self.duration_frames.store(frames, Ordering::Relaxed);
+    }
+
+    /// Feed decoded PCM samples into the audio sink with real-time backpressure
+    pub fn push_samples(&self, samples: &[f32], source_rate: u32, source_channels: usize, is_active: Option<&AtomicBool>) {
         let mut resampler = self.resampler.lock().unwrap();
         let target_rate = self.sample_rate;
         let target_channels = self.channels as usize;
@@ -201,17 +218,36 @@ impl WasapiSink {
             samples.to_vec()
         };
 
-        let mut prod = self.producer.lock().unwrap();
-        for &s in &resampled {
-            let _ = prod.try_push(s);
+        let mut offset = 0;
+        while offset < resampled.len() {
+            if let Some(active) = is_active {
+                if !active.load(Ordering::Relaxed) {
+                    break;
+                }
+            }
+
+            let mut prod = self.producer.lock().unwrap();
+            while offset < resampled.len() {
+                if prod.try_push(resampled[offset]).is_ok() {
+                    offset += 1;
+                } else {
+                    break;
+                }
+            }
+            drop(prod);
+
+            if offset < resampled.len() {
+                // Buffer is full (2 seconds of audio buffered ahead). Sleep briefly to pace with real-time playback.
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
         self.eof_flag.store(false, Ordering::Relaxed);
     }
 
     /// Clear buffered audio (for seeks or track changes)
     pub fn clear_buffer(&self) {
-        let _prod = self.producer.lock().unwrap();
         self.position_frames.store(0, Ordering::Relaxed);
+        self.flush_flag.store(true, Ordering::SeqCst);
     }
 
     /// Synthesize a clean test tone (e.g. 440 Hz A4 chime) with smooth click-free envelope
@@ -234,7 +270,7 @@ impl WasapiSink {
 
         self.duration_frames.store(frames as u64, Ordering::Relaxed);
         self.position_frames.store(0, Ordering::Relaxed);
-        self.push_samples(&samples, self.sample_rate, self.channels as usize);
+        self.push_samples(&samples, self.sample_rate, self.channels as usize, None);
     }
 }
 

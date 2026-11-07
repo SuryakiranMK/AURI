@@ -5,20 +5,20 @@ import { NormalModeView } from "normal_mode.slint";
 
 export component MainWindow inherits Window {
     title: "AURI";
-    min_width: 1040px;
-    min_height: 680px;
-    preferred_width: 1180px;
-    preferred_height: 760px;
+    min_width: 1100px;
+    min_height: 700px;
+    preferred_width: 1320px;
+    preferred_height: 820px;
     background: Theme.bg_app;
 
     in-out property <string> current_nav: "home";
     in-out property <bool> is_playing: false;
-    in-out property <string> track_title: "Midnight Drive";
-    in-out property <string> track_artist: "The Cassettes";
-    in-out property <string> track_album: "Synthwave Dreams";
-    in-out property <string> track_duration: "3:34";
-    in-out property <string> track_elapsed: "1:18";
-    in-out property <float> track_progress: 0.36;
+    in-out property <string> track_title: "No Track Selected";
+    in-out property <string> track_artist: "Choose any song to play";
+    in-out property <string> track_album: "";
+    in-out property <string> track_duration: "0:00";
+    in-out property <string> track_elapsed: "0:00";
+    in-out property <float> track_progress: 0.0;
     in-out property <float> volume: 0.80;
     in-out property <bool> is_favorite: true;
     in-out property <bool> is_shuffle: false;

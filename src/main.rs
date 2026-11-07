@@ -138,8 +138,14 @@ fn play_ytm_stream(
     ytm: &Arc<YtmClient>,
     video_id: &str,
 ) -> Result<(), String> {
-    let stream = ytm.stream(video_id)?;
-    let (url, len, opus) = (stream.url, stream.len, stream.opus);
+    let mut stream = ytm.stream(video_id)?;
+    let (url, len, ext) = if stream.opus {
+        (stream.url, stream.len, "webm")
+    } else if let Some(aac) = stream.fallback.take() {
+        (aac.url, aac.len, "m4a")
+    } else {
+        (stream.url, stream.len, "m4a")
+    };
     let stats = Arc::new(provider::buffer::StreamStats::default());
     let seekable = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let fetch = provider::buffer::Fetch::start(
@@ -150,7 +156,6 @@ fn play_ytm_stream(
         stats,
     );
     let reader = provider::buffer::StreamReader::new(fetch, seekable);
-    let ext = if opus { "webm" } else { "m4a" };
     audio.play_stream(Box::new(reader), ext, Some(-14.0));
     Ok(())
 }
@@ -554,7 +559,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let audio_play = Arc::clone(&audio);
     let ytm_play = Arc::clone(&ytm);
     let win_track = win_weak.clone();
-    window.on_play_track(move |id, title, artist, _dur| {
+    window.on_play_track(move |id, title, artist, dur_secs| {
         let video_id = id.to_string();
         let tit = title.to_string();
         let art = artist.to_string();
@@ -562,6 +567,11 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(w) = win_track.upgrade() {
             w.set_track_title(tit.clone().into());
             w.set_track_artist(art.clone().into());
+            w.set_track_elapsed("0:00".into());
+            w.set_track_progress(0.0);
+            if dur_secs > 0 {
+                w.set_track_duration(format_duration(dur_secs as f64).into());
+            }
             w.set_is_playing(true);
         }
 

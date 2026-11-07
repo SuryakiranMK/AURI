@@ -4,6 +4,7 @@
 pub mod decoder;
 pub mod mmcss;
 pub mod normalizer;
+pub mod opus;
 pub mod resampler;
 pub mod sink;
 pub mod wasapi_sink;
@@ -68,6 +69,7 @@ impl AudioEngine {
                                 sink_clone.set_loudness_gain(calculate_loudness_gain_db(loudness_db));
                                 match AudioDecoder::open_file(&path) {
                                     Ok(dec) => {
+                                        sink_clone.set_duration_secs(dec.duration_secs());
                                         current_decoder = Some(dec);
                                         is_decoding_clone.store(true, Ordering::SeqCst);
                                         let _ = sink_clone.play();
@@ -88,6 +90,7 @@ impl AudioEngine {
                                 sink_clone.set_loudness_gain(calculate_loudness_gain_db(loudness_db));
                                 match AudioDecoder::open_stream(source, &extension_hint) {
                                     Ok(dec) => {
+                                        sink_clone.set_duration_secs(dec.duration_secs());
                                         current_decoder = Some(dec);
                                         is_decoding_clone.store(true, Ordering::SeqCst);
                                         let _ = sink_clone.play();
@@ -122,6 +125,7 @@ impl AudioEngine {
                                     &packet.samples,
                                     packet.sample_rate,
                                     packet.channels,
+                                    Some(&is_decoding_clone),
                                 );
                             }
                             Ok(None) => {

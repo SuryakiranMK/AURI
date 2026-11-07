@@ -9,6 +9,7 @@ description = "A Minimalist, Ultra-Lightweight, Gaming-First Desktop Music Playe
 slint = { version = "1.18.1", default-features = false, features = ["std", "compat-1-2", "backend-winit", "renderer-femtovg"] }
 cpal = "0.18.2"
 symphonia = { version = "0.5.4", default-features = false, features = ["mp3", "flac", "aac", "isomp4", "vorbis", "wav", "pcm", "mkv", "opt-simd"] }
+opus-decoder = "0.1"
 ringbuf = "0.6.0"
 ureq = { version = "2.10", features = ["json"] }
 serde = { version = "1.0", features = ["derive"] }
