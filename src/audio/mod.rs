@@ -32,6 +32,7 @@ enum DecodeCommand {
         source: Box<dyn MediaSource>,
         extension_hint: String,
         loudness_db: Option<f64>,
+        duration_secs: Option<f64>,
     },
     Seek(f64),
     Stop,
@@ -85,12 +86,18 @@ impl AudioEngine {
                                 source,
                                 extension_hint,
                                 loudness_db,
+                                duration_secs,
                             } => {
                                 sink_clone.clear_buffer();
                                 sink_clone.set_loudness_gain(calculate_loudness_gain_db(loudness_db));
                                 match AudioDecoder::open_stream(source, &extension_hint) {
                                     Ok(dec) => {
-                                        sink_clone.set_duration_secs(dec.duration_secs());
+                                        let dur = if dec.duration_secs() > 0.0 {
+                                            dec.duration_secs()
+                                        } else {
+                                            duration_secs.unwrap_or(0.0)
+                                        };
+                                        sink_clone.set_duration_secs(dur);
                                         current_decoder = Some(dec);
                                         is_decoding_clone.store(true, Ordering::SeqCst);
                                         let _ = sink_clone.play();
@@ -168,11 +175,13 @@ impl AudioEngine {
         source: Box<dyn MediaSource>,
         extension_hint: &str,
         loudness_db: Option<f64>,
+        duration_secs: Option<f64>,
     ) {
         let _ = self.cmd_sender.send(DecodeCommand::OpenStream {
             source,
             extension_hint: extension_hint.to_string(),
             loudness_db,
+            duration_secs,
         });
     }
 

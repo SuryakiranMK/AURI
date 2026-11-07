@@ -87,6 +87,50 @@ fn trim_working_set() {
     }
 }
 
+#[cfg(windows)]
+pub fn set_window_topmost(pinned: bool) {
+    #[link(name = "user32")]
+    extern "system" {
+        fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> *mut std::ffi::c_void;
+        fn SetWindowPos(
+            hwnd: *mut std::ffi::c_void,
+            hwnd_insert_after: *mut std::ffi::c_void,
+            x: i32,
+            y: i32,
+            cx: i32,
+            cy: i32,
+            flags: u32,
+        ) -> i32;
+    }
+
+    let title_utf16: Vec<u16> = "AURI\0".encode_utf16().collect();
+    let hwnd = unsafe { FindWindowW(std::ptr::null(), title_utf16.as_ptr()) };
+    if !hwnd.is_null() {
+        const HWND_TOPMOST: isize = -1;
+        const HWND_NOTOPMOST: isize = -2;
+        const SWP_NOMOVE: u32 = 0x0002;
+        const SWP_NOSIZE: u32 = 0x0001;
+        const SWP_NOACTIVATE: u32 = 0x0010;
+
+        let insert_after = if pinned {
+            HWND_TOPMOST as *mut std::ffi::c_void
+        } else {
+            HWND_NOTOPMOST as *mut std::ffi::c_void
+        };
+        unsafe {
+            SetWindowPos(
+                hwnd,
+                insert_after,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+            );
+        }
+    }
+}
+
 fn scan_directory_tracks(dir: &str, lib: &LibraryManager) -> Vec<TrackData> {
     let path = std::path::Path::new(dir);
     let items = lib.scan_local_files(&[path]);
@@ -137,14 +181,17 @@ fn play_ytm_stream(
     audio: &Arc<AudioEngine>,
     ytm: &Arc<YtmClient>,
     video_id: &str,
+    duration_secs: Option<f64>,
 ) -> Result<(), String> {
     let mut stream = ytm.stream(video_id)?;
-    let (url, len, ext) = if stream.opus {
-        (stream.url, stream.len, "webm")
-    } else if let Some(aac) = stream.fallback.take() {
+    // Prefer AAC (fallback) because Symphonia's native AAC decoder is rock-solid,
+    // bit-perfect, and never panics with arithmetic overflow.
+    let (url, len, ext) = if let Some(aac) = stream.fallback.take() {
         (aac.url, aac.len, "m4a")
-    } else {
+    } else if !stream.opus {
         (stream.url, stream.len, "m4a")
+    } else {
+        (stream.url, stream.len, "webm")
     };
     let stats = Arc::new(provider::buffer::StreamStats::default());
     let seekable = Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -156,7 +203,7 @@ fn play_ytm_stream(
         stats,
     );
     let reader = provider::buffer::StreamReader::new(fetch, seekable);
-    audio.play_stream(Box::new(reader), ext, Some(-14.0));
+    audio.play_stream(Box::new(reader), ext, Some(-14.0), duration_secs);
     Ok(())
 }
 
@@ -404,11 +451,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     let query = format!("{} {}", track.title, track.artist);
                     if let Ok(page) = ytm_c.search(&query) {
                         if let Some(first) = page.songs().first() {
-                            let _ = play_ytm_stream(&audio_c, &ytm_c, &first.video_id);
+                            let _ = play_ytm_stream(&audio_c, &ytm_c, &first.video_id, Some(track.duration_secs as f64));
                         }
                     }
                 } else {
-                    let _ = play_ytm_stream(&audio_c, &ytm_c, &track.id);
+                    let _ = play_ytm_stream(&audio_c, &ytm_c, &track.id, Some(track.duration_secs as f64));
                 }
             });
         }
@@ -438,11 +485,11 @@ fn main() -> Result<(), slint::PlatformError> {
                     let query = format!("{} {}", track.title, track.artist);
                     if let Ok(page) = ytm_c.search(&query) {
                         if let Some(first) = page.songs().first() {
-                            let _ = play_ytm_stream(&audio_c, &ytm_c, &first.video_id);
+                            let _ = play_ytm_stream(&audio_c, &ytm_c, &first.video_id, Some(track.duration_secs as f64));
                         }
                     }
                 } else {
-                    let _ = play_ytm_stream(&audio_c, &ytm_c, &track.id);
+                    let _ = play_ytm_stream(&audio_c, &ytm_c, &track.id, Some(track.duration_secs as f64));
                 }
             });
         }
@@ -587,14 +634,14 @@ fn main() -> Result<(), slint::PlatformError> {
                 let query = format!("{} {}", tit, art);
                 if let Ok(page) = yt.search(&query) {
                     if let Some(first) = page.songs().first() {
-                        if play_ytm_stream(&audio, &yt, &first.video_id).is_ok() {
+                        if play_ytm_stream(&audio, &yt, &first.video_id, Some(dur_secs as f64)).is_ok() {
                             return;
                         }
                     }
                 }
                 audio.play_test_tone(440.0, 5.0);
             } else {
-                if let Err(e) = play_ytm_stream(&audio, &yt, &video_id) {
+                if let Err(e) = play_ytm_stream(&audio, &yt, &video_id, Some(dur_secs as f64)) {
                     eprintln!("[AURI Stream Error] Failed to stream {}: {}", video_id, e);
                 }
             }
@@ -627,7 +674,7 @@ fn main() -> Result<(), slint::PlatformError> {
         std::thread::spawn(move || {
             if let Ok(page) = yt.search(&query) {
                 if let Some(first) = page.songs().first() {
-                    let _ = play_ytm_stream(&audio, &yt, &first.video_id);
+                    let _ = play_ytm_stream(&audio, &yt, &first.video_id, Some(200.0));
                 }
             }
         });
@@ -656,7 +703,54 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // 18. Timer: 10 FPS UI Progress & RAM synchronizer
+    // 18. Switch to Mini Mode
+    let win_to_mini = win_weak.clone();
+    window.on_switch_to_mini(move || {
+        if let Some(w) = win_to_mini.upgrade() {
+            w.set_app_mode("mini".into());
+            w.window().set_size(slint::LogicalSize::new(360.0, 120.0));
+            #[cfg(windows)]
+            set_window_topmost(w.get_is_pinned());
+        }
+    });
+
+    // 19. Switch to Normal Mode
+    let win_to_normal = win_weak.clone();
+    window.on_switch_to_normal(move || {
+        if let Some(w) = win_to_normal.upgrade() {
+            w.set_app_mode("normal".into());
+            w.window().set_size(slint::LogicalSize::new(1320.0, 820.0));
+            #[cfg(windows)]
+            set_window_topmost(false);
+        }
+    });
+
+    // 20. Toggle Pin (Always-on-top)
+    let win_pin = win_weak.clone();
+    window.on_toggle_pin(move || {
+        if let Some(w) = win_pin.upgrade() {
+            let next_pin = !w.get_is_pinned();
+            w.set_is_pinned(next_pin);
+            #[cfg(windows)]
+            set_window_topmost(next_pin);
+        }
+    });
+
+    // 21. Switch to Gaming Mode
+    let win_gaming = win_weak.clone();
+    window.on_switch_to_gaming(move || {
+        if let Some(w) = win_gaming.upgrade() {
+            w.set_app_mode("mini".into());
+            w.window().set_size(slint::LogicalSize::new(360.0, 120.0));
+            #[cfg(windows)]
+            {
+                set_window_topmost(true);
+                trim_working_set();
+            }
+        }
+    });
+
+    // 22. Timer: 10 FPS UI Progress & RAM synchronizer
     let win_timer = win_weak.clone();
     let audio_timer = Arc::clone(&audio);
     let timer = slint::Timer::default();
@@ -694,4 +788,31 @@ fn main() -> Result<(), slint::PlatformError> {
 
     println!("[AURI Startup] Online. Launching Glassmorphic UI...");
     window.run()
+}
+
+#[cfg(test)]
+mod playback_tests {
+    use super::*;
+
+    #[test]
+    fn test_live_stream_playback_to_sink() {
+        let engine = Arc::new(AudioEngine::new().expect("engine init"));
+        let ytm = Arc::new(YtmClient::new(String::new()));
+        let search = ytm.search("dhurandhar").expect("search");
+        let song = search.songs().first().expect("song").clone();
+        println!("Testing playback for: {} ({})", song.title, song.video_id);
+        play_ytm_stream(&engine, &ytm, &song.video_id, Some(210.0)).expect("play_ytm_stream");
+
+        let mut observed_progress = false;
+        for i in 0..15 {
+            std::thread::sleep(Duration::from_millis(300));
+            let status = engine.get_status();
+            println!("[tick {}] state={:?}, pos={:.2}s, is_decoding={}",
+                i, status.state, status.position.as_secs_f64(), engine.is_decoding());
+            if status.position.as_secs_f64() > 0.1 {
+                observed_progress = true;
+            }
+        }
+        assert!(observed_progress, "Hardware position should advance as audio plays");
+    }
 }

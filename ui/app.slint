@@ -2,15 +2,18 @@
 import { Theme } from "theme.slint";
 import { TrackData, AlbumData, ArtistData } from "models.slint";
 import { NormalModeView } from "normal_mode.slint";
+import { MiniModeView } from "mini_mode.slint";
 
 export component MainWindow inherits Window {
     title: "AURI";
-    min_width: 1100px;
-    min_height: 700px;
-    preferred_width: 1320px;
-    preferred_height: 820px;
+    min_width: root.app_mode == "mini" ? 340px : 1100px;
+    min_height: root.app_mode == "mini" ? 110px : 700px;
+    preferred_width: root.app_mode == "mini" ? 360px : 1320px;
+    preferred_height: root.app_mode == "mini" ? 120px : 820px;
     background: Theme.bg_app;
 
+    in-out property <string> app_mode: "normal";
+    in-out property <bool> is_pinned: true;
     in-out property <string> current_nav: "home";
     in-out property <bool> is_playing: false;
     in-out property <string> track_title: "No Track Selected";
@@ -51,6 +54,8 @@ export component MainWindow inherits Window {
     callback toggle_shuffle();
     callback toggle_repeat();
     callback switch_to_mini();
+    callback switch_to_normal();
+    callback toggle_pin();
     callback switch_to_gaming();
     callback trim_ram();
     callback perform_search(string);
@@ -60,7 +65,7 @@ export component MainWindow inherits Window {
     callback play_album(string);
     callback toggle_loudness(bool);
 
-    NormalModeView {
+    if root.app_mode == "normal": NormalModeView {
         current_nav: root.current_nav;
         is_playing: root.is_playing;
         track_title: root.track_title;
@@ -107,5 +112,30 @@ export component MainWindow inherits Window {
         rescan_local(path) => { root.rescan_local(path); }
         play_album(id) => { root.play_album(id); }
         toggle_loudness(enabled) => { root.toggle_loudness(enabled); }
+    }
+
+    if root.app_mode == "mini": MiniModeView {
+        is_playing: root.is_playing;
+        track_title: root.track_title;
+        track_artist: root.track_artist;
+        track_album: root.track_album;
+        track_duration: root.track_duration;
+        track_elapsed: root.track_elapsed;
+        track_progress: root.track_progress;
+        volume: root.volume;
+        is_favorite: root.is_favorite;
+        is_shuffle: root.is_shuffle;
+        is_repeat: root.is_repeat;
+        is_pinned: root.is_pinned;
+
+        toggle_play => { root.toggle_play(); }
+        prev_track => { root.prev_track(); }
+        next_track => { root.next_track(); }
+        seek(pos) => { root.seek(pos); }
+        volume_changed(val) => { root.volume_changed(val); }
+        toggle_favorite => { root.toggle_favorite(); }
+        toggle_pin => { root.toggle_pin(); }
+        switch_to_normal => { root.switch_to_normal(); }
+        close_app => { root.switch_to_normal(); }
     }
 }

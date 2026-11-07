@@ -567,17 +567,38 @@ export component NormalModeView inherits Rectangle {
                                             Rectangle {
                                                 height: 100px;
                                                 border-radius: Theme.radius_sm;
-                                                background: album.color_hue;
+                                                background: @linear-gradient(135deg, album.color_hue.darker(50%) 0%, #0E1017 100%);
                                                 border-width: 1px;
                                                 border-color: Theme.border_glass;
 
-                                                Image {
-                                                    source: @image-url("../assets/icons/album.svg");
-                                                    width: 30px;
-                                                    height: 30px;
-                                                    image-fit: contain;
+                                                // Vinyl disc groove motif
+                                                Rectangle {
+                                                    width: 48px;
+                                                    height: 48px;
+                                                    border-radius: 24px;
+                                                    background: @linear-gradient(135deg, #1A1D2B 0%, #0A0B10 100%);
+                                                    border-width: 2px;
+                                                    border-color: Theme.border_glass_highlight;
                                                     x: (parent.width - self.width) / 2;
                                                     y: (parent.height - self.height) / 2;
+
+                                                    Rectangle {
+                                                        width: 16px;
+                                                        height: 16px;
+                                                        border-radius: 8px;
+                                                        background: album.color_hue;
+                                                        x: (parent.width - self.width) / 2;
+                                                        y: (parent.height - self.height) / 2;
+
+                                                        Rectangle {
+                                                            width: 6px;
+                                                            height: 6px;
+                                                            border-radius: 3px;
+                                                            background: #07080B;
+                                                            x: (parent.width - self.width) / 2;
+                                                            y: (parent.height - self.height) / 2;
+                                                        }
+                                                    }
                                                 }
                                             }
 
@@ -1861,6 +1882,7 @@ export component NormalModeView inherits Rectangle {
                     vertical_stretch: 1;
 
                     VerticalLayout {
+                        padding_right: 14px;
                         spacing: 2px;
 
                         for qtrack in root.queue_tracks: Rectangle {

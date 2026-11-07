@@ -1,0 +1,192 @@
+// AURI Mini Mode Floating Controller
+// Designed for Gaming & Multitasking (Reference 2 + Tide Collapsed Architecture)
+
+import { Theme } from "theme.slint";
+import { AuriIconButton, AuriPlayButton, AuriSlider } from "components.slint";
+
+export component MiniModeView inherits Rectangle {
+    in property <bool> is_playing: false;
+    in property <string> track_title: "No Track Selected";
+    in property <string> track_artist: "Choose any song to play";
+    in property <string> track_album: "";
+    in property <string> track_duration: "0:00";
+    in property <string> track_elapsed: "0:00";
+    in property <float> track_progress: 0.0;
+    in property <float> volume: 0.80;
+    in property <bool> is_favorite: false;
+    in property <bool> is_shuffle: false;
+    in property <bool> is_repeat: false;
+    in property <bool> is_pinned: true;
+
+    callback toggle_play();
+    callback prev_track();
+    callback next_track();
+    callback seek(float);
+    callback volume_changed(float);
+    callback toggle_favorite();
+    callback toggle_pin();
+    callback switch_to_normal();
+    callback close_app();
+
+    background: Theme.bg_surface;
+    border-radius: Theme.radius_md;
+    border-width: 1px;
+    border-color: Theme.border_glass;
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 6px;
+
+        // Top Row: Artwork + Track Meta + Window Controls
+        HorizontalLayout {
+            spacing: 10px;
+            alignment: center;
+
+            // Artwork Thumbnail (38x38px)
+            Rectangle {
+                width: 38px;
+                height: 38px;
+                border-radius: 6px;
+                background: @linear-gradient(135deg, #1E2034 0%, #2A2D48 100%);
+                border-width: 1px;
+                border-color: Theme.border_glass_highlight;
+
+                Image {
+                    source: @image-url("../assets/icons/music.svg");
+                    width: 16px;
+                    height: 16px;
+                    image-fit: contain;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                }
+            }
+
+            // Track Title & Artist (Left-Aligned, Elided)
+            VerticalLayout {
+                horizontal_stretch: 1;
+                alignment: center;
+                spacing: 2px;
+
+                Text {
+                    text: root.track_title;
+                    font_size: 13px;
+                    font_weight: 700;
+                    color: #FFFFFF;
+                    overflow: elide;
+                }
+                Text {
+                    text: root.track_artist;
+                    font_size: 11px;
+                    color: Theme.text_secondary;
+                    overflow: elide;
+                }
+            }
+
+            // Pin Button (Always-on-top toggle)
+            AuriIconButton {
+                icon_source: @image-url("../assets/icons/pin.svg");
+                icon_size: 14px;
+                btn_size: 26px;
+                is_active: root.is_pinned;
+                active_color: Theme.accent;
+                tooltip: root.is_pinned ? "Unpin from Top" : "Pin Above Games";
+                clicked => { root.toggle_pin(); }
+            }
+
+            // Expand to Full Normal Mode
+            AuriIconButton {
+                icon_source: @image-url("../assets/icons/expand.svg");
+                icon_size: 14px;
+                btn_size: 26px;
+                tooltip: "Restore Full Player";
+                clicked => { root.switch_to_normal(); }
+            }
+
+            // Close
+            AuriIconButton {
+                icon_source: @image-url("../assets/icons/close.svg");
+                icon_size: 12px;
+                btn_size: 26px;
+                tooltip: "Close";
+                clicked => { root.close_app(); }
+            }
+        }
+
+        // Middle Row: Sleek Progress Bar with Timers
+        VerticalLayout {
+            spacing: 2px;
+
+            AuriSlider {
+                value: root.track_progress;
+                value_changed(val) => { root.seek(val); }
+            }
+
+            HorizontalLayout {
+                Text {
+                    text: root.track_elapsed;
+                    font_size: 9px;
+                    color: Theme.text_muted;
+                    horizontal_stretch: 1;
+                }
+                Text {
+                    text: root.track_duration;
+                    font_size: 9px;
+                    color: Theme.text_muted;
+                }
+            }
+        }
+
+        // Bottom Row: Transport Controls
+        HorizontalLayout {
+            alignment: center;
+            spacing: 12px;
+
+            // Favorite
+            AuriIconButton {
+                icon_source: root.is_favorite ? @image-url("../assets/icons/heart-filled.svg") : @image-url("../assets/icons/heart.svg");
+                icon_size: 14px;
+                btn_size: 28px;
+                is_active: root.is_favorite;
+                active_color: Theme.favorite_active;
+                tooltip: "Favorite";
+                clicked => { root.toggle_favorite(); }
+            }
+
+            // Previous
+            AuriIconButton {
+                icon_source: @image-url("../assets/icons/prev.svg");
+                icon_size: 15px;
+                btn_size: 28px;
+                tooltip: "Previous";
+                clicked => { root.prev_track(); }
+            }
+
+            // Play / Pause
+            AuriPlayButton {
+                button_size: 32px;
+                is_playing: root.is_playing;
+                clicked => { root.toggle_play(); }
+            }
+
+            // Next
+            AuriIconButton {
+                icon_source: @image-url("../assets/icons/next.svg");
+                icon_size: 15px;
+                btn_size: 28px;
+                tooltip: "Next";
+                clicked => { root.next_track(); }
+            }
+
+            // Volume Mute / Low toggle
+            AuriIconButton {
+                icon_source: root.volume == 0.0 ? @image-url("../assets/icons/volume-mute.svg") : @image-url("../assets/icons/volume.svg");
+                icon_size: 14px;
+                btn_size: 28px;
+                tooltip: "Mute / Unmute";
+                clicked => {
+                    root.volume_changed(root.volume > 0.0 ? 0.0 : 0.8);
+                }
+            }
+        }
+    }
+}

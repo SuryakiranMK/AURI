@@ -173,3 +173,4 @@ fn soft_clip(pcm: &mut [f32], channels: usize, memory: &mut [f32; 2]) {
         *memory = a;
     }
 }
+
