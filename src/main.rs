@@ -1,5 +1,5 @@
 // Project AURI: Minimalist, Ultra-Lightweight, Gaming-First Desktop Music Player
-// Phase 2: Normal Mode Complete — Sleek Apple Music / Spotify UI in Slint
+// Sleek Apple Music / Spotify Glassmorphic UI in Slint with Tubefast InnerTube Streaming Engine
 
 pub mod audio;
 pub mod library;
@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use audio::{AudioEngine, AudioEngineKind, PlaybackState};
 use library::LibraryManager;
-use provider::innertube::InnertubeClient;
+use provider::ytm::Client as YtmClient;
 use provider::TrackItem;
 use slint::{ComponentHandle, ModelRc, VecModel};
 
@@ -91,7 +91,6 @@ fn scan_directory_tracks(dir: &str, lib: &LibraryManager) -> Vec<TrackData> {
     let path = std::path::Path::new(dir);
     let items = lib.scan_local_files(&[path]);
     if items.is_empty() {
-        // High-fidelity lossless demo presets if local folder has no audio
         vec![
             TrackData {
                 id: "curated-1".into(),
@@ -134,10 +133,32 @@ fn scan_directory_tracks(dir: &str, lib: &LibraryManager) -> Vec<TrackData> {
     }
 }
 
+fn play_ytm_stream(
+    audio: &Arc<AudioEngine>,
+    ytm: &Arc<YtmClient>,
+    video_id: &str,
+) -> Result<(), String> {
+    let stream = ytm.stream(video_id)?;
+    let (url, len, opus) = (stream.url, stream.len, stream.opus);
+    let stats = Arc::new(provider::buffer::StreamStats::default());
+    let seekable = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let fetch = provider::buffer::Fetch::start(
+        ytm.agent.clone(),
+        url,
+        len,
+        ytm.player_agent(),
+        stats,
+    );
+    let reader = provider::buffer::StreamReader::new(fetch, seekable);
+    let ext = if opus { "webm" } else { "m4a" };
+    audio.play_stream(Box::new(reader), ext, Some(-14.0));
+    Ok(())
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     println!("========================================================");
-    println!("  AURI Desktop Music Player - Milestone v0.2.0         ");
-    println!("  Normal Mode Complete • Apple Music Sleek UI in Slint  ");
+    println!("  AURI Desktop Music Player                            ");
+    println!("  Apple Glassmorphic Dark UI • Tubefast Streaming Core  ");
     println!("========================================================");
 
     // Initialize native WASAPI audio engine
@@ -156,9 +177,9 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     };
 
-    // Initialize YouTube Music Innertube Client
-    let innertube = Arc::new(InnertubeClient::new());
-    println!("[AURI Streaming] Innertube Client online");
+    // Initialize YouTube Music Client (Tubefast VisionOS engine)
+    let ytm = Arc::new(YtmClient::new(String::new()));
+    println!("[AURI Streaming] YouTube Music Client online (VisionOS player)");
 
     // Initialize Local Music Library & Queue Manager
     let library = Arc::new(LibraryManager::new());
@@ -280,22 +301,22 @@ fn main() -> Result<(), slint::PlatformError> {
     let similar_artists = vec![
         ArtistData {
             name: "Dawid Podsiadło".into(),
-            role: "Artist • Pop / Indie".into(),
+            role: "Pop / Indie".into(),
             color_hue: slint::Color::from_rgb_u8(245, 158, 11),
         },
         ArtistData {
             name: "Billie Eilish".into(),
-            role: "Artist • Alt Pop".into(),
+            role: "Alt Pop".into(),
             color_hue: slint::Color::from_rgb_u8(16, 185, 129),
         },
         ArtistData {
             name: "Quebonafide".into(),
-            role: "Artist • Hip-Hop".into(),
+            role: "Hip-Hop".into(),
             color_hue: slint::Color::from_rgb_u8(99, 102, 241),
         },
         ArtistData {
             name: "Daria Zawiałow".into(),
-            role: "Artist • Electro-Pop".into(),
+            role: "Electro-Pop".into(),
             color_hue: slint::Color::from_rgb_u8(236, 72, 153),
         },
     ];
@@ -357,6 +378,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // 3. Previous Track
     let queue_prev = Arc::clone(&library);
     let audio_prev = Arc::clone(&audio);
+    let ytm_prev = Arc::clone(&ytm);
     let win_prev = win_weak.clone();
     window.on_prev_track(move || {
         if let Some(track) = queue_prev.queue().previous() {
@@ -367,18 +389,30 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_track_duration(format_duration(track.duration_secs as f64).into());
                 w.set_is_playing(true);
             }
-            if track.id.starts_with("curated-") {
-                audio_prev.play_test_tone(440.0, 15.0);
-            } else if track.id.starts_with("local:") {
-                let path = &track.id["local:".len()..];
-                audio_prev.play_file(path, None);
-            }
+            let audio_c = Arc::clone(&audio_prev);
+            let ytm_c = Arc::clone(&ytm_prev);
+            std::thread::spawn(move || {
+                if track.id.starts_with("local:") {
+                    let path = &track.id["local:".len()..];
+                    audio_c.play_file(path, None);
+                } else if track.id.starts_with("curated-") {
+                    let query = format!("{} {}", track.title, track.artist);
+                    if let Ok(page) = ytm_c.search(&query) {
+                        if let Some(first) = page.songs().first() {
+                            let _ = play_ytm_stream(&audio_c, &ytm_c, &first.video_id);
+                        }
+                    }
+                } else {
+                    let _ = play_ytm_stream(&audio_c, &ytm_c, &track.id);
+                }
+            });
         }
     });
 
     // 4. Next Track
     let queue_next = Arc::clone(&library);
     let audio_next = Arc::clone(&audio);
+    let ytm_next = Arc::clone(&ytm);
     let win_next = win_weak.clone();
     window.on_next_track(move || {
         if let Some(track) = queue_next.queue().next() {
@@ -389,12 +423,23 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_track_duration(format_duration(track.duration_secs as f64).into());
                 w.set_is_playing(true);
             }
-            if track.id.starts_with("curated-") {
-                audio_next.play_test_tone(523.25, 15.0); // C5
-            } else if track.id.starts_with("local:") {
-                let path = &track.id["local:".len()..];
-                audio_next.play_file(path, None);
-            }
+            let audio_c = Arc::clone(&audio_next);
+            let ytm_c = Arc::clone(&ytm_next);
+            std::thread::spawn(move || {
+                if track.id.starts_with("local:") {
+                    let path = &track.id["local:".len()..];
+                    audio_c.play_file(path, None);
+                } else if track.id.starts_with("curated-") {
+                    let query = format!("{} {}", track.title, track.artist);
+                    if let Ok(page) = ytm_c.search(&query) {
+                        if let Some(first) = page.songs().first() {
+                            let _ = play_ytm_stream(&audio_c, &ytm_c, &first.video_id);
+                        }
+                    }
+                } else {
+                    let _ = play_ytm_stream(&audio_c, &ytm_c, &track.id);
+                }
+            });
         }
     });
 
@@ -429,7 +474,6 @@ fn main() -> Result<(), slint::PlatformError> {
     let win_fav_track = win_weak.clone();
     window.on_toggle_track_favorite(move |_id| {
         if let Some(w) = win_fav_track.upgrade() {
-            // Visual toggle
             let cur = w.get_is_favorite();
             w.set_is_favorite(!cur);
         }
@@ -467,25 +511,30 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // 12. Search
-    let innertube_search = Arc::clone(&innertube);
+    // 12. Search (Tubefast YTM Search)
+    let ytm_search = Arc::clone(&ytm);
     let win_search = win_weak.clone();
     window.on_perform_search(move |query| {
         let q = query.to_string();
-        let it = Arc::clone(&innertube_search);
+        let yt = Arc::clone(&ytm_search);
         let win = win_search.clone();
 
         std::thread::spawn(move || {
-            if let Ok(tracks) = it.search(&q) {
-                let slint_tracks: Vec<TrackData> = tracks
+            if let Ok(page) = yt.search(&q) {
+                let songs = page.songs();
+                let slint_tracks: Vec<TrackData> = songs
                     .into_iter()
-                    .map(|t| TrackData {
-                        id: t.id.into(),
-                        title: t.title.into(),
-                        artist: t.artist.into(),
-                        album: t.album.into(),
-                        duration: format_duration(t.duration_secs as f64).into(),
-                        format_badge: t.format_badge.into(),
+                    .map(|item| TrackData {
+                        id: item.video_id.into(),
+                        title: item.title.into(),
+                        artist: item.subtitle.into(),
+                        album: "YouTube Music".into(),
+                        duration: if item.duration.is_empty() {
+                            "3:30".into()
+                        } else {
+                            item.duration.into()
+                        },
+                        format_badge: "Opus 160k".into(),
                         is_playing: false,
                         is_favorite: false,
                         color_hue: slint::Color::from_rgb_u8(99, 102, 241),
@@ -501,9 +550,9 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    // 13. Play Track (Instant Play Trigger)
+    // 13. Play Track (Instant Real Music Playback)
     let audio_play = Arc::clone(&audio);
-    let it_play = Arc::clone(&innertube);
+    let ytm_play = Arc::clone(&ytm);
     let win_track = win_weak.clone();
     window.on_play_track(move |id, title, artist, _dur| {
         let video_id = id.to_string();
@@ -517,32 +566,26 @@ fn main() -> Result<(), slint::PlatformError> {
         }
 
         let audio = Arc::clone(&audio_play);
-        let it = Arc::clone(&it_play);
+        let yt = Arc::clone(&ytm_play);
 
         std::thread::spawn(move || {
-            if video_id.starts_with("curated-") {
-                // Play melodic synth tone for test/curated tracks
-                audio.play_test_tone(440.0, 15.0);
-            } else if video_id.starts_with("local:") {
+            if video_id.starts_with("local:") {
                 let file_path = &video_id["local:".len()..];
                 audio.play_file(file_path, None);
+            } else if video_id.starts_with("curated-") {
+                // Search and stream the actual song from YouTube Music!
+                let query = format!("{} {}", tit, art);
+                if let Ok(page) = yt.search(&query) {
+                    if let Some(first) = page.songs().first() {
+                        if play_ytm_stream(&audio, &yt, &first.video_id).is_ok() {
+                            return;
+                        }
+                    }
+                }
+                audio.play_test_tone(440.0, 5.0);
             } else {
-                match it.resolve_stream(&video_id) {
-                    Ok(resolved) => {
-                        let stream_buf = provider::buffer::SlidingStreamBuffer::new(
-                            resolved.url,
-                            resolved.content_length,
-                            resolved.user_agent,
-                        );
-                        audio.play_stream(
-                            Box::new(stream_buf),
-                            resolved.extension_hint,
-                            resolved.loudness_db,
-                        );
-                    }
-                    Err(e) => {
-                        eprintln!("[AURI Stream Error] Failed to resolve stream for {}: {}", video_id, e);
-                    }
+                if let Err(e) = play_ytm_stream(&audio, &yt, &video_id) {
+                    eprintln!("[AURI Stream Error] Failed to stream {}: {}", video_id, e);
                 }
             }
         });
@@ -562,12 +605,22 @@ fn main() -> Result<(), slint::PlatformError> {
     // 15. Play Album
     let win_alb = win_weak.clone();
     let audio_alb = Arc::clone(&audio);
+    let ytm_alb = Arc::clone(&ytm);
     window.on_play_album(move |alb_id| {
+        let query = format!("album {}", alb_id);
         if let Some(w) = win_alb.upgrade() {
             w.set_is_playing(true);
             w.set_track_album(format!("Album {}", alb_id).into());
         }
-        audio_alb.play_test_tone(523.25, 15.0); // C5 major tone
+        let audio = Arc::clone(&audio_alb);
+        let yt = Arc::clone(&ytm_alb);
+        std::thread::spawn(move || {
+            if let Ok(page) = yt.search(&query) {
+                if let Some(first) = page.songs().first() {
+                    let _ = play_ytm_stream(&audio, &yt, &first.video_id);
+                }
+            }
+        });
     });
 
     // 16. Toggle Loudness Normalization
@@ -629,6 +682,6 @@ fn main() -> Result<(), slint::PlatformError> {
         },
     );
 
-    println!("[AURI Startup] Phase 2 Normal Mode online. Launching UI...");
+    println!("[AURI Startup] Online. Launching Glassmorphic UI...");
     window.run()
 }

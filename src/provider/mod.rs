@@ -2,7 +2,7 @@
 // Unified abstraction for Local filesystem and YouTube Music streaming
 
 pub mod buffer;
-pub mod innertube;
+pub mod ytm;
 
 use serde::{Deserialize, Serialize};
 
@@ -36,4 +36,3 @@ impl Default for TrackItem {
         }
     }
 }
-
