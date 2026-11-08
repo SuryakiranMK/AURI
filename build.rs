@@ -1,13 +1,8 @@
 fn main() {
-    slint_build::compile("ui/app.slint").expect("Slint compilation failed");
-
+    println!("cargo:rerun-if-changed=assets/icon.ico");
     #[cfg(windows)]
-    {
-        let mut res = winres::WindowsResource::new();
-        res.set_icon("assets/icon.ico");
-        res.set("ProductName", "AURI");
-        res.set("FileDescription", "AURI Desktop Music Player");
-        res.set("LegalCopyright", "Copyright (C) 2026");
-        let _ = res.compile();
-    }
+    winresource::WindowsResource::new()
+        .set_icon("assets/icon.ico")
+        .compile()
+        .expect("the application icon should embed");
 }

@@ -4,80 +4,42 @@
   <img src="assets/banner_wide.jpg" alt="AURI Banner" width="100%" />
 </p>
 
-[![Release](https://img.shields.io/badge/Release-v1.1.0-8B5CF6.svg?style=flat-square)](https://github.com/SuryakiranMK/AURI/releases/tag/v1.1.0)
+[![Release](https://img.shields.io/badge/Release-v2.0.0-8B5CF6.svg?style=flat-square)](https://github.com/SuryakiranMK/AURI/releases/tag/v2.0.0)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6.svg?style=flat-square)](https://github.com/SuryakiranMK/AURI)
-[![Rust](https://img.shields.io/badge/Rust-1.99.1%20(2021)-orange.svg?style=flat-square)](https://www.rust-lang.org/)
-[![Working Set](https://img.shields.io/badge/Gaming%20RAM-%3C%2032.5%20MB-10B981.svg?style=flat-square)](BENCHMARK_REPORT.md)
-[![GPU Load](https://img.shields.io/badge/Headless%20GPU-0.0%25-10B981.svg?style=flat-square)](BENCHMARK_REPORT.md)
+[![Rust](https://img.shields.io/badge/Rust-1.90%2B%20(2024)-orange.svg?style=flat-square)](https://www.rust-lang.org/)
+[![Gaming RAM](https://img.shields.io/badge/Gaming%20RAM-%3C%2035%20MB-10B981.svg?style=flat-square)](https://github.com/SuryakiranMK/AURI)
+[![Tests](https://img.shields.io/badge/Tests-31%20Passed-10B981.svg?style=flat-square)](https://github.com/SuryakiranMK/AURI)
 
-**AURI** is an ultra-lightweight, native Windows desktop music player engineered specifically for PC gamers, power users, and developers. It completely replaces heavy browser-based players (like YouTube Music in Chrome/Edge, which consume 500–850 MB of RAM and multiple CPU processes) with a single, standalone native executable consuming **< 35 MB of RAM and strictly 0.0% GPU when playing in the background**.
+**AURI** is an ultra-lightweight, native Windows desktop music player engineered specifically for PC gamers, power users, and audiophiles. Built upon a high-performance native Rust core with zero browser engines, AURI delivers instant YouTube Music streaming, audiophile loudness normalization, and an ultra-compact floating Gaming Mini Mode while consuming **under 35 MB of RAM and 0.0% background GPU**.
 
 ---
 
 ## ⚡ Key Highlights & Architecture
 
-- **Single Native Process**: Built in pure Rust with Slint hardware-accelerated 2D rendering (Femtovg backend). Zero Electron, zero Chromium, and zero permanently running helper processes.
-- **Pure-Rust Audio Core**: Powered by `symphonia` 0.6 demuxing and decoding engines supporting FLAC, MP3, AAC, Opus, Vorbis, and WAV.
-- **Windows WASAPI & MMCSS**: Shared-mode WASAPI output with Windows Multimedia Class Scheduler Service (`AvSetMmThreadCharacteristicsW`), guaranteeing glitch-free, real-time audio playback even under 100% CPU/GPU gaming loads.
-- **YouTube Music Streaming (Tier 1 Innertube)**: Native, zero-browser YouTube Music API client resolving progressive WebM Opus (160 kbps) and MP4 AAC (128 kbps) streams with a strict sliding 8 MB memory buffer.
-- **Anti-Cheat Safe Game Detection**: Completely passive `SetWinEventHook` foreground listener that detects 30+ popular games (`cs2.exe`, `valorant.exe`, `dota2.exe`, `r5apex.exe`, `eldenring.exe`, `helldivers2.exe`, etc.) without code injection, DLL injection, or memory hooking. 100% safe with **Easy Anti-Cheat, BattlEye, Vanguard, Ricochet, and VAC**.
-- **Working Set RAM Trimmer**: Integrated Windows native `EmptyWorkingSet()` memory purging that drops RAM footprint to **< 32.5 MB** upon entering Gaming Mode or hiding the interface.
-- **Decoupled Window Lifecycle**: The audio engine runs independently in background threads. Closing or hiding the window leaves playback running headlessly with 0.0% GPU overhead.
+- **Single Lightweight Binary**: Standalone native Windows executable (~9.9 MB). Zero Electron, zero Chromium, zero webview overhead.
+- **Dynamic YouTube Music InnerTube**: Native client utilizing Apple visionOS bypass tokens for full-fidelity Opus (160 kbps) and AAC (128 kbps) direct streams without throttling.
+- **-7.0 LUFS Loudness Normalizer & Peak Limiter**: ITU-R BS.1770 compliant loudness normalizer and zero-allocation soft-knee peak limiter delivering uniform, punchy volume across tracks without digital clipping distortion.
+- **Floating Gaming Mini Mode**: Movable, curved-edge floating HUD with always-on-top pinning, album art, transport buttons, mini seekbar, and volume control designed to hover unobtrusively over games or secondary monitors.
+- **One-Click Working Set RAM Optimizer**: Instant memory purge reducing memory consumption to sub-35 MB during intense gaming sessions.
+- **Windows SMTC & Native Media Keys**: Full integration with Windows 10/11 System Media Transport Controls, lock screen widgets, and keyboard media keys.
+- **Apple-Grade Dark Glassmorphic Aesthetic**: Deep obsidian theme with electric violet accents (`#8B5CF6`), subtle translucent veils, and custom typography (Onest & Big Shoulders Display).
 
 ---
 
-## 🎮 Three Operating Modes & Live UI Variants
-
-AURI provides three distinct operating modes switchable live from the interface or system tray:
+## 🎮 Operating Modes
 
 ### 1. Normal Mode (Full Desktop Experience)
-- Complete, elegant dark-first aesthetic inspired by Apple Music and Spotify.
-- **Variant A1 (Reference 1 Style)**: Hero artist view, album cover grid, popular tracks list, and embedded now-playing card inside the Right Play Queue.
-- **Variant A2 (Docked Persistent Bar)**: Classic 70px persistent bottom player bar with full seek controls and collapsible play queue.
-- Live interactive search bar querying YouTube Music and local directories simultaneously.
+- Full-featured sidebar navigation: **Home**, **Liked songs**, and **Recently played** with local persistence.
+- Dynamic **Quick picks** and seed-based **More like...** recommendation carousels.
+- Integrated search bar with instant debounced queries and `Ctrl+K` shortcut.
+- Rich bottom player bar with seek scrubber, volume slider, mute toggle, queue manager, and lyrics drawer.
 
-### 2. Mini Mode (Compact Floating Controller)
-- **Variant B1 (Compact Card with Art)**: 380x120px floating controller with artwork, track title, artist, seekbar, and transport buttons.
-- **Variant B2 (Micro-Pill)**: Ultra-thin 340x60px micro-player designed to sit unobtrusively at the corner of a second monitor.
-- Supports **Always-on-Top** pin toggle and **Idle Dimming** (~80% opacity when unhovered).
-
-### 3. Gaming Mode (Signature Dual-Paradigm)
-- **Pure Headless Mode**: Completely hides the graphical interface (`SW_HIDE`), stopping all Femtovg swapchain rendering (**0.0% GPU load**) and purging RAM to **< 35 MB**. Audio playback continues seamlessly via real-time WASAPI callback.
-- **Companion HUD**: Translucent dark overlay with vinyl record motif, high-resolution format badge (*"FLAC 96 KHZ 24-BIT"*), and spectrum visualizer summoned instantly via `Win+Alt+M`.
-
----
-
-## 📊 Performance Benchmarks (AURI vs. Alternatives)
-
-Audited via our automated profiling suite ([`scripts/benchmark.ps1`](scripts/benchmark.ps1)):
-
-| Application | Working Set (RAM) | Committed Private Bytes | GPU Overhead | Processes |
-|:---|:---:|:---:|:---:|:---:|
-| **YouTube Music (Chrome)** | 450 MB – 850 MB | 500 MB – 900 MB | 1.5% – 5.0% (Active) | 8 – 14 |
-| **Spotify Desktop** | 320 MB – 600 MB | 350 MB – 650 MB | 1.0% – 3.0% (Active) | 5 – 8 |
-| **AURI Normal Mode** | **102 MB** (Peak) | **59.8 MB** | < 0.5% | **1** |
-| **AURI Mini Mode** | **~42 MB** | **38.5 MB** | < 0.1% | **1** |
-| **AURI Gaming Mode (Headless)** | **< 32.5 MB** | **28.2 MB** | **0.0% (Suspended)** | **1** |
-
-*See [`BENCHMARK_REPORT.md`](BENCHMARK_REPORT.md) for full execution methodology and sample logs.*
-
----
-
-## ⌨️ Global Keyboard Shortcuts & System Integration
-
-AURI registers global hotkeys and hardware media keys that work globally even while full-screen in a game:
-
-| Shortcut | Action |
-|---|---|
-| `Media Play/Pause` or `Win + Alt + Space` | Toggle Play / Pause |
-| `Media Next` or `Win + Alt + Right` | Next Track in Queue |
-| `Media Previous` or `Win + Alt + Left` | Previous Track in Queue |
-| `Win + Alt + Up` | Volume +5% |
-| `Win + Alt + Down` | Volume -5% |
-| `Win + Alt + M` | Cycle Operating Mode (Normal ➔ Mini ➔ HUD ➔ Headless) |
-| `System Tray Double-Click` | Show / Hide Main Window |
-| `System Tray Right-Click` | Dark Context Menu (Play/Pause, Next, Prev, Modes, Exit) |
+### 2. Gaming Mini Mode (Floating HUD)
+- Compact, curved floating window (radius 16px) with sleek violet glow.
+- Draggable across multi-monitor setups.
+- Real-time album art, title/artist display, elapsed/duration counter, seek progress bar, transport controls, and volume slider.
+- One-click restore button to return to Normal Mode.
 
 ---
 
@@ -85,7 +47,7 @@ AURI registers global hotkeys and hardware media keys that work globally even wh
 
 ### Prerequisites
 - Windows 10 or Windows 11 (x86_64)
-- Rust toolchain (stable, 1.80+)
+- Rust toolchain (`edition = 2024`, stable 1.90+)
 - Visual Studio C++ Build Tools (MSVC Linker & Windows SDK)
 
 ### Build Standalone Release Executable
@@ -94,10 +56,14 @@ AURI registers global hotkeys and hardware media keys that work globally even wh
 git clone https://github.com/SuryakiranMK/AURI.git
 cd AURI
 
-# Run full test suite (25 tests)
-cargo test -- --test-threads=1
+# Run automated tests (31 unit and playback tests)
+cargo test
 
 # Compile optimized standalone release binary
+cargo build --release
+```
+
+The resulting optimized executable will be located at `target\release\auri.exe`.
 cargo build --release
 
 # Run benchmark suite
