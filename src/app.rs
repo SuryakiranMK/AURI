@@ -245,7 +245,25 @@ impl MiniVariant {
         match self {
             MiniVariant::ClassicHud => (384.0, if queue_open { 260.0 } else { 108.0 }),
             MiniVariant::CapsulePill => (320.0, 56.0),
-            MiniVariant::StudioCard => (380.0, 150.0),
+            MiniVariant::StudioCard => (280.0, if queue_open { 530.0 } else { 390.0 }),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum BarLayout {
+    #[default]
+    Docked,
+    FloatingPill,
+}
+
+impl BarLayout {
+    pub const ALL: [BarLayout; 2] = [BarLayout::Docked, BarLayout::FloatingPill];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            BarLayout::Docked => "Docked Full-Width",
+            BarLayout::FloatingPill => "Floating Capsule Pill",
         }
     }
 }
@@ -359,6 +377,17 @@ pub struct Saved {
     pub mini_locked: bool,
 
     #[serde(default)]
+    pub bar_layout: BarLayout,
+    #[serde(default = "default_true")]
+    pub bar_glass: bool,
+    #[serde(default = "default_bar_opacity")]
+    pub bar_opacity: f32,
+    #[serde(default = "default_false")]
+    pub bar_grain: bool,
+    #[serde(default = "default_bar_grain_strength")]
+    pub bar_grain_strength: f32,
+
+    #[serde(default)]
     pub perf_profile: PerfProfile,
     #[serde(default = "default_perf_audio_buffer")]
     pub perf_audio_buffer_mb: f32,
@@ -390,6 +419,14 @@ fn default_mini_opacity() -> f32 {
 
 fn default_mini_grain_strength() -> f32 {
     0.15
+}
+
+fn default_bar_opacity() -> f32 {
+    0.95
+}
+
+fn default_bar_grain_strength() -> f32 {
+    0.10
 }
 
 fn default_storage_dir() -> String {
@@ -508,6 +545,11 @@ impl Default for Saved {
             selection_glow: true,
             mini_variant: MiniVariant::ClassicHud,
             mini_locked: false,
+            bar_layout: BarLayout::Docked,
+            bar_glass: true,
+            bar_opacity: 0.95,
+            bar_grain: false,
+            bar_grain_strength: 0.10,
             perf_profile: PerfProfile::CompetitiveGaming,
             perf_audio_buffer_mb: 1.5,
             perf_art_cache_mb: 4,
@@ -631,6 +673,11 @@ pub enum Action {
     SetMiniVariant(MiniVariant),
     ToggleMiniLock,
     CheckUpdate,
+    SetBarLayout(BarLayout),
+    SetBarGlass(bool),
+    SetBarOpacity(f32),
+    SetBarGrain(bool),
+    SetBarGrainStrength(f32),
     #[allow(dead_code)]
     SetStorageDir(String),
     BrowseStorageDir,
@@ -1591,6 +1638,7 @@ impl App {
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                 }
             }
             Action::ToggleLoudness => {
@@ -1871,6 +1919,21 @@ impl App {
                     "Mini Mode Unlocked (Freely Draggable)"
                 });
             }
+            Action::SetBarLayout(layout) => {
+                self.saved.bar_layout = layout;
+            }
+            Action::SetBarGlass(glass) => {
+                self.saved.bar_glass = glass;
+            }
+            Action::SetBarOpacity(opacity) => {
+                self.saved.bar_opacity = opacity.clamp(0.20, 1.0);
+            }
+            Action::SetBarGrain(grain) => {
+                self.saved.bar_grain = grain;
+            }
+            Action::SetBarGrainStrength(strength) => {
+                self.saved.bar_grain_strength = strength.clamp(0.02, 0.50);
+            }
             Action::CheckUpdate => {
                 self.notify("Checking for updates...");
                 let sender = self.sender.clone();
@@ -2140,5 +2203,21 @@ mod tests {
         let dir = default_storage_dir();
         assert!(!dir.is_empty());
         assert!(dir.contains("Music") || dir.contains("AURI"));
+    }
+
+    #[test]
+    fn test_bar_layout_and_mini_sizes() {
+        assert_eq!(BarLayout::ALL.len(), 2);
+        assert_eq!(BarLayout::Docked.name(), "Docked Full-Width");
+        assert_eq!(BarLayout::FloatingPill.name(), "Floating Capsule Pill");
+
+        let (cw, ch) = MiniVariant::ClassicHud.size(false);
+        assert_eq!((cw, ch), (384.0, 108.0));
+        let (pw, ph) = MiniVariant::CapsulePill.size(false);
+        assert_eq!((pw, ph), (320.0, 56.0));
+        let (sw, sh) = MiniVariant::StudioCard.size(false);
+        assert_eq!((sw, sh), (280.0, 390.0));
+        let (sw_q, sh_q) = MiniVariant::StudioCard.size(true);
+        assert_eq!((sw_q, sh_q), (280.0, 530.0));
     }
 }

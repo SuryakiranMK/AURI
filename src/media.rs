@@ -2,15 +2,291 @@ use crate::app::Action;
 use crate::ytm::Item;
 
 #[cfg(windows)]
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+#[cfg(windows)]
+use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
+#[cfg(windows)]
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
+#[cfg(windows)]
+use windows::Win32::UI::Shell::{
+    ITaskbarList3, TaskbarList, THBF_ENABLED, THB_FLAGS, THB_ICON, THB_TOOLTIP, THUMBBUTTON,
+};
+#[cfg(windows)]
+use windows::Win32::UI::WindowsAndMessaging::{
+    CallWindowProcW, CreateIconIndirect, DefWindowProcW, DestroyIcon, GWLP_WNDPROC, HICON, ICONINFO,
+    SetWindowLongPtrW, WM_COMMAND, WNDPROC,
+};
+
+#[cfg(windows)]
+const ID_THUMB_PREV: u32 = 101;
+#[cfg(windows)]
+const ID_THUMB_PLAY_PAUSE: u32 = 102;
+#[cfg(windows)]
+const ID_THUMB_NEXT: u32 = 103;
+
+#[cfg(windows)]
+static mut PREV_WNDPROC: Option<WNDPROC> = None;
+#[cfg(windows)]
+static THUMB_CALLBACK: std::sync::OnceLock<Box<dyn Fn(Action) + Send + Sync>> = std::sync::OnceLock::new();
+
+#[cfg(windows)]
+unsafe extern "system" fn thumbbar_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if msg == WM_COMMAND {
+        let notify = ((wparam.0 >> 16) & 0xFFFF) as u32;
+        let id = (wparam.0 & 0xFFFF) as u32;
+        if notify == 0x1800 /* THBN_CLICKED */ {
+            if let Some(cb) = THUMB_CALLBACK.get() {
+                match id {
+                    ID_THUMB_PREV => cb(Action::Previous),
+                    ID_THUMB_PLAY_PAUSE => cb(Action::Toggle),
+                    ID_THUMB_NEXT => cb(Action::Next),
+                    _ => {}
+                }
+            }
+            return LRESULT(0);
+        }
+    }
+    let prev = unsafe { PREV_WNDPROC };
+    if let Some(prev) = prev {
+        unsafe { CallWindowProcW(prev, hwnd, msg, wparam, lparam) }
+    } else {
+        unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) }
+    }
+}
+
+#[cfg(windows)]
+enum ThumbIconKind {
+    Prev,
+    Play,
+    Pause,
+    Next,
+}
+
+#[cfg(windows)]
+fn create_thumb_icon(kind: ThumbIconKind) -> HICON {
+    let mut pixels = [0u32; 16 * 16];
+    let white = 0xFFFFFFFFu32;
+
+    match kind {
+        ThumbIconKind::Prev => {
+            // Left bar
+            for y in 3..=12 {
+                pixels[y * 16 + 2] = white;
+                pixels[y * 16 + 3] = white;
+            }
+            // Left-pointing triangle
+            for y in 3..=12 {
+                let d = (y as f32 - 7.5).abs().round() as usize;
+                let start = 4 + d;
+                for x in start..=13 {
+                    pixels[y * 16 + x] = white;
+                }
+            }
+        }
+        ThumbIconKind::Next => {
+            // Right bar
+            for y in 3..=12 {
+                pixels[y * 16 + 12] = white;
+                pixels[y * 16 + 13] = white;
+            }
+            // Right-pointing triangle
+            for y in 3..=12 {
+                let d = (y as f32 - 7.5).abs().round() as usize;
+                let end = 11usize.saturating_sub(d);
+                for x in 2..=end {
+                    pixels[y * 16 + x] = white;
+                }
+            }
+        }
+        ThumbIconKind::Play => {
+            // Right-pointing triangle
+            for y in 3..=12 {
+                let d = (y as f32 - 7.5).abs().round() as usize;
+                let end = 13usize.saturating_sub(d);
+                for x in 4..=end {
+                    pixels[y * 16 + x] = white;
+                }
+            }
+        }
+        ThumbIconKind::Pause => {
+            // Two vertical bars
+            for y in 3..=12 {
+                pixels[y * 16 + 4] = white;
+                pixels[y * 16 + 5] = white;
+                pixels[y * 16 + 6] = white;
+
+                pixels[y * 16 + 9] = white;
+                pixels[y * 16 + 10] = white;
+                pixels[y * 16 + 11] = white;
+            }
+        }
+    }
+
+    let mask = [0u8; 32];
+    unsafe {
+        let hbm_color = CreateBitmap(16, 16, 1, 32, Some(pixels.as_ptr() as *const _));
+        let hbm_mask = CreateBitmap(16, 16, 1, 1, Some(mask.as_ptr() as *const _));
+        let mut info = ICONINFO {
+            fIcon: true.into(),
+            xHotspot: 0,
+            yHotspot: 0,
+            hbmMask: hbm_mask,
+            hbmColor: hbm_color,
+        };
+        let icon = CreateIconIndirect(&mut info).unwrap_or_default();
+        let _ = DeleteObject(hbm_color.into());
+        let _ = DeleteObject(hbm_mask.into());
+        icon
+    }
+}
+
+#[cfg(windows)]
+fn to_sz_tip(s: &str) -> [u16; 260] {
+    let mut tip = [0u16; 260];
+    for (i, c) in s.encode_utf16().take(259).enumerate() {
+        tip[i] = c;
+    }
+    tip
+}
+
+#[cfg(windows)]
+struct TaskbarToolbar {
+    taskbar: ITaskbarList3,
+    hwnd: HWND,
+    icon_prev: HICON,
+    icon_play: HICON,
+    icon_pause: HICON,
+    icon_next: HICON,
+    added: std::cell::Cell<bool>,
+}
+
+#[cfg(windows)]
+impl TaskbarToolbar {
+    fn new(hwnd: HWND) -> Option<Self> {
+        let taskbar: ITaskbarList3 = unsafe { CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER) }.ok()?;
+        unsafe { taskbar.HrInit().ok()? };
+
+        let icon_prev = create_thumb_icon(ThumbIconKind::Prev);
+        let icon_play = create_thumb_icon(ThumbIconKind::Play);
+        let icon_pause = create_thumb_icon(ThumbIconKind::Pause);
+        let icon_next = create_thumb_icon(ThumbIconKind::Next);
+
+        let btn_prev = THUMBBUTTON {
+            dwMask: THB_FLAGS | THB_ICON | THB_TOOLTIP,
+            iId: ID_THUMB_PREV,
+            iBitmap: 0,
+            hIcon: icon_prev,
+            szTip: to_sz_tip("Previous"),
+            dwFlags: THBF_ENABLED,
+        };
+        let btn_play_pause = THUMBBUTTON {
+            dwMask: THB_FLAGS | THB_ICON | THB_TOOLTIP,
+            iId: ID_THUMB_PLAY_PAUSE,
+            iBitmap: 0,
+            hIcon: icon_play,
+            szTip: to_sz_tip("Play"),
+            dwFlags: THBF_ENABLED,
+        };
+        let btn_next = THUMBBUTTON {
+            dwMask: THB_FLAGS | THB_ICON | THB_TOOLTIP,
+            iId: ID_THUMB_NEXT,
+            iBitmap: 0,
+            hIcon: icon_next,
+            szTip: to_sz_tip("Next"),
+            dwFlags: THBF_ENABLED,
+        };
+
+        let added = unsafe {
+            taskbar.ThumbBarAddButtons(hwnd, &[btn_prev, btn_play_pause, btn_next]).is_ok()
+        };
+
+        Some(Self {
+            taskbar,
+            hwnd,
+            icon_prev,
+            icon_play,
+            icon_pause,
+            icon_next,
+            added: std::cell::Cell::new(added),
+        })
+    }
+
+    fn update(&self, playing: bool) {
+        if !self.added.get() {
+            let btn_prev = THUMBBUTTON {
+                dwMask: THB_FLAGS | THB_ICON | THB_TOOLTIP,
+                iId: ID_THUMB_PREV,
+                iBitmap: 0,
+                hIcon: self.icon_prev,
+                szTip: to_sz_tip("Previous"),
+                dwFlags: THBF_ENABLED,
+            };
+            let btn_play_pause = THUMBBUTTON {
+                dwMask: THB_FLAGS | THB_ICON | THB_TOOLTIP,
+                iId: ID_THUMB_PLAY_PAUSE,
+                iBitmap: 0,
+                hIcon: if playing { self.icon_pause } else { self.icon_play },
+                szTip: to_sz_tip(if playing { "Pause" } else { "Play" }),
+                dwFlags: THBF_ENABLED,
+            };
+            let btn_next = THUMBBUTTON {
+                dwMask: THB_FLAGS | THB_ICON | THB_TOOLTIP,
+                iId: ID_THUMB_NEXT,
+                iBitmap: 0,
+                hIcon: self.icon_next,
+                szTip: to_sz_tip("Next"),
+                dwFlags: THBF_ENABLED,
+            };
+            unsafe {
+                if self.taskbar.ThumbBarAddButtons(self.hwnd, &[btn_prev, btn_play_pause, btn_next]).is_ok() {
+                    self.added.set(true);
+                }
+            }
+            return;
+        }
+
+        let btn = THUMBBUTTON {
+            dwMask: THB_FLAGS | THB_ICON | THB_TOOLTIP,
+            iId: ID_THUMB_PLAY_PAUSE,
+            iBitmap: 0,
+            hIcon: if playing { self.icon_pause } else { self.icon_play },
+            szTip: to_sz_tip(if playing { "Pause" } else { "Play" }),
+            dwFlags: THBF_ENABLED,
+        };
+        unsafe {
+            let _ = self.taskbar.ThumbBarUpdateButtons(self.hwnd, &[btn]);
+        }
+    }
+}
+
+#[cfg(windows)]
+impl Drop for TaskbarToolbar {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = DestroyIcon(self.icon_prev);
+            let _ = DestroyIcon(self.icon_play);
+            let _ = DestroyIcon(self.icon_pause);
+            let _ = DestroyIcon(self.icon_next);
+        }
+    }
+}
+
+#[cfg(windows)]
 pub struct Media {
     controls: windows::Media::SystemMediaTransportControls,
+    taskbar: Option<TaskbarToolbar>,
     track: String,
     playing: bool,
 }
 
 #[cfg(windows)]
 impl Media {
-    pub fn new(cc: &eframe::CreationContext<'_>, press: impl Fn(Action) + Send + 'static) -> Option<Self> {
+    pub fn new(cc: &eframe::CreationContext<'_>, press: impl Fn(Action) + Send + Sync + 'static) -> Option<Self> {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
         use windows::Foundation::TypedEventHandler;
         use windows::Media::{
@@ -24,35 +300,53 @@ impl Media {
         let RawWindowHandle::Win32(window) = cc.window_handle().ok()?.as_raw() else {
             return None;
         };
+        let hwnd = HWND(window.hwnd.get() as *mut _);
         let interop = factory::<SystemMediaTransportControls, Interop>().ok()?;
-        let controls: SystemMediaTransportControls = unsafe { interop.GetForWindow(HWND(window.hwnd.get() as *mut _)) }.ok()?;
+        let controls: SystemMediaTransportControls = unsafe { interop.GetForWindow(hwnd) }.ok()?;
         controls.SetIsEnabled(true).ok()?;
         controls.SetIsPlayEnabled(true).ok()?;
         controls.SetIsPauseEnabled(true).ok()?;
         controls.SetIsNextEnabled(true).ok()?;
         controls.SetIsPreviousEnabled(true).ok()?;
+        let press_arc = std::sync::Arc::new(press);
+        let press_smtc = press_arc.clone();
         let pressed = TypedEventHandler::new(move |_, pressed: Ref<Pressed>| {
             let button = pressed.ok()?.Button()?;
             if button == Button::Play {
-                press(Action::Pause(false));
+                press_smtc(Action::Pause(false));
             } else if button == Button::Pause || button == Button::Stop {
-                press(Action::Pause(true));
+                press_smtc(Action::Pause(true));
             } else if button == Button::Next {
-                press(Action::Next);
+                press_smtc(Action::Next);
             } else if button == Button::Previous {
-                press(Action::Previous);
+                press_smtc(Action::Previous);
             }
             Ok(())
         });
         controls.ButtonPressed(&pressed).ok()?;
+
+        let press_tb = press_arc.clone();
+        let _ = THUMB_CALLBACK.set(Box::new(move |a| press_tb(a)));
+        unsafe {
+            let old = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, thumbbar_wndproc as *const () as isize);
+            if old != 0 {
+                PREV_WNDPROC = Some(std::mem::transmute(old));
+            }
+        }
+        let taskbar = TaskbarToolbar::new(hwnd);
+
         Some(Self {
             controls,
+            taskbar,
             track: String::new(),
             playing: false,
         })
     }
 
     pub fn show(&mut self, item: Option<&Item>, playing: bool, _position_ms: u64, _duration_ms: u64) {
+        if let Some(tb) = &self.taskbar {
+            tb.update(playing);
+        }
         let track = item.map_or("", |item| item.video_id.as_str());
         if self.track == track && self.playing == playing {
             return;
@@ -97,7 +391,7 @@ pub struct Media {
 
 #[cfg(target_os = "macos")]
 impl Media {
-    pub fn new(cc: &eframe::CreationContext<'_>, press: impl Fn(Action) + Send + 'static) -> Option<Self> {
+    pub fn new(cc: &eframe::CreationContext<'_>, press: impl Fn(Action) + Send + Sync + 'static) -> Option<Self> {
         use block2::RcBlock;
         use objc2_media_player::{
             MPChangePlaybackPositionCommandEvent as Scrubbed, MPRemoteCommand, MPRemoteCommandCenter, MPRemoteCommandEvent,
