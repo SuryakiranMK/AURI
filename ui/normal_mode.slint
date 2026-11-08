@@ -21,7 +21,9 @@ export component NormalModeView inherits Rectangle {
     in property <string> ram_usage: "28.5 MB";
     in-out property <string> search_query: "";
     in-out property <string> local_music_path: "C:\\Users\\user\\Music";
-    in-out property <bool> loudness_norm_enabled: true;
+    in property <bool> loudness_norm_enabled: true;
+    in property <image> artwork;
+    in property <bool> has_artwork: false;
 
     // Collections
     in-out property <[TrackData]> search_results: [];
@@ -75,22 +77,11 @@ export component NormalModeView inherits Rectangle {
                     spacing: 10px;
                     alignment: start;
 
-                    Rectangle {
-                        width: 30px;
-                        height: 30px;
-                        border-radius: Theme.radius_sm;
-                        background: @linear-gradient(135deg, #6366F1 0%, #EC4899 100%);
-                        border-width: 1px;
-                        border-color: Theme.border_glass_highlight;
-
-                        Text {
-                            text: "A";
-                            font_size: 15px;
-                            font_weight: 800;
-                            color: #FFFFFF;
-                            horizontal_alignment: center;
-                            vertical_alignment: center;
-                        }
+                    Image {
+                        source: @image-url("../assets/brand_64.png");
+                        width: 28px;
+                        height: 28px;
+                        image-fit: contain;
                     }
 
                     Text {
@@ -364,9 +355,8 @@ export component NormalModeView inherits Rectangle {
 
                     // Volume Slider with Mute
                     HorizontalLayout {
-                        spacing: 8px;
-                        width: 130px;
-                        alignment: center;
+                        spacing: 6px;
+                        width: 125px;
 
                         AuriIconButton {
                             icon_source: root.volume == 0.0 ? @image-url("../assets/icons/volume-mute.svg") : @image-url("../assets/icons/volume.svg");
@@ -383,8 +373,8 @@ export component NormalModeView inherits Rectangle {
                         }
 
                         AuriSlider {
+                            width: 88px;
                             value: root.volume;
-                            horizontal_stretch: 1;
                             value_changed(val) => { root.volume_changed(val); }
                         }
                     }
@@ -1746,33 +1736,47 @@ export component NormalModeView inherits Rectangle {
 
                 // Reference 1 Now Playing Glass Card
                 Rectangle {
-                    height: 190px;
+                    height: 220px;
                     border-radius: Theme.radius_lg;
                     background: Theme.bg_card;
                     border-width: 1px;
                     border-color: Theme.border_glass;
 
                     VerticalLayout {
-                        padding: 14px;
-                        spacing: 8px;
+                        padding: 12px;
+                        spacing: 6px;
                         alignment: center;
 
-                        // Vinyl Motif Ring
+                        // Track Artwork (Rounded with glowing playing state)
                         Rectangle {
-                            width: 46px;
-                            height: 46px;
-                            border-radius: 23px;
-                            background: @linear-gradient(135deg, #EC4899 0%, #8B5CF6 100%);
-                            border-width: 2px;
-                            border-color: Theme.border_glass_highlight;
+                            width: 54px;
+                            height: 54px;
+                            border-radius: 12px;
+                            clip: true;
+                            background: #151722;
+                            border-width: 1.5px;
+                            border-color: root.is_playing ? Theme.accent : Theme.border_glass;
 
-                            Rectangle {
-                                width: 14px;
-                                height: 14px;
-                                border-radius: 7px;
-                                background: #07080B;
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
+                            if root.has_artwork : Image {
+                                source: root.artwork;
+                                width: parent.width;
+                                height: parent.height;
+                                image-fit: cover;
+                            }
+
+                            if !root.has_artwork : Rectangle {
+                                width: parent.width;
+                                height: parent.height;
+                                background: @linear-gradient(135deg, #EC4899 0%, #8B5CF6 100%);
+
+                                Rectangle {
+                                    width: 16px;
+                                    height: 16px;
+                                    border-radius: 8px;
+                                    background: #07080B;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
                             }
                         }
 

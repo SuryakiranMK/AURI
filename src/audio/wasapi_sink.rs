@@ -26,6 +26,8 @@ pub struct WasapiSink {
     volume_bits: Arc<AtomicU32>, // f32 as u32 bits
     loudness_gain_db: Arc<Mutex<Option<f64>>>,
     gain_multiplier_bits: Arc<AtomicU32>, // f32 as u32 bits
+    loudness_enabled: Arc<AtomicBool>,
+    limiter_enabled: Arc<AtomicBool>,
     position_frames: Arc<AtomicU64>,
     duration_frames: Arc<AtomicU64>,
     sample_rate: u32,
@@ -65,6 +67,8 @@ impl WasapiSink {
         let state = Arc::new(AtomicU32::new(1)); // Playing by default
         let volume_bits = Arc::new(AtomicU32::new(0.8_f32.to_bits()));
         let gain_multiplier_bits = Arc::new(AtomicU32::new(1.0_f32.to_bits()));
+        let loudness_enabled = Arc::new(AtomicBool::new(true));
+        let limiter_enabled = Arc::new(AtomicBool::new(true));
         let loudness_gain_db = Arc::new(Mutex::new(None));
         let position_frames = Arc::new(AtomicU64::new(0));
         let duration_frames = Arc::new(AtomicU64::new(0));
@@ -77,6 +81,8 @@ impl WasapiSink {
         let state_cb = Arc::clone(&state);
         let vol_cb = Arc::clone(&volume_bits);
         let gain_cb = Arc::clone(&gain_multiplier_bits);
+        let loud_en_cb = Arc::clone(&loudness_enabled);
+        let lim_en_cb = Arc::clone(&limiter_enabled);
         let pos_cb = Arc::clone(&position_frames);
         let eof_cb = Arc::clone(&eof_flag);
         let flush_cb = Arc::clone(&flush_flag);
@@ -93,8 +99,14 @@ impl WasapiSink {
 
                     let current_state = state_cb.load(Ordering::Relaxed);
                     let vol = f32::from_bits(vol_cb.load(Ordering::Relaxed));
-                    let gain = f32::from_bits(gain_cb.load(Ordering::Relaxed));
-                    let effective_volume = vol * gain;
+                    let norm_active = loud_en_cb.load(Ordering::Relaxed);
+                    let lim_active = lim_en_cb.load(Ordering::Relaxed);
+                    let target_gain = if norm_active {
+                        f32::from_bits(gain_cb.load(Ordering::Relaxed))
+                    } else {
+                        1.0
+                    };
+                    let effective_volume = vol * target_gain;
 
                     if current_state != 1 {
                         // Paused or Stopped: output pure silence
@@ -107,7 +119,11 @@ impl WasapiSink {
                     for sample in data.iter_mut() {
                         if let Some(s) = consumer.try_pop() {
                             let scaled = s * effective_volume;
-                            *sample = limiter_clone.process_sample(scaled);
+                            if lim_active {
+                                *sample = limiter_clone.process_sample(scaled);
+                            } else {
+                                *sample = scaled.clamp(-1.0, 1.0);
+                            }
                             read_samples += 1;
                         } else {
                             *sample = 0.0;
@@ -133,8 +149,14 @@ impl WasapiSink {
 
                     let current_state = state_cb.load(Ordering::Relaxed);
                     let vol = f32::from_bits(vol_cb.load(Ordering::Relaxed));
-                    let gain = f32::from_bits(gain_cb.load(Ordering::Relaxed));
-                    let effective_volume = vol * gain;
+                    let norm_active = loud_en_cb.load(Ordering::Relaxed);
+                    let lim_active = lim_en_cb.load(Ordering::Relaxed);
+                    let target_gain = if norm_active {
+                        f32::from_bits(gain_cb.load(Ordering::Relaxed))
+                    } else {
+                        1.0
+                    };
+                    let effective_volume = vol * target_gain;
 
                     if current_state != 1 {
                         data.fill(0);
@@ -146,7 +168,11 @@ impl WasapiSink {
                     for sample in data.iter_mut() {
                         if let Some(s) = consumer.try_pop() {
                             let scaled = s * effective_volume;
-                            let limited = limiter_clone.process_sample(scaled);
+                            let limited = if lim_active {
+                                limiter_clone.process_sample(scaled)
+                            } else {
+                                scaled.clamp(-1.0, 1.0)
+                            };
                             *sample = (limited * 32767.0).clamp(-32768.0, 32767.0) as i16;
                             read_samples += 1;
                         } else {
@@ -187,6 +213,8 @@ impl WasapiSink {
             volume_bits,
             loudness_gain_db,
             gain_multiplier_bits,
+            loudness_enabled,
+            limiter_enabled,
             position_frames,
             duration_frames,
             sample_rate,
@@ -248,6 +276,16 @@ impl WasapiSink {
     pub fn clear_buffer(&self) {
         self.position_frames.store(0, Ordering::Relaxed);
         self.flush_flag.store(true, Ordering::SeqCst);
+    }
+
+    /// Enable or disable YouTube Music -7.0 LUFS loudness normalization
+    pub fn set_loudness_enabled(&self, enabled: bool) {
+        self.loudness_enabled.store(enabled, Ordering::SeqCst);
+    }
+
+    /// Enable or disable soft-knee peak limiter
+    pub fn set_limiter_enabled(&self, enabled: bool) {
+        self.limiter_enabled.store(enabled, Ordering::SeqCst);
     }
 
     /// Synthesize a clean test tone (e.g. 440 Hz A4 chime) with smooth click-free envelope

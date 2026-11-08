@@ -215,6 +215,14 @@ impl AudioEngine {
         self.sink.set_volume(volume);
     }
 
+    pub fn set_loudness_enabled(&self, enabled: bool) {
+        self.sink.set_loudness_enabled(enabled);
+    }
+
+    pub fn set_limiter_enabled(&self, enabled: bool) {
+        self.sink.set_limiter_enabled(enabled);
+    }
+
     pub fn get_status(&self) -> AudioStatus {
         let mut status = self.sink.get_status();
         status.engine = *self.engine_kind.lock().unwrap();

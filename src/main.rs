@@ -1,6 +1,7 @@
 // Project AURI: Minimalist, Ultra-Lightweight, Gaming-First Desktop Music Player
 // Sleek Apple Music / Spotify Glassmorphic UI in Slint with Tubefast InnerTube Streaming Engine
 
+pub mod artwork;
 pub mod audio;
 pub mod library;
 pub mod provider;
@@ -207,6 +208,21 @@ fn play_ytm_stream(
     Ok(())
 }
 
+fn load_artwork_async(win: slint::Weak<MainWindow>, video_id: String) {
+    std::thread::spawn(move || {
+        if let Some(path) = artwork::fetch_artwork(&video_id, None) {
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = win.upgrade() {
+                    if let Ok(img) = slint::Image::load_from_path(&path) {
+                        w.set_current_artwork(img);
+                        w.set_has_artwork(true);
+                    }
+                }
+            });
+        }
+    });
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     println!("========================================================");
     println!("  AURI Desktop Music Player                            ");
@@ -240,58 +256,58 @@ fn main() -> Result<(), slint::PlatformError> {
     // Create Slint Window
     let window = MainWindow::new()?;
 
-    // Populate Initial Curated Home Tracks (Matching Reference 1)
+    // Populate Initial Curated Home Tracks (Popular Hits with Real Streaming IDs)
     let home_tracks = vec![
         TrackData {
-            id: "curated-1".into(),
-            title: "Tamagotchi".into(),
-            artist: "Taco Hemingway ft. Quebonafide".into(),
-            album: "Soma 0,5".into(),
-            duration: "3:18".into(),
-            format_badge: "FLAC 24b".into(),
+            id: "dhurandhar".into(),
+            title: "Dhurandhar - Title Track".into(),
+            artist: "Shashwat Sachdev, Hanumankind".into(),
+            album: "Dhurandhar".into(),
+            duration: "3:30".into(),
+            format_badge: "Opus 160k".into(),
             is_playing: false,
             is_favorite: true,
             color_hue: slint::Color::from_rgb_u8(236, 72, 153), // Pink
         },
         TrackData {
-            id: "curated-2".into(),
-            title: "Wszystko na niby".into(),
-            artist: "Taco Hemingway".into(),
-            album: "Café Belga".into(),
-            duration: "3:32".into(),
+            id: "34Na4j8AVgA".into(),
+            title: "Starboy".into(),
+            artist: "The Weeknd ft. Daft Punk".into(),
+            album: "Starboy".into(),
+            duration: "3:50".into(),
             format_badge: "Opus 160k".into(),
             is_playing: false,
             is_favorite: false,
             color_hue: slint::Color::from_rgb_u8(99, 102, 241), // Indigo
         },
         TrackData {
-            id: "curated-3".into(),
-            title: "W piątki leżę w wannie".into(),
-            artist: "Taco Hemingway".into(),
-            album: "Pocztówka z WWA".into(),
-            duration: "3:24".into(),
+            id: "4NRXx6U8ABQ".into(),
+            title: "Blinding Lights".into(),
+            artist: "The Weeknd".into(),
+            album: "After Hours".into(),
+            duration: "3:20".into(),
             format_badge: "Opus 160k".into(),
             is_playing: false,
             is_favorite: true,
             color_hue: slint::Color::from_rgb_u8(139, 92, 246), // Purple
         },
         TrackData {
-            id: "curated-4".into(),
-            title: "Nostalgia".into(),
-            artist: "Taco Hemingway".into(),
-            album: "Szprycer".into(),
-            duration: "3:48".into(),
+            id: "pHnm_2n52xM".into(),
+            title: "Espresso".into(),
+            artist: "Sabrina Carpenter".into(),
+            album: "Short n' Sweet".into(),
+            duration: "2:55".into(),
             format_badge: "FLAC 24b".into(),
             is_playing: false,
             is_favorite: false,
             color_hue: slint::Color::from_rgb_u8(16, 185, 129), // Emerald
         },
         TrackData {
-            id: "curated-5".into(),
-            title: "Deszcz na betonie".into(),
-            artist: "Taco Hemingway".into(),
-            album: "Marmur".into(),
-            duration: "4:06".into(),
+            id: "JGwWNGJdvx8".into(),
+            title: "Shape of You".into(),
+            artist: "Ed Sheeran".into(),
+            album: "Divide".into(),
+            duration: "3:53".into(),
             format_badge: "FLAC".into(),
             is_playing: false,
             is_favorite: true,
@@ -302,73 +318,73 @@ fn main() -> Result<(), slint::PlatformError> {
     let home_albums = vec![
         AlbumData {
             id: "alb-1".into(),
-            title: "Pocztówka z WWA, lato '19".into(),
-            artist: "Taco Hemingway".into(),
-            year: "2019".into(),
-            track_count: 11,
+            title: "Starboy".into(),
+            artist: "The Weeknd".into(),
+            year: "2016".into(),
+            track_count: 18,
             color_hue: slint::Color::from_rgb_u8(251, 191, 36),
         },
         AlbumData {
             id: "alb-2".into(),
-            title: "Café Belga".into(),
-            artist: "Taco Hemingway".into(),
-            year: "2018".into(),
-            track_count: 11,
+            title: "After Hours".into(),
+            artist: "The Weeknd".into(),
+            year: "2020".into(),
+            track_count: 14,
             color_hue: slint::Color::from_rgb_u8(20, 184, 166),
         },
         AlbumData {
             id: "alb-3".into(),
-            title: "Flagey EP".into(),
-            artist: "Taco Hemingway".into(),
-            year: "2018".into(),
-            track_count: 5,
+            title: "Short n' Sweet".into(),
+            artist: "Sabrina Carpenter".into(),
+            year: "2024".into(),
+            track_count: 12,
             color_hue: slint::Color::from_rgb_u8(147, 51, 234),
         },
         AlbumData {
             id: "alb-4".into(),
-            title: "Szprycer".into(),
-            artist: "Taco Hemingway".into(),
+            title: "Divide".into(),
+            artist: "Ed Sheeran".into(),
             year: "2017".into(),
-            track_count: 9,
+            track_count: 16,
             color_hue: slint::Color::from_rgb_u8(239, 68, 68),
         },
         AlbumData {
             id: "alb-5".into(),
-            title: "Marmur".into(),
-            artist: "Taco Hemingway".into(),
-            year: "2016".into(),
-            track_count: 17,
+            title: "Dhurandhar".into(),
+            artist: "Shashwat Sachdev".into(),
+            year: "2024".into(),
+            track_count: 8,
             color_hue: slint::Color::from_rgb_u8(59, 130, 246),
         },
         AlbumData {
             id: "alb-6".into(),
-            title: "Wosk".into(),
-            artist: "Taco Hemingway".into(),
-            year: "2016".into(),
-            track_count: 6,
+            title: "D-Day".into(),
+            artist: "Agust D".into(),
+            year: "2023".into(),
+            track_count: 10,
             color_hue: slint::Color::from_rgb_u8(107, 114, 128),
         },
     ];
 
     let similar_artists = vec![
         ArtistData {
-            name: "Dawid Podsiadło".into(),
-            role: "Pop / Indie".into(),
+            name: "Hanumankind".into(),
+            role: "Hip-Hop / Rap".into(),
             color_hue: slint::Color::from_rgb_u8(245, 158, 11),
         },
         ArtistData {
-            name: "Billie Eilish".into(),
-            role: "Alt Pop".into(),
+            name: "The Weeknd".into(),
+            role: "R&B / Synthpop".into(),
             color_hue: slint::Color::from_rgb_u8(16, 185, 129),
         },
         ArtistData {
-            name: "Quebonafide".into(),
-            role: "Hip-Hop".into(),
+            name: "Sabrina Carpenter".into(),
+            role: "Pop".into(),
             color_hue: slint::Color::from_rgb_u8(99, 102, 241),
         },
         ArtistData {
-            name: "Daria Zawiałow".into(),
-            role: "Electro-Pop".into(),
+            name: "Ed Sheeran".into(),
+            role: "Acoustic Pop".into(),
             color_hue: slint::Color::from_rgb_u8(236, 72, 153),
         },
     ];
@@ -408,6 +424,74 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let win_weak = window.as_weak();
 
+    // Initial artwork load
+    load_artwork_async(win_weak.clone(), "dhurandhar".to_string());
+
+    // Asynchronously fetch live YouTube Music Home Feed & Recommendations (Tubefast architecture)
+    let ytm_home = Arc::clone(&ytm);
+    let win_home = win_weak.clone();
+    std::thread::spawn(move || {
+        if let Ok(page) = ytm_home.browse("FEmusic_home", &|_| {}) {
+            let mut dynamic_tracks = Vec::new();
+            let mut dynamic_albums = Vec::new();
+            let mut dynamic_artists = Vec::new();
+
+            for sec in page.sections {
+                for (i, item) in sec.items.into_iter().enumerate() {
+                    if item.is_song() && dynamic_tracks.len() < 15 {
+                        let hue = match i % 5 {
+                            0 => slint::Color::from_rgb_u8(236, 72, 153),
+                            1 => slint::Color::from_rgb_u8(99, 102, 241),
+                            2 => slint::Color::from_rgb_u8(139, 92, 246),
+                            3 => slint::Color::from_rgb_u8(16, 185, 129),
+                            _ => slint::Color::from_rgb_u8(245, 158, 11),
+                        };
+                        dynamic_tracks.push(TrackData {
+                            id: item.video_id.into(),
+                            title: item.title.into(),
+                            artist: item.subtitle.into(),
+                            album: item.extra.into(),
+                            duration: if item.duration.is_empty() { "3:30".into() } else { item.duration.into() },
+                            format_badge: "Opus 160k".into(),
+                            is_playing: false,
+                            is_favorite: false,
+                            color_hue: hue,
+                        });
+                    } else if !item.album_id.is_empty() && dynamic_albums.len() < 8 {
+                        dynamic_albums.push(AlbumData {
+                            id: item.album_id.into(),
+                            title: item.title.into(),
+                            artist: item.subtitle.into(),
+                            year: "2024".into(),
+                            track_count: 10,
+                            color_hue: slint::Color::from_rgb_u8(99, 102, 241),
+                        });
+                    } else if item.is_artist && dynamic_artists.len() < 6 {
+                        dynamic_artists.push(ArtistData {
+                            name: item.title.into(),
+                            role: if item.subtitle.is_empty() { "Artist".into() } else { item.subtitle.into() },
+                            color_hue: slint::Color::from_rgb_u8(139, 92, 246),
+                        });
+                    }
+                }
+            }
+
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(w) = win_home.upgrade() {
+                    if !dynamic_tracks.is_empty() {
+                        w.set_home_tracks(ModelRc::new(VecModel::from(dynamic_tracks)));
+                    }
+                    if !dynamic_albums.is_empty() {
+                        w.set_home_albums(ModelRc::new(VecModel::from(dynamic_albums)));
+                    }
+                    if !dynamic_artists.is_empty() {
+                        w.set_similar_artists(ModelRc::new(VecModel::from(dynamic_artists)));
+                    }
+                }
+            });
+        }
+    });
+
     // 1. Navigation
     let win_nav = win_weak.clone();
     window.on_navigate(move |page| {
@@ -441,8 +525,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_track_duration(format_duration(track.duration_secs as f64).into());
                 w.set_is_playing(true);
             }
+            load_artwork_async(win_prev.clone(), track.id.clone());
             let audio_c = Arc::clone(&audio_prev);
             let ytm_c = Arc::clone(&ytm_prev);
+            let win_art = win_prev.clone();
             std::thread::spawn(move || {
                 if track.id.starts_with("local:") {
                     let path = &track.id["local:".len()..];
@@ -451,6 +537,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let query = format!("{} {}", track.title, track.artist);
                     if let Ok(page) = ytm_c.search(&query) {
                         if let Some(first) = page.songs().first() {
+                            load_artwork_async(win_art, first.video_id.clone());
                             let _ = play_ytm_stream(&audio_c, &ytm_c, &first.video_id, Some(track.duration_secs as f64));
                         }
                     }
@@ -475,8 +562,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 w.set_track_duration(format_duration(track.duration_secs as f64).into());
                 w.set_is_playing(true);
             }
+            load_artwork_async(win_next.clone(), track.id.clone());
             let audio_c = Arc::clone(&audio_next);
             let ytm_c = Arc::clone(&ytm_next);
+            let win_art = win_next.clone();
             std::thread::spawn(move || {
                 if track.id.starts_with("local:") {
                     let path = &track.id["local:".len()..];
@@ -485,6 +574,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let query = format!("{} {}", track.title, track.artist);
                     if let Ok(page) = ytm_c.search(&query) {
                         if let Some(first) = page.songs().first() {
+                            load_artwork_async(win_art, first.video_id.clone());
                             let _ = play_ytm_stream(&audio_c, &ytm_c, &first.video_id, Some(track.duration_secs as f64));
                         }
                     }
@@ -622,8 +712,11 @@ fn main() -> Result<(), slint::PlatformError> {
             w.set_is_playing(true);
         }
 
+        load_artwork_async(win_track.clone(), video_id.clone());
+
         let audio = Arc::clone(&audio_play);
         let yt = Arc::clone(&ytm_play);
+        let win_art = win_track.clone();
 
         std::thread::spawn(move || {
             if video_id.starts_with("local:") {
@@ -634,6 +727,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let query = format!("{} {}", tit, art);
                 if let Ok(page) = yt.search(&query) {
                     if let Some(first) = page.songs().first() {
+                        load_artwork_async(win_art, first.video_id.clone());
                         if play_ytm_stream(&audio, &yt, &first.video_id, Some(dur_secs as f64)).is_ok() {
                             return;
                         }
@@ -680,9 +774,12 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-    // 16. Toggle Loudness Normalization
+    // 16. Toggle Loudness Normalization & Peak Limiter
+    let audio_loudness = Arc::clone(&audio);
     let win_loudness = win_weak.clone();
     window.on_toggle_loudness(move |enabled| {
+        audio_loudness.set_loudness_enabled(enabled);
+        audio_loudness.set_limiter_enabled(enabled);
         if let Some(w) = win_loudness.upgrade() {
             w.set_loudness_norm_enabled(enabled);
         }
@@ -703,12 +800,12 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
-    // 18. Switch to Mini Mode
+    // 18. Switch to Mini Mode (Curved Capsule)
     let win_to_mini = win_weak.clone();
     window.on_switch_to_mini(move || {
         if let Some(w) = win_to_mini.upgrade() {
             w.set_app_mode("mini".into());
-            w.window().set_size(slint::LogicalSize::new(360.0, 120.0));
+            w.window().set_size(slint::LogicalSize::new(420.0, 108.0));
             #[cfg(windows)]
             set_window_topmost(w.get_is_pinned());
         }
@@ -741,11 +838,30 @@ fn main() -> Result<(), slint::PlatformError> {
     window.on_switch_to_gaming(move || {
         if let Some(w) = win_gaming.upgrade() {
             w.set_app_mode("mini".into());
-            w.window().set_size(slint::LogicalSize::new(360.0, 120.0));
+            w.window().set_size(slint::LogicalSize::new(420.0, 108.0));
             #[cfg(windows)]
             {
                 set_window_topmost(true);
                 trim_working_set();
+            }
+        }
+    });
+
+    // 22. Native Window Dragging for Mini Mode
+    window.on_drag_window(move || {
+        #[cfg(windows)]
+        unsafe {
+            #[link(name = "user32")]
+            extern "system" {
+                fn ReleaseCapture() -> i32;
+                fn SendMessageW(hwnd: *mut std::ffi::c_void, msg: u32, wparam: usize, lparam: isize) -> isize;
+                fn FindWindowW(lp_class_name: *const u16, lp_window_name: *const u16) -> *mut std::ffi::c_void;
+            }
+            let title_utf16: Vec<u16> = "AURI\0".encode_utf16().collect();
+            let hwnd = FindWindowW(std::ptr::null(), title_utf16.as_ptr());
+            if !hwnd.is_null() {
+                ReleaseCapture();
+                SendMessageW(hwnd, 0x00A1 /* WM_NCLBUTTONDOWN */, 2 /* HTCAPTION */, 0);
             }
         }
     });
@@ -814,5 +930,25 @@ mod playback_tests {
             }
         }
         assert!(observed_progress, "Hardware position should advance as audio plays");
+    }
+
+    #[test]
+    fn test_toggle_loudness_and_limiter_during_playback() {
+        let engine = Arc::new(AudioEngine::new().expect("engine init"));
+        // Play tone
+        engine.play_test_tone(440.0, 3.0);
+        std::thread::sleep(Duration::from_millis(100));
+
+        for _ in 0..5 {
+            engine.set_loudness_enabled(false);
+            engine.set_limiter_enabled(false);
+            std::thread::sleep(Duration::from_millis(50));
+            assert_eq!(engine.get_status().state, PlaybackState::Playing);
+
+            engine.set_loudness_enabled(true);
+            engine.set_limiter_enabled(true);
+            std::thread::sleep(Duration::from_millis(50));
+            assert_eq!(engine.get_status().state, PlaybackState::Playing);
+        }
     }
 }

@@ -6,10 +6,11 @@ import { MiniModeView } from "mini_mode.slint";
 
 export component MainWindow inherits Window {
     title: "AURI";
-    min_width: root.app_mode == "mini" ? 340px : 1100px;
-    min_height: root.app_mode == "mini" ? 110px : 700px;
-    preferred_width: root.app_mode == "mini" ? 360px : 1320px;
-    preferred_height: root.app_mode == "mini" ? 120px : 820px;
+    icon: @image-url("../assets/icon.png");
+    min_width: root.app_mode == "mini" ? 400px : 1100px;
+    min_height: root.app_mode == "mini" ? 104px : 700px;
+    preferred_width: root.app_mode == "mini" ? 420px : 1320px;
+    preferred_height: root.app_mode == "mini" ? 108px : 820px;
     background: Theme.bg_app;
 
     in-out property <string> app_mode: "normal";
@@ -31,6 +32,8 @@ export component MainWindow inherits Window {
     in-out property <string> search_query: "";
     in-out property <string> local_music_path: "C:\\Users\\user\\Music";
     in-out property <bool> loudness_norm_enabled: true;
+    in-out property <image> current_artwork;
+    in-out property <bool> has_artwork: false;
 
     // Collections
     in-out property <[TrackData]> search_results: [];
@@ -64,6 +67,7 @@ export component MainWindow inherits Window {
     callback rescan_local(string);
     callback play_album(string);
     callback toggle_loudness(bool);
+    callback drag_window();
 
     if root.app_mode == "normal": NormalModeView {
         current_nav: root.current_nav;
@@ -82,7 +86,9 @@ export component MainWindow inherits Window {
         ram_usage: root.ram_usage;
         search_query <=> root.search_query;
         local_music_path <=> root.local_music_path;
-        loudness_norm_enabled <=> root.loudness_norm_enabled;
+        loudness_norm_enabled: root.loudness_norm_enabled;
+        artwork: root.current_artwork;
+        has_artwork: root.has_artwork;
 
         search_results <=> root.search_results;
         queue_tracks <=> root.queue_tracks;
@@ -127,6 +133,8 @@ export component MainWindow inherits Window {
         is_shuffle: root.is_shuffle;
         is_repeat: root.is_repeat;
         is_pinned: root.is_pinned;
+        artwork: root.current_artwork;
+        has_artwork: root.has_artwork;
 
         toggle_play => { root.toggle_play(); }
         prev_track => { root.prev_track(); }
@@ -137,5 +145,6 @@ export component MainWindow inherits Window {
         toggle_pin => { root.toggle_pin(); }
         switch_to_normal => { root.switch_to_normal(); }
         close_app => { root.switch_to_normal(); }
+        drag_window => { root.drag_window(); }
     }
 }
