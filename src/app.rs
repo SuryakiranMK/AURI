@@ -37,6 +37,13 @@ const WINDOW_KEY: &str = "window";
 pub const WINDOW_SIZE: [f32; 2] = [1360.0, 860.0];
 pub const WINDOW_MIN: [f32; 2] = [940.0, 600.0];
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct CustomPlaylist {
+    pub id: String,
+    pub name: String,
+    pub songs: Vec<Item>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum SettingsTab {
     #[default]
@@ -54,16 +61,20 @@ pub enum MiniPalette {
     ElectricCyan,
     SunsetCrimson,
     AmberGold,
+    CobaltBlue,
+    SakuraPink,
     Monochrome,
 }
 
 impl MiniPalette {
-    pub const ALL: [MiniPalette; 6] = [
+    pub const ALL: [MiniPalette; 8] = [
         MiniPalette::CyberViolet,
         MiniPalette::NeonEmerald,
         MiniPalette::ElectricCyan,
         MiniPalette::SunsetCrimson,
         MiniPalette::AmberGold,
+        MiniPalette::CobaltBlue,
+        MiniPalette::SakuraPink,
         MiniPalette::Monochrome,
     ];
 
@@ -75,6 +86,8 @@ impl MiniPalette {
             MiniPalette::ElectricCyan => "Electric Cyan",
             MiniPalette::SunsetCrimson => "Sunset Crimson",
             MiniPalette::AmberGold => "Amber Gold",
+            MiniPalette::CobaltBlue => "Cobalt Blue",
+            MiniPalette::SakuraPink => "Sakura Pink",
             MiniPalette::Monochrome => "Monochrome Glass",
         }
     }
@@ -86,7 +99,93 @@ impl MiniPalette {
             MiniPalette::ElectricCyan => eframe::egui::Color32::from_rgb(6, 182, 212),
             MiniPalette::SunsetCrimson => eframe::egui::Color32::from_rgb(244, 63, 94),
             MiniPalette::AmberGold => eframe::egui::Color32::from_rgb(245, 158, 11),
+            MiniPalette::CobaltBlue => eframe::egui::Color32::from_rgb(59, 130, 246),
+            MiniPalette::SakuraPink => eframe::egui::Color32::from_rgb(236, 72, 153),
             MiniPalette::Monochrome => eframe::egui::Color32::from_rgb(226, 232, 240),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Default)]
+pub enum MiniBackground {
+    #[default]
+    Obsidian,
+    MidnightNavy,
+    SlateCarbon,
+    FrostedSlate,
+    PureOled,
+    MatchAccent,
+}
+
+impl MiniBackground {
+    pub const ALL: [MiniBackground; 6] = [
+        MiniBackground::Obsidian,
+        MiniBackground::MidnightNavy,
+        MiniBackground::SlateCarbon,
+        MiniBackground::FrostedSlate,
+        MiniBackground::PureOled,
+        MiniBackground::MatchAccent,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            MiniBackground::Obsidian => "Obsidian",
+            MiniBackground::MidnightNavy => "Midnight",
+            MiniBackground::SlateCarbon => "Carbon",
+            MiniBackground::FrostedSlate => "Frosted",
+            MiniBackground::PureOled => "Pure OLED",
+            MiniBackground::MatchAccent => "Accent Tint",
+        }
+    }
+
+    pub fn color(&self, accent: eframe::egui::Color32) -> eframe::egui::Color32 {
+        match self {
+            MiniBackground::Obsidian => eframe::egui::Color32::from_rgb(12, 13, 20),
+            MiniBackground::MidnightNavy => eframe::egui::Color32::from_rgb(10, 17, 36),
+            MiniBackground::SlateCarbon => eframe::egui::Color32::from_rgb(24, 26, 33),
+            MiniBackground::FrostedSlate => eframe::egui::Color32::from_rgb(36, 40, 52),
+            MiniBackground::PureOled => eframe::egui::Color32::from_rgb(0, 0, 0),
+            MiniBackground::MatchAccent => eframe::egui::Color32::from_rgb(
+                (accent.r() / 8).max(8),
+                (accent.g() / 8).max(8),
+                (accent.b() / 8).max(12),
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Default)]
+pub enum ThemeBase {
+    #[default]
+    DarkObsidian,
+    PureOled,
+    MidnightNavy,
+    CharcoalSlate,
+}
+
+impl ThemeBase {
+    pub const ALL: [ThemeBase; 4] = [
+        ThemeBase::DarkObsidian,
+        ThemeBase::PureOled,
+        ThemeBase::MidnightNavy,
+        ThemeBase::CharcoalSlate,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            ThemeBase::DarkObsidian => "Dark Obsidian",
+            ThemeBase::PureOled => "Pure OLED Black",
+            ThemeBase::MidnightNavy => "Midnight Navy",
+            ThemeBase::CharcoalSlate => "Charcoal Slate",
+        }
+    }
+
+    pub fn color(&self) -> eframe::egui::Color32 {
+        match self {
+            ThemeBase::DarkObsidian => eframe::egui::Color32::from_rgb(10, 11, 14),
+            ThemeBase::PureOled => eframe::egui::Color32::from_rgb(0, 0, 0),
+            ThemeBase::MidnightNavy => eframe::egui::Color32::from_rgb(7, 10, 18),
+            ThemeBase::CharcoalSlate => eframe::egui::Color32::from_rgb(18, 20, 28),
         }
     }
 }
@@ -127,6 +226,7 @@ pub enum Route {
     Liked,
     Recent,
     Settings(SettingsTab),
+    CustomPlaylist(String),
 }
 
 pub enum Load {
@@ -200,6 +300,24 @@ pub struct Saved {
     pub mini_show_clock: bool,
     #[serde(default = "default_true")]
     pub mini_always_on_top: bool,
+    #[serde(default)]
+    pub mini_bg: MiniBackground,
+    #[serde(default = "default_true")]
+    pub mini_grain: bool,
+    #[serde(default = "default_mini_grain_strength")]
+    pub mini_grain_strength: f32,
+
+    #[serde(default)]
+    pub theme_palette: MiniPalette,
+    #[serde(default)]
+    pub theme_base: ThemeBase,
+    #[serde(default = "default_true")]
+    pub ambient_glow: bool,
+
+    #[serde(default = "default_storage_dir")]
+    pub storage_dir: String,
+    #[serde(default)]
+    pub playlists: Vec<CustomPlaylist>,
 
     #[serde(default)]
     pub perf_profile: PerfProfile,
@@ -229,6 +347,18 @@ fn default_eq_gains() -> [f32; 10] {
 
 fn default_mini_opacity() -> f32 {
     0.92
+}
+
+fn default_mini_grain_strength() -> f32 {
+    0.15
+}
+
+fn default_storage_dir() -> String {
+    if let Some(user_profile) = std::env::var_os("USERPROFILE") {
+        let p = std::path::PathBuf::from(user_profile).join("Music").join("AURI");
+        return p.to_string_lossy().to_string();
+    }
+    "Music/AURI".to_string()
 }
 
 fn default_perf_audio_buffer() -> f32 {
@@ -328,6 +458,14 @@ impl Default for Saved {
             mini_show_volume: true,
             mini_show_clock: true,
             mini_always_on_top: true,
+            mini_bg: MiniBackground::Obsidian,
+            mini_grain: true,
+            mini_grain_strength: 0.15,
+            theme_palette: MiniPalette::CyberViolet,
+            theme_base: ThemeBase::DarkObsidian,
+            ambient_glow: true,
+            storage_dir: default_storage_dir(),
+            playlists: Vec::new(),
             perf_profile: PerfProfile::CompetitiveGaming,
             perf_audio_buffer_mb: 1.5,
             perf_art_cache_mb: 4,
@@ -434,6 +572,24 @@ pub enum Action {
     SetPerfAudioBuffer(f32),
     SetPerfArtCache(usize),
     SetPerfTickFps(u32),
+    CreatePlaylist(String),
+    DeletePlaylist(String),
+    AddToPlaylist(String, Item),
+    RemoveFromPlaylist(String, String),
+    PromptCreatePlaylist,
+    CancelCreatePlaylist,
+    DownloadSong(Item),
+    SetMiniBackground(MiniBackground),
+    SetMiniGrain(bool),
+    SetMiniGrainStrength(f32),
+    SetThemePalette(MiniPalette),
+    SetThemeBase(ThemeBase),
+    SetAmbientGlow(bool),
+    #[allow(dead_code)]
+    SetStorageDir(String),
+    BrowseStorageDir,
+    OpenStorageDir,
+    ResetStorageDir,
 }
 
 enum Event {
@@ -451,6 +607,8 @@ enum Event {
     Pressed(Action),
     Lyrics(String, Result<Option<Lyrics>, String>),
     Discord(bool),
+    Toast(String),
+    StorageDir(String),
 }
 
 pub struct App {
@@ -497,6 +655,8 @@ pub struct App {
     pub recording: Option<Command>,
     pub last_purge: Instant,
     pub mini_queue_open: bool,
+    pub new_playlist_name: String,
+    pub creating_playlist: bool,
     restart: Option<PathBuf>,
 }
 
@@ -576,6 +736,8 @@ impl App {
             recording: None,
             last_purge: Instant::now(),
             mini_queue_open: false,
+            new_playlist_name: String::new(),
+            creating_playlist: false,
             restart: None,
         };
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
@@ -730,7 +892,7 @@ impl App {
     }
 
     fn ensure(&mut self, route: &Route) {
-        if self.pages.contains_key(route) || matches!(route, Route::Liked | Route::Recent | Route::Settings(_)) {
+        if self.pages.contains_key(route) || matches!(route, Route::Liked | Route::Recent | Route::Settings(_) | Route::CustomPlaylist(_)) {
             return;
         }
         if self.pages.len() >= CACHED_PAGES {
@@ -763,7 +925,7 @@ impl App {
                     let _ = sender.send(Event::Page(route.clone(), Ok(Box::new(page.clone()))));
                     ctx.request_repaint();
                 }),
-                Route::Liked | Route::Recent | Route::Settings(_) => return,
+                Route::Liked | Route::Recent | Route::Settings(_) | Route::CustomPlaylist(_) => return,
             };
             let _ = sender.send(Event::Page(route, result.map(Box::new)));
             ctx.request_repaint();
@@ -1011,6 +1173,11 @@ impl App {
                     self.updating = false;
                     let page = Some(("Download page", Action::OpenRelease));
                     self.offer(format!("The update did not install: {reason}"), page, UPDATE_NOTICE_TIME);
+                }
+                Event::Toast(msg) => self.notify(msg),
+                Event::StorageDir(dir) => {
+                    self.saved.storage_dir = dir.clone();
+                    self.notify(format!("Storage directory set to: {}", dir));
                 }
             }
         }
@@ -1373,6 +1540,7 @@ impl App {
                         self.apply(Action::PurgeMemory);
                     }
                 } else {
+                    self.title_bar.restore_decorations();
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
@@ -1505,6 +1673,166 @@ impl App {
             Action::SetPerfTickFps(fps) => {
                 self.saved.perf_profile = PerfProfile::Custom;
                 self.saved.perf_tick_fps = fps.clamp(1, 144);
+            }
+            Action::CreatePlaylist(name) => {
+                let name = name.trim();
+                if !name.is_empty() {
+                    let id = format!("pl-{}", SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis());
+                    self.saved.playlists.push(CustomPlaylist {
+                        id: id.clone(),
+                        name: name.to_string(),
+                        songs: Vec::new(),
+                    });
+                    self.creating_playlist = false;
+                    self.new_playlist_name.clear();
+                    self.notify(format!("Created playlist '{}'", name));
+                    self.go(Route::CustomPlaylist(id));
+                }
+            }
+            Action::DeletePlaylist(id) => {
+                if let Some(pos) = self.saved.playlists.iter().position(|p| p.id == id) {
+                    let removed = self.saved.playlists.remove(pos);
+                    self.notify(format!("Deleted playlist '{}'", removed.name));
+                    if *self.route() == Route::CustomPlaylist(id) {
+                        self.go(Route::Home);
+                    }
+                }
+            }
+            Action::AddToPlaylist(id, item) => {
+                if let Some(pl) = self.saved.playlists.iter_mut().find(|p| p.id == id) {
+                    if !pl.songs.iter().any(|s| s.video_id == item.video_id) {
+                        let pl_name = pl.name.clone();
+                        pl.songs.push(item);
+                        self.notify(format!("Added to '{}'", pl_name));
+                    } else {
+                        self.notify("Already in playlist");
+                    }
+                }
+            }
+            Action::RemoveFromPlaylist(id, video_id) => {
+                let mut removed = None;
+                if let Some(pl) = self.saved.playlists.iter_mut().find(|p| p.id == id) {
+                    if let Some(pos) = pl.songs.iter().position(|s| s.video_id == video_id) {
+                        let song = pl.songs.remove(pos);
+                        removed = Some((song.title, pl.name.clone()));
+                    }
+                }
+                if let Some((title, pl_name)) = removed {
+                    self.notify(format!("Removed '{}' from {}", title, pl_name));
+                }
+            }
+            Action::PromptCreatePlaylist => {
+                self.creating_playlist = true;
+                self.new_playlist_name.clear();
+            }
+            Action::CancelCreatePlaylist => {
+                self.creating_playlist = false;
+                self.new_playlist_name.clear();
+            }
+            Action::DownloadSong(item) => {
+                let yt = self.yt.clone();
+                let dir = PathBuf::from(&self.saved.storage_dir).join("downloads");
+                let sender = self.sender.clone();
+                let ctx = self.ctx.clone();
+                let title = item.title.clone();
+                let artist = item.subtitle.clone();
+                let video_id = item.video_id.clone();
+                self.notify(format!("Downloading '{}'...", title));
+                std::thread::spawn(move || {
+                    let _ = std::fs::create_dir_all(&dir);
+                    match yt.stream(&video_id) {
+                        Ok(stream) => {
+                            let ext = if stream.opus { "opus" } else { "m4a" };
+                            let safe_name: String = format!("{} - {}", title, artist)
+                                .chars()
+                                .map(|c| match c {
+                                    '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                                    _ => c,
+                                })
+                                .collect();
+                            let safe_name = safe_name.trim();
+                            let file_path = dir.join(format!("{}.{}", safe_name, ext));
+                            match yt.agent.get(&stream.url).call() {
+                                Ok(response) => {
+                                    let mut reader = response.into_reader();
+                                    match std::fs::File::create(&file_path) {
+                                        Ok(mut file) => {
+                                            if std::io::copy(&mut reader, &mut file).is_ok() {
+                                                let _ = sender.send(Event::Toast(format!("Saved: {}.{}", safe_name, ext)));
+                                                ctx.request_repaint();
+                                            } else {
+                                                let _ = sender.send(Event::Toast("Download write error".into()));
+                                                ctx.request_repaint();
+                                            }
+                                        }
+                                        Err(e) => {
+                                            let _ = sender.send(Event::Toast(format!("File error: {}", e)));
+                                            ctx.request_repaint();
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = sender.send(Event::Toast(format!("Download failed: {}", e)));
+                                    ctx.request_repaint();
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = sender.send(Event::Toast(format!("Stream error: {}", e)));
+                            ctx.request_repaint();
+                        }
+                    }
+                });
+            }
+            Action::SetMiniBackground(bg) => {
+                self.saved.mini_bg = bg;
+            }
+            Action::SetMiniGrain(v) => {
+                self.saved.mini_grain = v;
+            }
+            Action::SetMiniGrainStrength(v) => {
+                self.saved.mini_grain_strength = v.clamp(0.01, 0.50);
+            }
+            Action::SetThemePalette(palette) => {
+                self.saved.theme_palette = palette;
+            }
+            Action::SetThemeBase(base) => {
+                self.saved.theme_base = base;
+            }
+            Action::SetAmbientGlow(v) => {
+                self.saved.ambient_glow = v;
+            }
+            Action::SetStorageDir(dir) => {
+                self.saved.storage_dir = dir;
+            }
+            Action::BrowseStorageDir => {
+                let sender = self.sender.clone();
+                let ctx = self.ctx.clone();
+                std::thread::spawn(move || {
+                    #[cfg(windows)]
+                    {
+                        let script = "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Select AURI Storage & Downloads Directory'; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }";
+                        let out = std::process::Command::new("powershell")
+                            .args(["-NoProfile", "-Command", script])
+                            .output();
+                        if let Ok(res) = out {
+                            let path = String::from_utf8_lossy(&res.stdout).trim().to_string();
+                            if !path.is_empty() {
+                                let _ = sender.send(Event::StorageDir(path));
+                                ctx.request_repaint();
+                            }
+                        }
+                    }
+                });
+            }
+            Action::OpenStorageDir => {
+                let dir = PathBuf::from(&self.saved.storage_dir).join("downloads");
+                let _ = std::fs::create_dir_all(&dir);
+                let _ = std::process::Command::new("explorer").arg(&dir).spawn();
+            }
+            Action::ResetStorageDir => {
+                self.saved.storage_dir = default_storage_dir();
+                self.notify("Storage directory reset to default");
             }
         }
     }
@@ -1677,5 +2005,50 @@ mod tests {
             assert!(!reorder(&mut queue, 1, from, gap));
         }
         assert_eq!(order(&queue), "acdbe");
+    }
+
+    #[test]
+    fn test_custom_playlist_lifecycle() {
+        let mut pl = CustomPlaylist {
+            id: "pl_123".into(),
+            name: "Gaming Mix".into(),
+            songs: Vec::new(),
+        };
+        let song = Item {
+            video_id: "vid_1".into(),
+            title: "Test Track".into(),
+            subtitle: "Artist".into(),
+            ..Item::default()
+        };
+        pl.songs.push(song.clone());
+        assert_eq!(pl.songs.len(), 1);
+        assert_eq!(pl.songs[0].title, "Test Track");
+
+        // Serialize and deserialize test
+        let json = serde_json::to_string(&pl).unwrap();
+        let deserialized: CustomPlaylist = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized, pl);
+
+        // Remove song
+        let pos = pl.songs.iter().position(|s| s.video_id == "vid_1");
+        assert_eq!(pos, Some(0));
+        pl.songs.remove(pos.unwrap());
+        assert!(pl.songs.is_empty());
+    }
+
+    #[test]
+    fn test_theme_base_and_mini_background_colors() {
+        assert_eq!(ThemeBase::PureOled.color(), eframe::egui::Color32::from_rgb(0, 0, 0));
+        assert_eq!(MiniBackground::PureOled.color(eframe::egui::Color32::RED), eframe::egui::Color32::from_rgb(0, 0, 0));
+        let accent = eframe::egui::Color32::from_rgb(139, 92, 246);
+        let match_col = MiniBackground::MatchAccent.color(accent);
+        assert!(match_col.r() >= 8 && match_col.b() >= 12);
+    }
+
+    #[test]
+    fn test_storage_dir_default() {
+        let dir = default_storage_dir();
+        assert!(!dir.is_empty());
+        assert!(dir.contains("Music") || dir.contains("AURI"));
     }
 }

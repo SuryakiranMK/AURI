@@ -1,4 +1,6 @@
-use crate::app::{Action, App, Covers, Load, MiniPalette, PerfProfile, Repeat, Route, SettingsTab, Words};
+use crate::app::{
+    Action, App, Covers, CustomPlaylist, Load, MiniBackground, MiniPalette, PerfProfile, Repeat, Route, SettingsTab, ThemeBase, Words,
+};
 use crate::art::Art;
 use crate::discord::Headline;
 use crate::hotkeys::{self, Command};
@@ -404,6 +406,7 @@ struct Cx<'a> {
     paused: bool,
     liked: &'a [Item],
     single: bool,
+    playlists: &'a [CustomPlaylist],
     out: &'a mut Vec<Action>,
 }
 
@@ -448,6 +451,15 @@ pub struct TitleBar {
 }
 
 #[cfg(windows)]
+#[repr(C)]
+struct Margins {
+    cx_left_width: i32,
+    cx_right_width: i32,
+    cy_top_height: i32,
+    cy_bottom_height: i32,
+}
+
+#[cfg(windows)]
 impl TitleBar {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -478,30 +490,101 @@ impl TitleBar {
     }
 
     pub fn enable_transparency(&self) {
-        #[repr(C)]
-        struct Margins {
-            cx_left_width: i32,
-            cx_right_width: i32,
-            cy_top_height: i32,
-            cy_bottom_height: i32,
-        }
-
         #[link(name = "dwmapi")]
         unsafe extern "system" {
             fn DwmExtendFrameIntoClientArea(hwnd: isize, pMarInset: *const Margins) -> i32;
+            fn DwmSetWindowAttribute(hwnd: isize, dwAttribute: u32, pvAttribute: *const std::ffi::c_void, cbAttribute: u32) -> i32;
         }
 
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOMOVE,
+            SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+        };
+
         if self.window != 0 {
-            let margins = Margins {
-                cx_left_width: -1,
-                cx_right_width: -1,
-                cy_top_height: -1,
-                cy_bottom_height: -1,
-            };
             unsafe {
+                // Strip all window caption and button styles so Windows DWM never renders minimize/maximize/close buttons
+                let style = GetWindowLongPtrW(self.window as _, GWL_STYLE) as u32;
+                let new_style = style & !(WS_CAPTION | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_THICKFRAME);
+                SetWindowLongPtrW(self.window as _, GWL_STYLE, new_style as isize);
+                SetWindowPos(self.window as _, std::ptr::null_mut(), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+
+                // Disable Windows 11 system outer border (DWMWA_BORDER_COLOR = 34, 0xFFFFFFFE is DWMWA_COLOR_NONE)
+                let border_color: u32 = 0xFFFFFFFE;
+                DwmSetWindowAttribute(self.window as _, 34, (&raw const border_color).cast(), 4);
+
+                let margins = Margins {
+                    cx_left_width: -1,
+                    cx_right_width: -1,
+                    cy_top_height: -1,
+                    cy_bottom_height: -1,
+                };
                 DwmExtendFrameIntoClientArea(self.window, &margins);
             }
         }
+    }
+
+    pub fn restore_decorations(&self) {
+        #[link(name = "dwmapi")]
+        unsafe extern "system" {
+            fn DwmExtendFrameIntoClientArea(hwnd: isize, pMarInset: *const Margins) -> i32;
+            fn DwmSetWindowAttribute(hwnd: isize, dwAttribute: u32, pvAttribute: *const std::ffi::c_void, cbAttribute: u32) -> i32;
+        }
+
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, SWP_FRAMECHANGED, SWP_NOMOVE,
+            SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+        };
+
+        if self.window != 0 {
+            unsafe {
+                let style = GetWindowLongPtrW(self.window as _, GWL_STYLE) as u32;
+                let new_style = style | WS_CAPTION | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_THICKFRAME;
+                SetWindowLongPtrW(self.window as _, GWL_STYLE, new_style as isize);
+                SetWindowPos(self.window as _, std::ptr::null_mut(), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+
+                let border_color: u32 = 0xFFFFFFFF;
+                DwmSetWindowAttribute(self.window as _, 34, (&raw const border_color).cast(), 4);
+
+                let margins = Margins {
+                    cx_left_width: 0,
+                    cx_right_width: 0,
+                    cy_top_height: 0,
+                    cy_bottom_height: 0,
+                };
+                DwmExtendFrameIntoClientArea(self.window, &margins);
+            }
+        }
+    }
+}
+
+fn paint_glass_grain(painter: &egui::Painter, rect: Rect, strength: f32) {
+    if strength <= 0.01 {
+        return;
+    }
+    let step = 6.0;
+    let mut y = rect.top() + 3.0;
+    let max_y = rect.bottom() - 3.0;
+    let max_x = rect.right() - 3.0;
+    let base_a = (strength * 75.0).clamp(3.0, 50.0) as u8;
+
+    while y < max_y {
+        let mut x = rect.left() + 3.0;
+        while x < max_x {
+            // Fast pseudo-random hash
+            let h = ((x * 12.9898 + y * 78.233).sin() * 43758.5453).fract().abs();
+            if h > 0.42 {
+                let dot_alpha = ((h - 0.42) * 1.7 * base_a as f32) as u8;
+                let col = if h > 0.70 {
+                    Color32::from_rgba_unmultiplied(255, 255, 255, dot_alpha)
+                } else {
+                    Color32::from_rgba_unmultiplied(0, 0, 0, dot_alpha)
+                };
+                painter.rect_filled(Rect::from_min_size(pos2(x, y), vec2(1.5, 1.5)), 0.5, col);
+            }
+            x += step;
+        }
+        y += step;
     }
 }
 
@@ -517,6 +600,8 @@ impl TitleBar {
     fn paint(&mut self, _color: Color32) {}
 
     pub fn enable_transparency(&self) {}
+
+    pub fn restore_decorations(&self) {}
 }
 
 pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
@@ -839,8 +924,29 @@ fn song_actions(ui: &mut Ui, cx: &mut Cx, item: &Item) {
     if menu_row(ui, icon::HEART, font, tint, text).clicked() {
         choice = Some(Action::Like(item.clone()));
     }
+    if menu_row(ui, icon::DOWNLOAD_SIMPLE, glyph(17.0), MUTED, "Download song (Opus/160k)").clicked() {
+        choice = Some(Action::DownloadSong(item.clone()));
+    }
     if menu_row(ui, icon::SHARE_NETWORK, glyph(17.0), MUTED, "Share").clicked() {
         choice = Some(Action::Share(item.clone()));
+    }
+    if !cx.playlists.is_empty() {
+        menu_divider(ui);
+        for pl in cx.playlists {
+            let already_in = pl.songs.iter().any(|s| s.video_id == item.video_id);
+            let (p_icon, p_label, p_color) = if already_in {
+                (icon::CHECK, format!("In: {}", pl.name), ACCENT)
+            } else {
+                (icon::PLAYLIST, format!("Add to: {}", pl.name), MUTED)
+            };
+            if menu_row(ui, p_icon, glyph(17.0), p_color, &p_label).clicked() {
+                if already_in {
+                    choice = Some(Action::RemoveFromPlaylist(pl.id.clone(), item.video_id.clone()));
+                } else {
+                    choice = Some(Action::AddToPlaylist(pl.id.clone(), item.clone()));
+                }
+            }
+        }
     }
     if !item.artist_id.is_empty() || !item.album_id.is_empty() {
         menu_divider(ui);
@@ -1327,6 +1433,38 @@ fn local(ui: &mut Ui, cx: &mut Cx, title: &str, symbol: &str, items: &[Item], em
     }
 }
 
+fn custom_playlist_page(ui: &mut Ui, cx: &mut Cx, pl: &CustomPlaylist) {
+    let count = if pl.songs.len() == 1 {
+        "1 song".to_owned()
+    } else {
+        format!("{} songs", pl.songs.len())
+    };
+    let header = Item {
+        title: pl.name.clone(),
+        subtitle: count,
+        ..Item::default()
+    };
+    let play_row_end = pos2(ui.max_rect().right(), ui.cursor().top() + HERO_ART - 21.0);
+    if hero(ui, cx, &header, Some(icon::PLAYLIST), !pl.songs.is_empty(), None) {
+        cx.out.push(Action::Play(pl.songs.clone(), 0));
+    }
+    if text_button(ui, play_row_end, ui.id().with("delete_pl"), "Delete playlist").clicked() {
+        cx.out.push(Action::DeletePlaylist(pl.id.clone()));
+    }
+    ui.add_space(28.0);
+    if pl.songs.is_empty() {
+        message(
+            ui,
+            icon::PLAYLIST,
+            "Playlist is empty",
+            "Right-click any track and choose 'Add to: <Playlist>' to build your mix.",
+        );
+    }
+    for index in 0..pl.songs.len() {
+        track_row(ui, cx, &pl.songs, index, None);
+    }
+}
+
 fn page(ui: &mut Ui, cx: &mut Cx, load: Option<&Load>, pinned: &[Item], query: Option<&str>) {
     match load {
         Some(Load::Ready(page)) => {
@@ -1585,6 +1723,7 @@ fn topbar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
 
 fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let area = ui.max_rect();
+    let base_color = app.saved.theme_base.color();
     let route = app.route().clone();
     let header = match app.pages.get(&route) {
         Some(Load::Ready(page)) => page.header.as_ref().map(|header| (header.thumb.as_str(), HERO_ART)),
@@ -1593,11 +1732,11 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let playing = app.now_playing().map(|item| (app.saved.covers.of(item), BAR_ART));
     let picture = |source: Option<(&str, f32)>| source.and_then(|(thumb, size)| app.art.get(ui.ctx(), thumb, size));
     let tint = picture(header).or_else(|| picture(playing)).map(|picture| picture.tint);
-    let glow = mood(ui, "ambient", tint, BASE, 0.36);
+    let glow = mood(ui, "ambient", tint, base_color, 0.36);
     let haze = Rect::from_min_size(area.min, vec2(area.width(), AMBIENT_HEIGHT.min(area.height())));
     let disable_blurs = app.saved.performance_mode && app.saved.perf_disable_blurs;
-    if !disable_blurs {
-        wash(ui.painter(), haze, glow, BASE);
+    if !disable_blurs && app.saved.ambient_glow {
+        wash(ui.painter(), haze, glow, base_color);
     }
     topbar(app, ui, out);
 
@@ -1606,6 +1745,9 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let headline = match (&route, app.pages.get(&route)) {
         (Route::Liked, _) => Some(("Liked songs", !app.saved.liked.is_empty())),
         (Route::Recent, _) => Some(("Recently played", !app.saved.recent.is_empty())),
+        (Route::CustomPlaylist(id), _) => {
+            app.saved.playlists.iter().find(|p| &p.id == id).map(|p| (p.name.as_str(), !p.songs.is_empty()))
+        }
         (Route::Browse(_), Some(Load::Ready(page))) => page.header.as_ref().map(|header| {
             let playable = page.sections.iter().flat_map(|section| &section.items).any(Item::is_song);
             (header.title.as_str(), playable)
@@ -1619,6 +1761,7 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
         paused: app.player.paused(),
         liked: &app.saved.liked,
         single: matches!(route, Route::Search(_) | Route::Home),
+        playlists: &app.saved.playlists,
         out: &mut *out,
     };
     let margin = Margin {
@@ -1648,6 +1791,11 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                         true,
                     );
                 }
+                Route::CustomPlaylist(id) => {
+                    if let Some(pl) = app.saved.playlists.iter().find(|p| &p.id == id) {
+                        custom_playlist_page(ui, &mut cx, pl);
+                    }
+                }
                 Route::Settings(tab) => settings(ui, app, *tab, cx.out),
                 Route::Search(query) => page(ui, &mut cx, app.pages.get(&route), &app.saved.pinned, Some(query)),
                 Route::Home | Route::Browse(_) => page(ui, &mut cx, app.pages.get(&route), &app.saved.pinned, None),
@@ -1670,9 +1818,9 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let mut pane = ui.new_child(UiBuilder::new().id_salt("sticky").max_rect(strip));
     pane.set_clip_rect(strip);
     pane.set_opacity(stuck);
-    pane.painter().rect_filled(strip, 0.0, BASE);
-    if !disable_blurs {
-        wash(pane.painter(), haze, glow, BASE);
+    pane.painter().rect_filled(strip, 0.0, base_color);
+    if !disable_blurs && app.saved.ambient_glow {
+        wash(pane.painter(), haze, glow, base_color);
     }
     if sticky(&pane, strip, title, playable) {
         let songs = match (&route, app.pages.get(&route)) {
@@ -2150,12 +2298,16 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         let mini_h = 92.0;
         let mini_rect = Rect::from_center_size(slot.center(), vec2(mini_w, mini_h));
 
-        // Glass background with selected opacity
-        let alpha = (app.saved.mini_opacity.clamp(0.4, 1.0) * 255.0) as u8;
-        ui.painter().rect_filled(mini_rect, 14.0, Color32::from_rgba_unmultiplied(12, 13, 20, alpha));
-        ui.painter().rect_stroke(mini_rect, 14.0, Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(pal_color.r(), pal_color.g(), pal_color.b(), 180)), StrokeKind::Inside);
-        // Specular highlight line
-        ui.painter().hline(mini_rect.left() + 18.0..=mini_rect.right() - 18.0, mini_rect.top() + 1.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 45)));
+        // Glass background with selected background tint and opacity
+        let bg_color = app.saved.mini_bg.color(pal_color);
+        let alpha = (app.saved.mini_opacity.clamp(0.05, 1.0) * 255.0) as u8;
+        ui.painter().rect_filled(mini_rect, 14.0, Color32::from_rgba_unmultiplied(bg_color.r(), bg_color.g(), bg_color.b(), alpha));
+        ui.painter().rect_stroke(mini_rect, 14.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(pal_color.r(), pal_color.g(), pal_color.b(), 180)), StrokeKind::Inside);
+
+        // Procedural frosted acrylic grain texture
+        if app.saved.mini_grain {
+            paint_glass_grain(ui.painter(), mini_rect, app.saved.mini_grain_strength);
+        }
 
         // Preview Art
         let art_rect = Rect::from_min_size(pos2(mini_rect.left() + 12.0, mini_rect.center().y - 32.0), vec2(64.0, 64.0));
@@ -2170,13 +2322,26 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         let p_left = art_rect.right() + 10.0;
         let title_str = app.now_playing().map_or("AURI Gaming Mode", |it| it.title.as_str());
         let sub_str = app.now_playing().map_or("Ready to play", |it| it.subtitle.as_str());
-        label(ui, pos2(p_left, mini_rect.top() + 20.0), Align2::LEFT_CENTER, title_str, medium(12.5), TEXT, mini_rect.width() - 190.0);
-        label(ui, pos2(p_left, mini_rect.top() + 34.0), Align2::LEFT_CENTER, sub_str, sans(10.5), MUTED, mini_rect.width() - 190.0);
+        label(ui, pos2(p_left, mini_rect.top() + 18.0), Align2::LEFT_CENTER, title_str, medium(12.5), TEXT, mini_rect.width() - 190.0);
+        label(ui, pos2(p_left, mini_rect.top() + 32.0), Align2::LEFT_CENTER, sub_str, sans(10.5), MUTED, mini_rect.width() - 190.0);
 
         // Preview Scrubber
-        let p_scrub = Rect::from_min_size(pos2(p_left, mini_rect.top() + 50.0), vec2(mini_rect.width() - 190.0, 4.0));
+        let p_scrub = Rect::from_min_size(pos2(p_left, mini_rect.top() + 48.0), vec2(mini_rect.width() - 190.0, 4.0));
         ui.painter().rect_filled(p_scrub, 2.0, veil(0.12));
         ui.painter().rect_filled(Rect::from_min_size(p_scrub.min, vec2(p_scrub.width() * 0.45, 4.0)), 2.0, pal_color);
+
+        // Dynamic Track Clock (if enabled)
+        if app.saved.mini_show_clock {
+            ui.painter().text(pos2(p_left, mini_rect.top() + 60.0), Align2::LEFT_CENTER, "1:24 / 3:45", sans(9.5), FAINT);
+        }
+
+        // Dynamic Volume Bar (if enabled)
+        if app.saved.mini_show_volume {
+            let v_y = if app.saved.mini_show_clock { mini_rect.top() + 72.0 } else { mini_rect.top() + 62.0 };
+            let p_vol = Rect::from_min_size(pos2(p_left, v_y), vec2(mini_rect.width() - 190.0, 3.0));
+            ui.painter().rect_filled(p_vol, 1.5, veil(0.10));
+            ui.painter().rect_filled(Rect::from_min_size(p_vol.min, vec2(p_vol.width() * app.saved.volume, 3.0)), 1.5, pal_color);
+        }
 
         // Preview Transport Controls
         let right_x = mini_rect.right() - 24.0;
@@ -2185,20 +2350,31 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         ui.painter().text(pos2(right_x - 30.0, cy), Align2::CENTER_CENTER, icon::PAUSE, solid(13.0), PANEL);
         ui.painter().text(pos2(right_x - 56.0, cy), Align2::CENTER_CENTER, icon::SKIP_BACK, solid(13.0), TEXT);
         ui.painter().text(pos2(right_x - 4.0, cy), Align2::CENTER_CENTER, icon::SKIP_FORWARD, solid(13.0), TEXT);
+
+        // Dynamic Shuffle & Repeat Buttons (if enabled)
+        if app.saved.mini_show_shuffle_repeat {
+            ui.painter().text(pos2(right_x - 76.0, cy), Align2::CENTER_CENTER, icon::SHUFFLE, glyph(12.0), if app.saved.shuffle { pal_color } else { MUTED });
+            ui.painter().text(pos2(right_x + 16.0, cy), Align2::CENTER_CENTER, icon::ARROWS_CLOCKWISE, glyph(12.0), if app.saved.repeat != Repeat::Off { pal_color } else { MUTED });
+        }
+
+        // Top-right window controls
         ui.painter().text(pos2(mini_rect.right() - 16.0, mini_rect.top() + 14.0), Align2::CENTER_CENTER, icon::ARROWS_OUT_SIMPLE, glyph(13.0), MUTED);
+        if app.saved.mini_show_queue {
+            ui.painter().text(pos2(mini_rect.right() - 36.0, mini_rect.top() + 14.0), Align2::CENTER_CENTER, icon::LIST, glyph(13.0), MUTED);
+        }
     });
-    let text = "Live preview reflects your active glass opacity, accent color theme, and toggleable buttons.";
+    let text = "Live interactive preview dynamically reflects your active opacity, background tint, accent palette, grain, and tools.";
     label(ui, pos2(card1.left() + 4.0, card1.bottom() + SECTION_GAP / 2.0), Align2::LEFT_CENTER, text, sans(12.0), FAINT, card1.width());
 
     // 2. Customization & Theme Section
-    let cust_height = 2.0 * CARD_PAD + 6.0 * SETTING_ROW + 120.0;
+    let cust_height = 2.0 * CARD_PAD + 7.0 * SETTING_ROW + 170.0;
     let card2 = section(ui, "Appearance, Color Themes & Features", cust_height, |ui| {
         let size = vec2(ui.available_width(), SETTING_ROW);
 
         // Theme Palette Swatches
-        eyebrow(ui, "Color Theme Palette", 0.0);
+        eyebrow(ui, "Accent Color Theme", 0.0);
         let (pal_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
-        let pal_w = (size.x - 25.0) / 6.0;
+        let pal_w = (size.x - 35.0) / 8.0;
         for (i, &palette) in MiniPalette::ALL.iter().enumerate() {
             let active = app.saved.mini_palette == palette;
             let swatch_rect = Rect::from_min_size(
@@ -2212,18 +2388,43 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             if active {
                 ui.painter().rect_stroke(swatch_rect, 8.0, Stroke::new(1.5_f32, p_col), StrokeKind::Inside);
             }
-            ui.painter().circle_filled(pos2(swatch_rect.left() + 14.0, swatch_rect.center().y), 6.0, p_col);
+            ui.painter().circle_filled(pos2(swatch_rect.left() + 12.0, swatch_rect.center().y), 5.0, p_col);
             let short_name = match palette {
                 MiniPalette::CyberViolet => "Violet",
                 MiniPalette::NeonEmerald => "Emerald",
                 MiniPalette::ElectricCyan => "Cyan",
                 MiniPalette::SunsetCrimson => "Crimson",
                 MiniPalette::AmberGold => "Amber",
+                MiniPalette::CobaltBlue => "Cobalt",
+                MiniPalette::SakuraPink => "Sakura",
                 MiniPalette::Monochrome => "Mono",
             };
-            ui.painter().text(pos2(swatch_rect.left() + 26.0, swatch_rect.center().y), Align2::LEFT_CENTER, short_name, medium(11.0), if active { TEXT } else { MUTED });
+            ui.painter().text(pos2(swatch_rect.left() + 22.0, swatch_rect.center().y), Align2::LEFT_CENTER, short_name, medium(10.5), if active { TEXT } else { MUTED });
             if resp.clicked() {
                 out.push(Action::SetMiniPalette(palette));
+            }
+        }
+        ui.add_space(8.0);
+
+        // Mini Mode Background Tint Swatches
+        eyebrow(ui, "Mini Background Canvas Tint", 0.0);
+        let (bg_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
+        let bg_w = (size.x - 25.0) / 6.0;
+        for (i, &bg) in MiniBackground::ALL.iter().enumerate() {
+            let active = app.saved.mini_bg == bg;
+            let swatch_rect = Rect::from_min_size(
+                pos2(bg_row.left() + i as f32 * (bg_w + 5.0), bg_row.top()),
+                vec2(bg_w, 32.0),
+            );
+            let resp = ui.interact(swatch_rect, Id::new(("mini-bg", i)), Sense::click());
+            let hover = hover_of(ui, &resp);
+            let col = bg.color(pal_color);
+            ui.painter().rect_filled(swatch_rect, 8.0, col);
+            let stroke_col = if active { pal_color } else { veil(0.14 + 0.08 * hover) };
+            ui.painter().rect_stroke(swatch_rect, 8.0, Stroke::new(if active { 1.5_f32 } else { 1.0 }, stroke_col), StrokeKind::Inside);
+            ui.painter().text(swatch_rect.center(), Align2::CENTER_CENTER, bg.name(), medium(11.0), if active { TEXT } else { MUTED });
+            if resp.clicked() {
+                out.push(Action::SetMiniBackground(bg));
             }
         }
         ui.add_space(8.0);
@@ -2237,16 +2438,40 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         let op_resp = ui.interact(slider_rect.expand(4.0), Id::new("mini-opacity-slider"), Sense::click_and_drag());
         if let (true, Some(pos)) = (op_resp.clicked() || op_resp.dragged(), op_resp.interact_pointer_pos()) {
             let frac = ((pos.x - slider_rect.left()) / slider_rect.width()).clamp(0.0, 1.0);
-            let val = 0.50 + frac * 0.50;
+            let val = 0.05 + frac * 0.95;
             out.push(Action::SetMiniOpacity(val));
         }
         ui.painter().rect_filled(slider_rect, 3.0, veil(0.12));
-        let frac = ((app.saved.mini_opacity - 0.50) / 0.50).clamp(0.0, 1.0);
+        let frac = ((app.saved.mini_opacity - 0.05) / 0.95).clamp(0.0, 1.0);
         ui.painter().rect_filled(Rect::from_min_size(slider_rect.min, vec2(slider_rect.width() * frac, 6.0)), 3.0, pal_color);
         ui.painter().circle_filled(pos2(slider_rect.left() + slider_rect.width() * frac, slider_rect.center().y), 6.0, TEXT);
         let op_text = format!("{:.0}%", app.saved.mini_opacity * 100.0);
         ui.painter().text(pos2(op_row.right() - 10.0, op_row.center().y), Align2::RIGHT_CENTER, op_text, sans(12.0), pal_color);
         ui.add_space(8.0);
+
+        // Frosted Grain Effect Toggle & Slider
+        if switch_row(ui, size, icon::SPARKLE, "Frosted Acrylic Grain Effect", app.saved.mini_grain) {
+            out.push(Action::SetMiniGrain(!app.saved.mini_grain));
+        }
+        if app.saved.mini_grain {
+            let (grain_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
+            label(ui, pos2(grain_row.left() + 46.0, grain_row.center().y), Align2::LEFT_CENTER, "Grain Intensity", sans(12.5), MUTED, 160.0);
+            let slider_w = 160.0;
+            let slider_rect = Rect::from_min_size(pos2(grain_row.right() - slider_w - 50.0, grain_row.center().y - 3.0), vec2(slider_w, 6.0));
+            let g_resp = ui.interact(slider_rect.expand(4.0), Id::new("mini-grain-slider"), Sense::click_and_drag());
+            if let (true, Some(pos)) = (g_resp.clicked() || g_resp.dragged(), g_resp.interact_pointer_pos()) {
+                let frac = ((pos.x - slider_rect.left()) / slider_rect.width()).clamp(0.0, 1.0);
+                let val = 0.05 + frac * 0.35;
+                out.push(Action::SetMiniGrainStrength(val));
+            }
+            ui.painter().rect_filled(slider_rect, 3.0, veil(0.12));
+            let g_frac = ((app.saved.mini_grain_strength - 0.05) / 0.35).clamp(0.0, 1.0);
+            ui.painter().rect_filled(Rect::from_min_size(slider_rect.min, vec2(slider_rect.width() * g_frac, 6.0)), 3.0, pal_color);
+            ui.painter().circle_filled(pos2(slider_rect.left() + slider_rect.width() * g_frac, slider_rect.center().y), 6.0, TEXT);
+            let g_text = format!("{:.0}%", app.saved.mini_grain_strength * 100.0);
+            ui.painter().text(pos2(grain_row.right() - 10.0, grain_row.center().y), Align2::RIGHT_CENTER, g_text, sans(12.0), pal_color);
+            ui.add_space(6.0);
+        }
 
         // Feature Toggles
         if switch_row(ui, size, icon::SHUFFLE, "Show Shuffle & Repeat Controls", app.saved.mini_show_shuffle_repeat) {
@@ -2282,6 +2507,126 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
     let text = "Mini Mode floats seamlessly over games and applications with zero window borders and full transparency.";
     let at = pos2(card2.left() + 4.0, card2.bottom() + SECTION_GAP / 2.0);
     label(ui, at, Align2::LEFT_CENTER, text, sans(12.0), FAINT, card2.width());
+}
+
+fn appearance_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
+    let height = 2.0 * CARD_PAD + 3.0 * SETTING_ROW + 110.0;
+    section(ui, "Appearance & Theming (Normal Mode)", height, |ui| {
+        let size = vec2(ui.available_width(), SETTING_ROW);
+
+        // Accent Theme Swatches
+        eyebrow(ui, "Accent Color Theme", 0.0);
+        let (pal_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
+        let pal_w = (size.x - 35.0) / 8.0;
+        for (i, &palette) in MiniPalette::ALL.iter().enumerate() {
+            let active = app.saved.theme_palette == palette;
+            let swatch_rect = Rect::from_min_size(
+                pos2(pal_row.left() + i as f32 * (pal_w + 5.0), pal_row.top()),
+                vec2(pal_w, 32.0),
+            );
+            let resp = ui.interact(swatch_rect, Id::new(("theme-pal", i)), Sense::click());
+            let hover = hover_of(ui, &resp);
+            let p_col = palette.color();
+            ui.painter().rect_filled(swatch_rect, 8.0, veil(0.06 + 0.05 * hover));
+            if active {
+                ui.painter().rect_stroke(swatch_rect, 8.0, Stroke::new(1.5_f32, p_col), StrokeKind::Inside);
+            }
+            ui.painter().circle_filled(pos2(swatch_rect.left() + 12.0, swatch_rect.center().y), 5.0, p_col);
+            let short_name = match palette {
+                MiniPalette::CyberViolet => "Violet",
+                MiniPalette::NeonEmerald => "Emerald",
+                MiniPalette::ElectricCyan => "Cyan",
+                MiniPalette::SunsetCrimson => "Crimson",
+                MiniPalette::AmberGold => "Amber",
+                MiniPalette::CobaltBlue => "Cobalt",
+                MiniPalette::SakuraPink => "Sakura",
+                MiniPalette::Monochrome => "Mono",
+            };
+            ui.painter().text(pos2(swatch_rect.left() + 22.0, swatch_rect.center().y), Align2::LEFT_CENTER, short_name, medium(10.5), if active { TEXT } else { MUTED });
+            if resp.clicked() {
+                out.push(Action::SetThemePalette(palette));
+            }
+        }
+        ui.add_space(8.0);
+
+        // Base Canvas Swatches
+        eyebrow(ui, "Base Canvas Background", 0.0);
+        let (base_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
+        let base_w = (size.x - 15.0) / 4.0;
+        for (i, &base) in ThemeBase::ALL.iter().enumerate() {
+            let active = app.saved.theme_base == base;
+            let swatch_rect = Rect::from_min_size(
+                pos2(base_row.left() + i as f32 * (base_w + 5.0), base_row.top()),
+                vec2(base_w, 32.0),
+            );
+            let resp = ui.interact(swatch_rect, Id::new(("theme-base", i)), Sense::click());
+            let hover = hover_of(ui, &resp);
+            let col = base.color();
+            ui.painter().rect_filled(swatch_rect, 8.0, col);
+            let stroke_col = if active { app.saved.theme_palette.color() } else { veil(0.12 + 0.08 * hover) };
+            ui.painter().rect_stroke(swatch_rect, 8.0, Stroke::new(if active { 1.5_f32 } else { 1.0 }, stroke_col), StrokeKind::Inside);
+            ui.painter().text(swatch_rect.center(), Align2::CENTER_CENTER, base.name(), medium(11.0), if active { TEXT } else { MUTED });
+            if resp.clicked() {
+                out.push(Action::SetThemeBase(base));
+            }
+        }
+        ui.add_space(8.0);
+
+        // Ambient Glow Switch
+        if switch_row(ui, size, icon::SUN, "Dynamic Ambient Cover Glow", app.saved.ambient_glow) {
+            out.push(Action::SetAmbientGlow(!app.saved.ambient_glow));
+        }
+        let glow_desc = "Projects subtle, diffused ambient backlights matching active song artwork on the canvas.";
+        let (glow_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 20.0), Sense::hover());
+        label(ui, pos2(glow_desc_row.left() + 46.0, glow_desc_row.center().y), Align2::LEFT_CENTER, glow_desc, sans(11.5), MUTED, size.x - 58.0);
+    });
+}
+
+fn storage_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
+    let height = 2.0 * CARD_PAD + 2.0 * SETTING_ROW + 36.0;
+    section(ui, "Storage & Local Downloads", height, |ui| {
+        let size = vec2(ui.available_width(), SETTING_ROW);
+        let (row, _) = ui.allocate_exact_size(size, Sense::hover());
+        ui.painter().text(pos2(row.left() + 22.0, row.center().y), Align2::CENTER_CENTER, icon::FOLDER_SIMPLE, glyph(17.0), MUTED);
+        label(ui, pos2(row.left() + 46.0, row.center().y - 9.0), Align2::LEFT_CENTER, "Main Storage & Downloads Directory", medium(13.5), TEXT, size.x - 220.0);
+        let display_path = format!("{}\\downloads", app.saved.storage_dir);
+        label(ui, pos2(row.left() + 46.0, row.center().y + 9.0), Align2::LEFT_CENTER, &display_path, sans(12.0), ACCENT, size.x - 220.0);
+
+        let btn_w = 80.0;
+        let browse_btn_rect = Rect::from_min_size(pos2(row.right() - 3.0 * btn_w - 12.0, row.center().y - 14.0), vec2(btn_w, 28.0));
+        let browse_resp = ui.interact(browse_btn_rect, Id::new("storage-browse-btn"), Sense::click());
+        let browse_hover = hover_of(ui, &browse_resp);
+        ui.painter().rect_filled(browse_btn_rect, 6.0, veil(0.06 + 0.05 * browse_hover));
+        ui.painter().rect_stroke(browse_btn_rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+        ui.painter().text(browse_btn_rect.center(), Align2::CENTER_CENTER, "Browse...", medium(11.5), TEXT);
+        if browse_resp.clicked() {
+            out.push(Action::BrowseStorageDir);
+        }
+
+        let open_btn_rect = Rect::from_min_size(pos2(row.right() - 2.0 * btn_w - 6.0, row.center().y - 14.0), vec2(btn_w, 28.0));
+        let open_resp = ui.interact(open_btn_rect, Id::new("storage-open-btn"), Sense::click());
+        let open_hover = hover_of(ui, &open_resp);
+        ui.painter().rect_filled(open_btn_rect, 6.0, veil(0.06 + 0.05 * open_hover));
+        ui.painter().rect_stroke(open_btn_rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+        ui.painter().text(open_btn_rect.center(), Align2::CENTER_CENTER, "Open", medium(11.5), TEXT);
+        if open_resp.clicked() {
+            out.push(Action::OpenStorageDir);
+        }
+
+        let reset_btn_rect = Rect::from_min_size(pos2(row.right() - btn_w, row.center().y - 14.0), vec2(btn_w, 28.0));
+        let reset_resp = ui.interact(reset_btn_rect, Id::new("storage-reset-btn"), Sense::click());
+        let reset_hover = hover_of(ui, &reset_resp);
+        ui.painter().rect_filled(reset_btn_rect, 6.0, veil(0.06 + 0.05 * reset_hover));
+        ui.painter().rect_stroke(reset_btn_rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+        ui.painter().text(reset_btn_rect.center(), Align2::CENTER_CENTER, "Default", sans(11.5), MUTED);
+        if reset_resp.clicked() {
+            out.push(Action::ResetStorageDir);
+        }
+
+        let desc = "Right-click any song in Home, Liked, or Search and select 'Download song' to save locally in high bitrate (Opus/160k or M4A). User preferences & playlists are saved in %APPDATA%\\auri\\app.ron.";
+        let (_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
+        paragraph(ui, desc, sans(11.5), FAINT, 2);
+    });
 }
 
 fn about_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
@@ -2321,7 +2666,7 @@ fn settings(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<Actio
     let tabs_left = tabs_bar.left() + (full - width) / 2.0;
     let tab_items: [(SettingsTab, &str, &str); 4] = [
         (SettingsTab::General, "General", icon::GEAR_SIX),
-        (SettingsTab::Equalizer, "Sound Equalizer", icon::SLIDERS),
+        (SettingsTab::Equalizer, "Equalizer", icon::SLIDERS),
         (SettingsTab::Performance, "Performance", icon::LIGHTNING),
         (SettingsTab::MiniMode, "Mini Mode", icon::PICTURE_IN_PICTURE),
     ];
@@ -2358,6 +2703,8 @@ fn settings(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<Actio
     // Tab Content Routing
     match active_tab {
         SettingsTab::General => {
+            appearance_section(ui, app, out);
+            storage_section(ui, app, out);
             discord_section(ui, app, out);
             hotkey_section(ui, app, out);
             about_section(ui, app, out);
@@ -2436,7 +2783,7 @@ static BRAND_BANNER: LazyLock<eframe::egui::ColorImage> = LazyLock::new(|| {
     eframe::egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &raw)
 });
 
-fn sidebar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
+fn sidebar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let area = ui.max_rect();
     ui.painter().vline(area.right() - 0.5, area.y_range(), Stroke::new(1.0_f32, veil(0.06)));
     let (brand, response) = ui.allocate_exact_size(vec2(area.width(), 84.0), Sense::click());
@@ -2464,26 +2811,107 @@ fn sidebar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
         }
     }
     ui.add_space(18.0);
-    eyebrow(ui, "Library", 26.0);
+    let (header_row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
+    label(ui, pos2(header_row.left() + 26.0, header_row.center().y), Align2::LEFT_CENTER, "LIBRARY", bold(11.0), FAINT, 120.0);
+    let add_btn_rect = Rect::from_center_size(pos2(header_row.right() - 24.0, header_row.center().y), vec2(22.0, 22.0));
+    let add_resp = ui.interact(add_btn_rect, Id::new("add-playlist-btn"), Sense::click());
+    let add_hover = hover_of(ui, &add_resp);
+    ui.painter().text(add_btn_rect.center(), Align2::CENTER_CENTER, icon::PLUS, glyph(14.0), if add_hover > 0.1 { TEXT } else { ACCENT });
+    describe(&add_resp, "New playlist");
+    if add_resp.clicked() {
+        out.push(Action::PromptCreatePlaylist);
+    }
+
+    if app.creating_playlist {
+        ui.add_space(4.0);
+        let mut create_name = None;
+        let mut cancel = false;
+        Frame::new()
+            .inner_margin(Margin::symmetric(14, 6))
+            .fill(RAISED)
+            .corner_radius(6.0)
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let re = ui.add(
+                        egui::TextEdit::singleline(&mut app.new_playlist_name)
+                            .hint_text("Playlist name...")
+                            .desired_width(120.0),
+                    );
+                    if re.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) {
+                        create_name = Some(app.new_playlist_name.trim().to_string());
+                    }
+                    if ui.button(RichText::new("✓").color(ACCENT)).clicked() {
+                        create_name = Some(app.new_playlist_name.trim().to_string());
+                    }
+                    if ui.button(RichText::new("✕").color(MUTED)).clicked() {
+                        cancel = true;
+                    }
+                });
+            });
+        if let Some(name) = create_name {
+            if !name.is_empty() {
+                out.push(Action::CreatePlaylist(name));
+            } else {
+                out.push(Action::CancelCreatePlaylist);
+            }
+        } else if cancel {
+            out.push(Action::CancelCreatePlaylist);
+        }
+        ui.add_space(4.0);
+    }
+
     let foot = Rect::from_min_max(pos2(area.left(), area.bottom() - ACCOUNT_HEIGHT), area.max);
     account(app, ui, foot, out);
     let lift = if app.update.is_some() { UPDATE_HEIGHT } else { 0.0 };
     let offer = Rect::from_min_max(pos2(area.left(), foot.top() - lift), foot.right_top());
     update_offer(app, ui, offer, out);
-    let pinned = &app.saved.pinned;
-    let own = app
-        .library
-        .iter()
-        .filter(|item| !pinned.iter().any(|saved| saved.browse_id == item.browse_id));
-    let entries: Vec<&Item> = pinned.iter().chain(own).collect();
-    if entries.is_empty() {
-        Frame::new().inner_margin(Margin::symmetric(26, 4)).show(ui, |ui| {
-            paragraph(ui, "Save an album, playlist or artist and it stays here.", sans(13.0), FAINT, 3);
-        });
-        return;
-    }
+
     let height = (offer.top() - ui.cursor().top()).max(0.0);
     egui::ScrollArea::vertical().max_height(height).auto_shrink(false).show(ui, |ui| {
+        // Render custom playlists first
+        for pl in &app.saved.playlists {
+            let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
+            let rect = slot.shrink2(vec2(12.0, 1.0));
+            let active = matches!(app.route(), Route::CustomPlaylist(id) if id == &pl.id);
+            let hover = hover_of(ui, &response);
+            ui.painter()
+                .rect_filled(rect, ROW_RADIUS, veil(if active { 0.08 } else { 0.05 * hover }));
+            let icon_rect = Rect::from_min_size(pos2(rect.left() + 8.0, rect.center().y - 20.0), Vec2::splat(40.0));
+            ui.painter().rect_filled(icon_rect, 6.0, ACCENT.gamma_multiply(0.14));
+            ui.painter().text(icon_rect.center(), Align2::CENTER_CENTER, icon::PLAYLIST, glyph(20.0), ACCENT);
+            let (left, width) = (icon_rect.right() + 12.0, rect.right() - icon_rect.right() - 22.0);
+            label(
+                ui,
+                pos2(left, rect.center().y - 9.0),
+                Align2::LEFT_CENTER,
+                &pl.name,
+                medium(13.5),
+                TEXT,
+                width,
+            );
+            let song_count_str = if pl.songs.len() == 1 { "1 song".to_string() } else { format!("{} songs", pl.songs.len()) };
+            label(
+                ui,
+                pos2(left, rect.center().y + 9.0),
+                Align2::LEFT_CENTER,
+                &song_count_str,
+                sans(12.5),
+                MUTED,
+                width,
+            );
+            describe(&response, &pl.name);
+            if response.clicked() {
+                out.push(Action::Go(Route::CustomPlaylist(pl.id.clone())));
+            }
+        }
+
+        // Pinned and library items
+        let pinned = &app.saved.pinned;
+        let own = app
+            .library
+            .iter()
+            .filter(|item| !pinned.iter().any(|saved| saved.browse_id == item.browse_id));
+        let entries: Vec<&Item> = pinned.iter().chain(own).collect();
         for item in entries {
             let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
             let rect = slot.shrink2(vec2(12.0, 1.0));
@@ -2596,11 +3024,11 @@ fn account(app: &App, ui: &Ui, foot: Rect, out: &mut Vec<Action>) {
         }
     }
 
-    // 2. Sound Equalizer Button (Center)
+    // 2. Equalizer Button (Center)
     let is_eq = matches!(app.route(), Route::Settings(SettingsTab::Equalizer));
     let eq_slot = Rect::from_center_size(pos2(foot.center().x, mid_y), btn_size);
     let eq_tone = if is_eq { ACCENT } else { MUTED };
-    if icon_button(ui, eq_slot, Id::new("sound-eq-btn"), icon::SLIDERS, glyph(19.0), eq_tone, "Sound Equalizer").clicked() {
+    if icon_button(ui, eq_slot, Id::new("sound-eq-btn"), icon::SLIDERS, glyph(19.0), eq_tone, "Equalizer").clicked() {
         out.push(Action::Go(Route::Settings(SettingsTab::Equalizer)));
     }
 
@@ -3453,22 +3881,20 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
             let card_rect = Rect::from_min_size(ui.max_rect().min, vec2(384.0, card_height));
             let rounding = 16.0;
 
-            // Glassmorphic background with custom opacity and palette border
-            let alpha = (app.saved.mini_opacity.clamp(0.4, 1.0) * 255.0) as u8;
-            ui.painter().rect_filled(card_rect, rounding, Color32::from_rgba_unmultiplied(12, 13, 20, alpha));
+            // Glassmorphic background with custom background tint, opacity and single palette border
+            let bg_base = app.saved.mini_bg.color(pal_color);
+            let alpha = (app.saved.mini_opacity.clamp(0.05, 1.0) * 255.0) as u8;
+            ui.painter().rect_filled(card_rect, rounding, Color32::from_rgba_unmultiplied(bg_base.r(), bg_base.g(), bg_base.b(), alpha));
             ui.painter().rect_stroke(
                 card_rect,
                 rounding,
-                Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(pal_color.r(), pal_color.g(), pal_color.b(), 160)),
+                Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(pal_color.r(), pal_color.g(), pal_color.b(), 160)),
                 StrokeKind::Inside,
             );
 
-            // Specular glass highlight reflection line across top
-            ui.painter().hline(
-                card_rect.left() + 18.0..=card_rect.right() - 18.0,
-                card_rect.top() + 1.0,
-                Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 45)),
-            );
+            if app.saved.mini_grain {
+                paint_glass_grain(ui.painter(), card_rect, app.saved.mini_grain_strength);
+            }
 
             // Drag area: user can click and drag anywhere on non-interactive top area to move window
             let drag_rect = Rect::from_min_max(
