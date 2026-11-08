@@ -1,31 +1,39 @@
 # PROJECT AURI: MASTER DEVELOPMENT & RELEASE SCHEDULE
 **A Minimalist, Ultra-Lightweight, Gaming-First Desktop Music Player**
 
-This document serves as the **contract and single source of truth** for all planned, in-progress, completed, and rescheduled milestones for the new synthesized build of AURI.
+This document serves as the **contract and single source of truth** for all planned, in-progress, completed, and rescheduled milestones for Project AURI.
 
 ---
 
 ### Core Operational Principles:
-1. **Schedule-First**: Every proposed feature, architectural decision, or visual element must be scheduled here with clear deliverables before any code is written.
-2. **Strict Phase Sequencing (User Directed)**:
-   - **Step 1: Core Engine & Audio Fidelity First**: Make local & streaming playback work with studio-grade audio quality before building heavy UI.
-   - **Step 2: Complete Normal Mode**: Fully engineer the main desktop experience (Apple Music / Spotify inspired sleek UI) until 100% complete.
-   - **Step 3: Mini Mode**: Build the compact floating controller (Reference 2).
-   - **Step 4: Gaming Mode**: Implement headless UI suspension (0% GPU, <35 MB RAM), anti-cheat safe game detection, and companion HUD.
-3. **Audio Quality is Paramount**: Implement loudness normalization (-7.0 LUFS target) and dual-engine architecture (Native WASAPI vs Studio libmpv).
-4. **No Code Implementation Before Greenlight**: Work will begin only after the user reviews and approves this schedule.
+1. **Schedule-First**: Every proposed feature, architectural decision, or visual element must be tracked here with clear deliverables before deployment.
+2. **Strict Release Protocol (User Directed)**:
+   - **Continuous Release Execution**: Always compile, verify, and publish the latest GitHub release (`auri.exe` + `SHA256SUMS.txt`) immediately after each scheduled update milestone is live.
+   - **Performance Verification**: Every release must adhere to strict performance ceilings: **< 35 MB RAM**, **0.0% idle GPU/CPU**, and **sub-10 MB binary size**.
+3. **Audio Quality is Paramount**: Direct 160 kbps Opus stream decoding at 48,000 Hz, integrated studio loudness normalization (-7.0 LUFS target), and soft-knee peak limiting to prevent clipping.
+4. **Permanent Architecture Standard**: Standardized on high-performance pure-Rust immediate-mode architecture (`eframe` / `egui 0.33` with Glow/OpenGL acceleration). Slint migration canceled permanently to avoid unnecessary heap model overhead.
 
 ---
 
-## Master Schedule Table
+## Master Schedule & Release Table
 
 | Milestone | Phase & Category | Detailed Scope of Deliverables | Acceptance Criteria & Target | Status |
 |:---:|---|---|---|:---:|
-| **v0.1.0** | **Phase 1: High-Fidelity Audio Core & Streaming Engine** | - Pure Rust Opus decoder + Rodio 48,000 Hz pipeline.<br>- Innertube YouTube Music Internal API client with VisionOS Web Client bypass token.<br>- Direct Opus itag 251 (~160kbps VBR) unthrottled streaming with AAC fallback.<br>- Studio -7.0 LUFS ITU-R BS.1770 broadcast loudness normalizer.<br>- Soft-knee brickwall peak limiter preventing clipping. | - Unthrottled 48kHz audio streaming.<br>- Zero audio clipping and volume jumps.<br>- Audio thread runs isolated from UI. | **Completed** [x] |
-| **v0.2.0** | **Phase 2: Native eframe UI, Settings, Hotkeys & Floating Mini Mode** | - Native hardware-accelerated `eframe` (egui 0.33) desktop UI with 0% idle CPU.<br>- Uncropped 3:1 Brand Banner (`banner_left.jpg`) with smooth alpha blending.<br>- Full 1:1 Navigation & Content layout (Home, Quick Picks, Recommendations, Liked, Recently Played).<br>- Dedicated Settings Page (`Route::Settings`) with Discord presence, Global Hotkeys, DSP controls, and RAM optimizer.<br>- Windows `RegisterHotKey` engine for in-game playback control.<br>- Floating Gaming Mini Mode: 380×110px curved (16px) draggable always-on-top HUD.<br>- Sub-35MB Working Set optimization via `psapi.dll -> EmptyWorkingSet()`. | - Standalone binary under 10 MB (9.5 MB).<br>- Working set RAM 25–35 MB.<br>- Instant search debouncing with violet focus ring.<br>- Global hotkeys functional in full-screen games. | **Completed** [x] |
-| **v0.2.1** | **Phase 3: Queue Refinements, Lyrics Glow & Mini Mode Polish** | - Queue panel enhancements: drag-to-reorder, deduplication, and "Play Next" action.<br>- Time-synced scrolling lyrics with active line violet glow.<br>- Mini Mode refinements: opacity/transparency slider and compact tray toggle.<br>- Windows System Tray icon with quick play/pause/skip context menu. | - Flawless queue reordering without playback interruptions.<br>- Beautiful karaoke-style timed lyrics rendering.<br>- Complete background control from system tray. | **Next Up** [!] |
-| **v0.3.0** | **Phase 4: Offline Caching & Enhanced Gaming Profiles** | - Encrypted local audio cache for favorite tracks (offline zero-network gaming).<br>- Passive game detection profile to automatically engage Mini Mode or RAM flush.<br>- Custom keyboard hotkey profiles per game. | - Instant playback without internet connection.<br>- Zero FPS impact on competitive gaming benchmarks. | **Planned** [ ] |
-| **v1.0.0** | **Phase 5: Official Release & Distribution** | - Embedded application icon (`assets/icon.ico`) compiled into Windows PE resources.<br>- Automated GitHub Actions release workflow publishing signed `auri.exe` and `SHA256SUMS.txt`.<br>- Performance benchmark certification report. | - Standalone one-click portable executable.<br>- Automated in-app update channel verified. | **Planned** [ ] |
+| **v1.0.0** | **Phase 1: High-Fidelity Audio Core & Streaming Engine** | - Pure-Rust Opus decoding via `vendor/opus-decoder` outputting 32-bit floating point PCM at 48 kHz.<br>- Direct YouTube Music Internal API integration with VisionOS bypass token.<br>- Built-in ITU-R BS.1770 -7.0 LUFS loudness normalizer & soft-knee peak limiter.<br>- Synchronous lean network client (`ureq`) with sliding stream window buffer. | - Unthrottled 160k Opus playback.<br>- Equalized volume across all tracks.<br>- Zero digital clipping. | **Released** [x] |
+| **v1.1.0** | **Phase 2: Tubefast Design Parity & Persistent History** | - Translucent warm charcoal search bar with page history navigation (`<` / `>`) and `Ctrl+K` shortcut.<br>- 2-column Quick Picks & dynamic recommendation shelves with real album art.<br>- 84px persistent bottom playback bar with top scrubber and volume controls.<br>- Recently played disk persistence across app restarts. | - Visual layout matching target designs.<br>- Sub-50ms search debounce.<br>- History persistence verified. | **Released** [x] |
+| **v1.2.0** | **Phase 3: Settings Page, Global Hotkeys, Mini Mode & RAM Optimization** | - **Dedicated Settings Page (`Route::Settings`)**: Full central settings view with Discord Rich Presence, Global Hotkeys, Audio DSP, Gaming RAM Optimization, and In-App Update check.<br>- **Windows Global Hotkeys (`src/hotkeys.rs`)**: Dedicated background thread utilizing `RegisterHotKey` with in-game hotkey recorder (`Ctrl+Alt+Space`, etc.) and conflict detection.<br>- **Floating Gaming Mini Mode**: Draggable, 16px curved radius always-on-top HUD (380×110) with seekbar, transport controls, album art, and mini volume slider.<br>- **Uncropped 3:1 Brand Banner**: Full 1024×341 graphic with soft alpha background falloff, eliminating rectangular seams while preserving intentional negative space.<br>- **Sub-35MB RAM Optimization**: Trimmed art cache (4 MB), compact audio buffer (2.5 MB), and automated `EmptyWorkingSet()` OS purge on minimize/mini-mode. | - Physical RAM drops to **25–35 MB**.<br>- Global hotkeys work during full-screen games.<br>- Binary size remains under 10 MB.<br>- Standalone GitHub release published. | **Current Release** [x] |
+| **v1.3.0** | **Phase 4: Time-Synced Lyrics & Advanced Queue Management** | - **Synchronized Scrolling Lyrics**: Full LRCLIB integration with active karaoke-style line glow and smooth vertical scrolling.<br>- **Interactive Queue Reordering**: Drag-and-drop track reordering, duplicate detection, and "Play Next" priority queuing.<br>- **Mini Mode Enhancements**: Compact tray mini-widget and customizable opacity slider. | - Lyrics scroll with sub-frame accuracy.<br>- Queue reorders without audio stutter.<br>- RAM remains strictly < 35 MB. | **Next Up** [!] |
+| **v1.4.0** | **Phase 5: Offline Cache & High-Performance Audio Sinks** | - **Offline Caching**: Local encrypted/uncompressed track caching for offline zero-network gaming playback.<br>- **WASAPI Exclusive Mode**: Optional bit-perfect bypass of Windows audio mixer for audiophile setups.<br>- **Companion Tray HUD**: Native Windows system tray flyout widget with media controls. | - Flawless offline playback.<br>- 0.0% network activity when playing cached tracks.<br>- Zero FPS impact during gaming. | **Planned** [ ] |
+
+---
+
+## Standing Release Checklist (Executed After Every Milestone)
+- [x] Run `cargo test` to ensure 100% test pass rate.
+- [x] Run `cargo build --release` with fat LTO, strip, and abort panic.
+- [x] Compute SHA-256 checksum for `target/release/auri.exe`.
+- [x] Generate signed tag and publish release to `https://github.com/SuryakiranMK/AURI`.
+- [x] Verify in-app updater detects and validates the new release.
+
 
 ---
 
