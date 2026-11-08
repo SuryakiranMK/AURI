@@ -218,6 +218,38 @@ impl PerfProfile {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum MiniVariant {
+    #[default]
+    ClassicHud,
+    CapsulePill,
+    StudioCard,
+}
+
+impl MiniVariant {
+    pub const ALL: [MiniVariant; 3] = [
+        MiniVariant::ClassicHud,
+        MiniVariant::CapsulePill,
+        MiniVariant::StudioCard,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            MiniVariant::ClassicHud => "Classic HUD",
+            MiniVariant::CapsulePill => "Capsule Pill",
+            MiniVariant::StudioCard => "Studio Card",
+        }
+    }
+
+    pub fn size(&self, queue_open: bool) -> (f32, f32) {
+        match self {
+            MiniVariant::ClassicHud => (384.0, if queue_open { 260.0 } else { 108.0 }),
+            MiniVariant::CapsulePill => (320.0, 56.0),
+            MiniVariant::StudioCard => (380.0, 150.0),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Route {
     Home,
@@ -318,6 +350,13 @@ pub struct Saved {
     pub storage_dir: String,
     #[serde(default)]
     pub playlists: Vec<CustomPlaylist>,
+
+    #[serde(default = "default_true")]
+    pub selection_glow: bool,
+    #[serde(default)]
+    pub mini_variant: MiniVariant,
+    #[serde(default = "default_false")]
+    pub mini_locked: bool,
 
     #[serde(default)]
     pub perf_profile: PerfProfile,
@@ -466,6 +505,9 @@ impl Default for Saved {
             ambient_glow: true,
             storage_dir: default_storage_dir(),
             playlists: Vec::new(),
+            selection_glow: true,
+            mini_variant: MiniVariant::ClassicHud,
+            mini_locked: false,
             perf_profile: PerfProfile::CompetitiveGaming,
             perf_audio_buffer_mb: 1.5,
             perf_art_cache_mb: 4,
@@ -585,6 +627,10 @@ pub enum Action {
     SetThemePalette(MiniPalette),
     SetThemeBase(ThemeBase),
     SetAmbientGlow(bool),
+    SetSelectionGlow(bool),
+    SetMiniVariant(MiniVariant),
+    ToggleMiniLock,
+    CheckUpdate,
     #[allow(dead_code)]
     SetStorageDir(String),
     BrowseStorageDir,
@@ -1532,8 +1578,8 @@ impl App {
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
-                    let height = if self.mini_queue_open { 260.0 } else { 108.0 };
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(384.0, height)));
+                    let (w, h) = self.saved.mini_variant.size(self.mini_queue_open);
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
                     let level = if self.saved.mini_always_on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
                     if self.saved.auto_purge_ram || (self.saved.performance_mode && self.saved.perf_aggressive_ram) {
@@ -1550,6 +1596,11 @@ impl App {
             Action::ToggleLoudness => {
                 self.saved.loudness_normalizer = !self.saved.loudness_normalizer;
                 self.player.set_loudness_normalizer(self.saved.loudness_normalizer);
+                self.notify(if self.saved.loudness_normalizer {
+                    "Loudness Normalizer (-14 LUFS) Active"
+                } else {
+                    "Loudness Normalizer Bypassed (Raw Volume)"
+                });
             }
             Action::PurgeMemory => {
                 #[cfg(windows)]
@@ -1625,8 +1676,8 @@ impl App {
             Action::ToggleMiniQueue => {
                 self.mini_queue_open = !self.mini_queue_open;
                 if self.saved.mini_mode {
-                    let height = if self.mini_queue_open { 260.0 } else { 108.0 };
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(384.0, height)));
+                    let (w, h) = self.saved.mini_variant.size(self.mini_queue_open);
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
                 }
             }
             Action::SetPerfProfile(profile) => {
@@ -1802,6 +1853,45 @@ impl App {
             Action::SetAmbientGlow(v) => {
                 self.saved.ambient_glow = v;
             }
+            Action::SetSelectionGlow(v) => {
+                self.saved.selection_glow = v;
+            }
+            Action::SetMiniVariant(v) => {
+                self.saved.mini_variant = v;
+                if self.saved.mini_mode {
+                    let (w, h) = v.size(self.mini_queue_open);
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+                }
+            }
+            Action::ToggleMiniLock => {
+                self.saved.mini_locked = !self.saved.mini_locked;
+                self.notify(if self.saved.mini_locked {
+                    "Mini Mode Locked (Movement Restricted)"
+                } else {
+                    "Mini Mode Unlocked (Freely Draggable)"
+                });
+            }
+            Action::CheckUpdate => {
+                self.notify("Checking for updates...");
+                let sender = self.sender.clone();
+                let ctx = self.ctx.clone();
+                std::thread::spawn(move || {
+                    let agent = ureq::agent();
+                    match agent.head(LATEST_RELEASE).call() {
+                        Ok(latest) => {
+                            if let Some(version) = newer_version(latest.get_url(), VERSION) {
+                                let _ = sender.send(Event::Release(version));
+                            } else {
+                                let _ = sender.send(Event::Toast(format!("AURI v{} is up to date", VERSION)));
+                            }
+                        }
+                        Err(e) => {
+                            let _ = sender.send(Event::Toast(format!("Update check failed: {}", e)));
+                        }
+                    }
+                    ctx.request_repaint();
+                });
+            }
             Action::SetStorageDir(dir) => {
                 self.saved.storage_dir = dir;
             }
@@ -1976,13 +2066,13 @@ mod tests {
 
     #[test]
     fn offers_only_releases_newer_than_this_build() {
-        let release = |tag: &str| format!("https://github.com/yigitbozyaka/tubefast/releases/tag/{tag}");
+        let release = |tag: &str| format!("https://github.com/SuryakiranMK/AURI/releases/tag/{tag}");
         assert_eq!(newer_version(&release("v0.2.0"), "0.1.9").as_deref(), Some("0.2.0"));
         assert_eq!(newer_version(&release("v0.10.0"), "0.9.1").as_deref(), Some("0.10.0"));
         assert_eq!(newer_version(&release("v0.1.0"), "0.1.0"), None);
         assert_eq!(newer_version(&release("v0.1.0"), "0.2.0"), None);
         assert_eq!(newer_version(&release("nightly"), "0.1.0"), None);
-        assert_eq!(newer_version("https://github.com/yigitbozyaka/tubefast/releases", "0.1.0"), None);
+        assert_eq!(newer_version("https://github.com/SuryakiranMK/AURI/releases", "0.1.0"), None);
     }
 
     #[test]

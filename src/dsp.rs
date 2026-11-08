@@ -1,8 +1,9 @@
 // AURI Loudness Normalization & Soft Peak Limiter
 // Implements YouTube Music target loudness (-7.0 LUFS) and peak limiter
 
-/// Loudness normalization target matching YouTube Music desktop (-7.0 LUFS)
-pub const TARGET_LUFS: f64 = -7.0;
+/// Loudness normalization target matching YouTube Music desktop broadcast standard (-14.0 LUFS)
+#[allow(dead_code)]
+pub const TARGET_LUFS: f64 = -14.0;
 
 /// Maximum volume boost in dB allowed for quiet masters to preserve dynamic headroom
 pub const MAX_BOOST_DB: f64 = 3.0;
@@ -12,14 +13,14 @@ pub const MIN_CUT_DB: f64 = -24.0;
 
 /// Calculate required gain adjustment in dB from YouTube Music's metadata `loudnessDb`.
 ///
-/// YouTube Music delivers `loudnessDb` relative to -14 LUFS.
-/// To reach TARGET_LUFS (-7.0 LUFS):
-/// gain = TARGET_LUFS - (loudness_db - 14.0)
+/// YouTube Music delivers `loudnessDb` relative to -14.0 LUFS.
+/// To normalize to TARGET_LUFS (-14.0 LUFS), the required gain is `-raw`.
+/// For example, a modern loud master with loudnessDb = +7.0 dB is attenuated by -7.0 dB.
 pub fn calculate_loudness_gain_db(loudness_db: Option<f64>) -> Option<f64> {
-    let raw = loudness_db?;
-    // Compute required gain
-    let gain = (TARGET_LUFS - (raw - 14.0)).clamp(MIN_CUT_DB, MAX_BOOST_DB);
-    // Ignore imperceptible changes below 0.05 dB
+    let gain = match loudness_db {
+        Some(raw) => (-raw).clamp(MIN_CUT_DB, MAX_BOOST_DB),
+        None => -4.5, // Intelligent fallback for tracks without loudness metadata
+    };
     if gain.abs() >= 0.05 {
         Some(gain)
     } else {
@@ -359,23 +360,23 @@ mod tests {
 
     #[test]
     fn test_loudness_gain_calculation() {
-        // "As It Was" with loudnessDb 7.77 -> -6.23 LUFS (0.77 dB over -7 target) -> -0.77 dB gain
+        // Track with loudnessDb 7.77 -> -7.77 dB gain to normalize to -14 LUFS
         let gain = calculate_loudness_gain_db(Some(7.77)).unwrap();
-        assert!((gain - (-0.77)).abs() < 0.01);
+        assert!((gain - (-7.77)).abs() < 0.01);
 
-        // Track exactly on target (7.0 dB) -> returns None (no modification needed)
-        assert_eq!(calculate_loudness_gain_db(Some(7.0)), None);
+        // Track already at -14 LUFS (0.0 dB) -> returns None (no modification needed)
+        assert_eq!(calculate_loudness_gain_db(Some(0.0)), None);
 
-        // Quiet master (loudnessDb 6.35 -> -7.65 LUFS) -> +0.65 dB gain
-        let boost = calculate_loudness_gain_db(Some(6.35)).unwrap();
-        assert!((boost - 0.65).abs() < 0.01);
+        // Quiet master (loudnessDb -1.5 dB) -> +1.5 dB boost
+        let boost = calculate_loudness_gain_db(Some(-1.5)).unwrap();
+        assert!((boost - 1.5).abs() < 0.01);
 
         // Extremely quiet track capped at MAX_BOOST_DB (+3.0 dB)
-        let capped = calculate_loudness_gain_db(Some(0.11)).unwrap();
+        let capped = calculate_loudness_gain_db(Some(-10.0)).unwrap();
         assert_eq!(capped, MAX_BOOST_DB);
 
-        // No metadata -> None
-        assert_eq!(calculate_loudness_gain_db(None), None);
+        // No metadata -> fallback -4.5 dB
+        assert_eq!(calculate_loudness_gain_db(None), Some(-4.5));
     }
 
     #[test]

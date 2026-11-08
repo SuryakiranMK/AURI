@@ -8,7 +8,7 @@ const PROGRAM: &str = "auri.exe";
 const CHECKSUMS: &str = "SHA256SUMS.txt";
 const PROGRAM_BYTES: u64 = 64 * 1024 * 1024;
 const SCOOP_FOLDER: &str = "\\scoop\\apps\\";
-const SCOOP_COMMAND: &str = "scoop update tubefast";
+const SCOOP_COMMAND: &str = "scoop update auri";
 
 pub enum Plan {
     InPlace,
@@ -129,19 +129,19 @@ mod tests {
     fn reads_only_a_complete_checksum_for_the_named_file() {
         let good = "f".repeat(64);
         let list = format!(
-            "{}  tubefast-windows-x64.zip\n{good} *tubefast.exe\nshort  tubefast.exe\n",
+            "{}  auri-windows-x64.zip\n{good} *auri.exe\nshort  auri.exe\n",
             "a".repeat(64)
         );
-        assert_eq!(listed_checksum(&list, "tubefast.exe"), Some(good.as_str()));
+        assert_eq!(listed_checksum(&list, "auri.exe"), Some(good.as_str()));
         assert_eq!(listed_checksum(&list, "missing.exe"), None);
-        assert_eq!(listed_checksum("abc  tubefast.exe", "tubefast.exe"), None);
+        assert_eq!(listed_checksum("abc  auri.exe", "auri.exe"), None);
     }
 
     #[test]
     fn installs_a_verified_download_and_refuses_a_tampered_one() {
-        let folder = std::env::temp_dir().join(format!("tubefast-update-test-{}", std::process::id()));
+        let folder = std::env::temp_dir().join(format!("auri-update-test-{}", std::process::id()));
         std::fs::create_dir_all(&folder).unwrap();
-        let (program, fresh) = (folder.join("Tubefast.exe"), folder.join("Tubefast.new"));
+        let (program, fresh) = (folder.join("Auri.exe"), folder.join("Auri.new"));
         std::fs::write(&program, b"the running version").unwrap();
         let agent = ureq::agent();
 
@@ -153,7 +153,7 @@ mod tests {
         download(&agent, &serve(sha256(NEW_PROGRAM)), &fresh).unwrap();
         swap(&program, &fresh).unwrap();
         assert_eq!(std::fs::read(&program).unwrap(), NEW_PROGRAM);
-        assert_eq!(std::fs::read(folder.join("Tubefast.old")).unwrap(), b"the running version");
+        assert_eq!(std::fs::read(folder.join("Auri.old")).unwrap(), b"the running version");
         assert!(!fresh.exists());
         std::fs::remove_dir_all(&folder).unwrap();
     }

@@ -26,7 +26,7 @@ Baseline resource comparison between leading music solutions on Windows 11:
 +--------------------------+-------------------+----------------+------------+------------+
 | YouTube Music (Chrome)   | 450 MB - 850 MB   | 1.5% - 4.5%    | Active     | 8 - 14     |
 | Spotify Desktop          | 320 MB - 600 MB   | 1.0% - 3.0%    | Active     | 5 - 8      |
-| Tubefast (egui/Rust)     | 95 MB - 130 MB    | 0.5% - 1.2%    | Low/Active | 1          |
+| Baseline egui Music Player | 95 MB - 130 MB    | 0.5% - 1.2%    | Low/Active | 1          |
 | foobar2000 (Win32/C++)   | 18 MB - 30 MB     | 0.1% - 0.5%    | 0.0%       | 1          |
 +--------------------------+-------------------+----------------+------------+------------+
 | AURI (Normal Mode)       | < 75 MB           | < 0.8%         | < 0.5%     | 1          |

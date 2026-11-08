@@ -286,9 +286,9 @@ impl Media {
 async fn serve(press: impl Fn(Action) + 'static, updates: async_channel::Receiver<Update>) -> mpris_server::zbus::Result<()> {
     use mpris_server::{Player, Time};
 
-    let player = Player::builder(&format!("tubefast.instance{}", std::process::id()))
+    let player = Player::builder(&format!("auri.instance{}", std::process::id()))
         .identity(crate::APP_NAME)
-        .desktop_entry("tubefast")
+        .desktop_entry("auri")
         .can_play(true)
         .can_pause(true)
         .can_go_next(true)
@@ -336,7 +336,7 @@ async fn follow(player: &mpris_server::Player, track: &mut (String, u64), update
         *track = (id.to_owned(), update.duration_ms);
         let mut metadata = Metadata::new();
         if let Some(item) = &update.item {
-            let path = format!("/dev/tubefast/track/{}", item.video_id.replace('-', "_"));
+            let path = format!("/dev/auri/track/{}", item.video_id.replace('-', "_"));
             metadata.set_trackid(TrackId::try_from(path).ok());
             metadata.set_title(Some(&item.title));
             metadata.set_artist(Some([&item.subtitle]));

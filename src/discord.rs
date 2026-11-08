@@ -173,11 +173,12 @@ fn activity(item: &Item, cover: &str, headline: Headline, name: &str, started: u
         "state": line(artist(item)),
         "timestamps": { "start": started, "end": started + duration_ms },
     });
-    if let Some(name) = line(name) {
-        activity["name"] = json!(name);
-    }
+    let app_name = if name.is_empty() { "AURI" } else { name };
+    activity["name"] = json!(app_name);
     if cover.starts_with("https://") {
-        activity["assets"] = json!({ "large_image": ytm::sized(cover, COVER_SIDE) });
+        activity["assets"] = json!({ "large_image": ytm::sized(cover, COVER_SIDE), "large_text": "AURI" });
+    } else {
+        activity["assets"] = json!({ "large_text": "AURI" });
     }
     activity
 }
@@ -262,7 +263,7 @@ mod tests {
         let shown = activity(&lucky, cover, Headline::App, "", 1000, 248_000);
         assert_eq!(shown["type"], 2);
         assert_eq!(shown["status_display_type"], 0);
-        assert!(shown["name"].is_null());
+        assert_eq!(shown["name"], "AURI");
         assert_eq!(activity(&lucky, cover, Headline::Artist, "", 0, 1)["status_display_type"], 1);
         assert_eq!(activity(&lucky, cover, Headline::Song, "", 0, 1)["status_display_type"], 2);
         assert_eq!(shown["details"], "Get Lucky");
@@ -272,11 +273,12 @@ mod tests {
             shown["assets"]["large_image"],
             "https://lh3.googleusercontent.com/abc=w512-h512-l90-rj"
         );
+        assert_eq!(shown["assets"]["large_text"], "AURI");
 
         let video = activity(&song("7", "Video • Prince • 12M views", &["Prince"]), "", Headline::App, "", 0, 1);
         assert_eq!(video["details"], "7 ");
         assert_eq!(video["state"], "Prince");
-        assert!(video["assets"].is_null());
+        assert_eq!(video["assets"]["large_text"], "AURI");
 
         let unnamed = activity(&song(&"é😀".repeat(100), "", &[]), "", Headline::App, "", 0, 1);
         assert_eq!(unnamed["details"].as_str().unwrap().encode_utf16().count(), 127);
@@ -295,10 +297,10 @@ mod tests {
             .map(|shown| (shown["status_display_type"].clone(), shown["name"].clone()))
             .collect();
         let expected = [
-            (json!(0), Value::Null),
-            (json!(1), Value::Null),
+            (json!(0), json!("AURI")),
+            (json!(1), json!("AURI")),
             (json!(0), json!("mine")),
-            (json!(0), json!("m ")),
+            (json!(0), json!("m")),
         ];
         assert_eq!(sent, expected);
     }
