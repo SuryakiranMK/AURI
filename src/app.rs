@@ -391,6 +391,10 @@ pub struct Saved {
 
     #[serde(default = "default_true")]
     pub sidebar_open: bool,
+    #[serde(default = "default_false")]
+    pub queue_retractable: bool,
+    #[serde(default = "default_false")]
+    pub mini_capsule_retractable: bool,
 
     #[serde(default)]
     pub perf_profile: PerfProfile,
@@ -400,6 +404,12 @@ pub struct Saved {
     pub perf_art_cache_mb: usize,
     #[serde(default = "default_perf_tick_fps")]
     pub perf_tick_fps: u32,
+    #[serde(default)]
+    pub sync_github_token: String,
+    #[serde(default)]
+    pub sync_gist_id: String,
+    #[serde(default)]
+    pub sync_room_code: String,
 }
 
 fn default_true() -> bool {
@@ -556,10 +566,15 @@ impl Default for Saved {
             bar_grain: false,
             bar_grain_strength: 0.10,
             sidebar_open: true,
+            queue_retractable: false,
+            mini_capsule_retractable: false,
             perf_profile: PerfProfile::CompetitiveGaming,
             perf_audio_buffer_mb: 1.5,
             perf_art_cache_mb: 4,
             perf_tick_fps: 1,
+            sync_github_token: String::new(),
+            sync_gist_id: String::new(),
+            sync_room_code: String::new(),
         }
     }
 }
@@ -610,6 +625,8 @@ pub enum Action {
     Pin(Item),
     ToggleQueue,
     ToggleSidebar,
+    ToggleQueueRetractable,
+    ToggleMiniCapsuleRetractable,
     ToggleShuffle,
     CycleRepeat,
     OpenSignIn,
@@ -692,6 +709,11 @@ pub enum Action {
     ResetStorageDir,
     PurgeAudioCache,
     OpenCacheDir,
+    StartSyncHost(String),
+    StartSyncJoin(String),
+    StopSync,
+    SetSyncGithubToken(String),
+    SetSyncGistId(String),
 }
 
 enum Event {
@@ -713,6 +735,7 @@ enum Event {
     StorageDir(String),
     DownloadProgress { video_id: String, title: String, percent: f32 },
     DownloadDone { title: String, error: Option<String> },
+    SyncPacket(crate::sync::SyncPacket),
 }
 
 #[derive(Clone, Debug)]
@@ -770,6 +793,10 @@ pub struct App {
     pub creating_playlist: bool,
     pub download_queue: std::collections::VecDeque<Item>,
     pub download_active: Option<DownloadState>,
+    pub sync: Option<crate::sync::SyncSession>,
+    pub sync_mode: crate::sync::SyncMode,
+    pub sync_room: String,
+    pub sync_last_publish: Option<Instant>,
     restart: Option<PathBuf>,
 }
 
@@ -780,6 +807,7 @@ impl App {
             .storage
             .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY))
             .unwrap_or_default();
+        saved.queue_open = true;
         let yt = Arc::new(Client::new(saved.visitor.clone()));
         yt.set_session(auth::load());
         if !yt.signed_in() {
@@ -807,10 +835,10 @@ impl App {
         let discord = saved.discord.then(|| link_discord(&sender, &ctx));
         let mut app = Self {
             art: Art::new(ctx.clone(), yt.agent.clone()),
-            ctx,
+            ctx: ctx.clone(),
             yt,
             events,
-            sender,
+            sender: sender.clone(),
             radio_seed: String::new(),
             autoplay: query.clone().filter(|_| autoplay),
             home_parts: Vec::new(),
@@ -853,6 +881,16 @@ impl App {
             creating_playlist: false,
             download_queue: std::collections::VecDeque::new(),
             download_active: None,
+            sync: {
+                let (sync_sender, sync_ctx) = (sender.clone(), ctx.clone());
+                Some(crate::sync::SyncSession::new(move |pkt| {
+                    let _ = sync_sender.send(Event::SyncPacket(pkt));
+                    sync_ctx.request_repaint();
+                }))
+            },
+            sync_mode: crate::sync::SyncMode::Disconnected,
+            sync_room: String::new(),
+            sync_last_publish: None,
             restart: None,
         };
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
@@ -1395,6 +1433,32 @@ impl App {
                     self.start_next_download();
                     self.ctx.request_repaint();
                 }
+                Event::SyncPacket(pkt) => {
+                    if self.sync_mode == crate::sync::SyncMode::Guest {
+                        let current_id = self.saved.current.and_then(|c| self.saved.queue.get(c)).map(|it| it.video_id.clone());
+                        if current_id.as_deref() != Some(&pkt.video_id) && !pkt.video_id.is_empty() {
+                            let item = Item {
+                                video_id: pkt.video_id.clone(),
+                                title: pkt.title.clone(),
+                                subtitle: pkt.subtitle.clone(),
+                                ..Default::default()
+                            };
+                            self.apply(Action::Play(vec![item], 0));
+                        }
+                        if pkt.playing != self.playing() {
+                            self.apply(Action::Pause(!pkt.playing));
+                        }
+                        if pkt.playing {
+                            let now_ms = crate::sync::now_timestamp_ms();
+                            let drift = now_ms.saturating_sub(pkt.timestamp_ms);
+                            let target_pos = pkt.position_ms + drift;
+                            let cur_pos = self.player.position_ms();
+                            if (target_pos as i64 - cur_pos as i64).abs() > 2500 {
+                                self.player.seek(target_pos);
+                            }
+                        }
+                    }
+                }
             }
         }
         if self.yt.take_expired() {
@@ -1627,6 +1691,8 @@ impl App {
             Action::Pin(item) => toggle(&mut self.saved.pinned, item),
             Action::ToggleQueue => self.saved.queue_open ^= true,
             Action::ToggleSidebar => self.saved.sidebar_open ^= true,
+            Action::ToggleQueueRetractable => self.saved.queue_retractable ^= true,
+            Action::ToggleMiniCapsuleRetractable => self.saved.mini_capsule_retractable ^= true,
             Action::ToggleShuffle => {
                 self.saved.shuffle ^= true;
                 let upcoming = self.saved.current.map_or(0, |current| current + 1).min(self.saved.queue.len());
@@ -2077,6 +2143,37 @@ impl App {
                 let dir = crate::cache::get_cache_dir();
                 let _ = std::process::Command::new("explorer").arg(&dir).spawn();
             }
+            Action::StartSyncHost(room) => {
+                self.sync_mode = crate::sync::SyncMode::Host;
+                self.sync_room = room.clone();
+                self.saved.sync_room_code = room.clone();
+                let token = if self.saved.sync_github_token.is_empty() { None } else { Some(self.saved.sync_github_token.clone()) };
+                let gist = if self.saved.sync_gist_id.is_empty() { None } else { Some(self.saved.sync_gist_id.clone()) };
+                if let Some(s) = &self.sync {
+                    s.host(room, token, gist);
+                }
+                self.notify("🎧 Started Listen Together Session (Hosting)");
+            }
+            Action::StartSyncJoin(room) => {
+                self.sync_mode = crate::sync::SyncMode::Guest;
+                self.sync_room = room.clone();
+                self.saved.sync_room_code = room.clone();
+                let gist = if self.saved.sync_gist_id.is_empty() { None } else { Some(self.saved.sync_gist_id.clone()) };
+                if let Some(s) = &self.sync {
+                    s.join(room, gist);
+                }
+                self.notify("🎧 Joined Listen Together Session (Syncing)");
+            }
+            Action::StopSync => {
+                self.sync_mode = crate::sync::SyncMode::Disconnected;
+                self.sync_room.clear();
+                if let Some(s) = &self.sync {
+                    s.disconnect();
+                }
+                self.notify("Disconnected from Listen Together Session");
+            }
+            Action::SetSyncGithubToken(tok) => self.saved.sync_github_token = tok,
+            Action::SetSyncGistId(gist) => self.saved.sync_gist_id = gist,
         }
     }
 }
@@ -2105,6 +2202,29 @@ impl eframe::App for App {
             self.apply(Action::PurgeMemory);
             self.last_purge = Instant::now();
         }
+        if self.sync_mode == crate::sync::SyncMode::Host {
+            let should_pub = match self.sync_last_publish {
+                Some(last) => last.elapsed() > Duration::from_millis(1500),
+                None => true,
+            };
+            if should_pub {
+                self.sync_last_publish = Some(Instant::now());
+                if let Some(cur) = self.saved.current.and_then(|c| self.saved.queue.get(c)) {
+                    let pkt = crate::sync::SyncPacket {
+                        room: self.sync_room.clone(),
+                        video_id: cur.video_id.clone(),
+                        title: cur.title.clone(),
+                        subtitle: cur.subtitle.clone(),
+                        position_ms: self.player.position_ms(),
+                        playing: self.playing(),
+                        timestamp_ms: crate::sync::now_timestamp_ms(),
+                    };
+                    if let Some(s) = &self.sync {
+                        s.publish(pkt);
+                    }
+                }
+            }
+        }
         if !minimized && !self.saved.mini_mode && (size.x < WINDOW_MIN[0] - 1.0 || size.y < WINDOW_MIN[1] - 1.0) {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
         }
@@ -2129,7 +2249,8 @@ impl eframe::App for App {
         }
         self.look_up_covers();
         self.look_up_lyrics();
-        if self.playing() || self.player.loading() {
+        let minimized = self.ctx.input(|input| input.viewport().minimized == Some(true));
+        if !minimized && (self.playing() || self.player.loading()) {
             let tick = if self.saved.performance_mode {
                 Duration::from_millis(1000 / self.saved.perf_tick_fps.max(1) as u64)
             } else {

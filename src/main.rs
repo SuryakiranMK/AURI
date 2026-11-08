@@ -10,6 +10,7 @@ mod hotkeys;
 mod media;
 mod opus;
 mod player;
+mod sync;
 mod ui;
 mod update;
 mod ytm;

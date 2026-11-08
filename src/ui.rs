@@ -4,7 +4,7 @@ use crate::app::{
 use crate::art::Art;
 use crate::discord::Headline;
 use crate::hotkeys::{self, Command};
-use crate::ytm::{Item, Layout};
+use crate::ytm::{Item, Layout, QUICK_PICKS};
 use eframe::egui::ecolor::Hsva;
 use eframe::egui::epaint::{RectShape, Shadow};
 use eframe::egui::style::ScrollStyle;
@@ -30,7 +30,6 @@ const FLOATING: Color32 = rgb(0x181A24);
 
 const SIDEBAR_WIDTH: f32 = 244.0;
 const QUEUE_WIDTH: f32 = 336.0;
-const QUEUE_MIN_WINDOW: f32 = 1140.0;
 const BAR_HEIGHT: f32 = 84.0;
 const ACCOUNT_HEIGHT: f32 = 68.0;
 const UPDATE_HEIGHT: f32 = 50.0;
@@ -633,14 +632,13 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                 .frame(plain(PANEL))
                 .show(ctx, |ui| sidebar(app, ui, &mut out));
         }
-        let queue_fits = app.saved.queue_open && ctx.content_rect().width() >= QUEUE_MIN_WINDOW;
         if app.saved.queue_open {
             egui::SidePanel::right("queue")
                 .exact_width(QUEUE_WIDTH)
                 .resizable(false)
                 .show_separator_line(false)
                 .frame(plain(PANEL))
-                .show_animated(ctx, queue_fits, |ui| queue_panel(app, ui, &mut out));
+                .show(ctx, |ui| queue_panel(app, ui, &mut out));
         }
         egui::CentralPanel::default()
             .frame(plain(BASE))
@@ -666,7 +664,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                 });
         }
 
-        if !app.saved.queue_open {
+        if app.saved.queue_retractable && !app.saved.queue_open {
             let screen = ctx.content_rect();
             let tab_y = screen.center().y - 28.0;
             egui::Area::new(Id::new("queue-expand-tab"))
@@ -871,7 +869,12 @@ fn artwork(ui: &Ui, art: &Art, url: &str, rect: Rect, radius: f32) {
 }
 
 fn paint_shimmer_wave(painter: &egui::Painter, ctx: &egui::Context, rect: Rect, radius: f32) {
-    ctx.request_repaint_after(Duration::from_millis(33));
+    let minimized = ctx.input(|i| i.viewport().minimized == Some(true));
+    if minimized {
+        painter.rect_filled(rect, radius, RAISED);
+        return;
+    }
+    ctx.request_repaint_after(Duration::from_millis(50));
     let time = ctx.input(|i| i.time);
     painter.rect_filled(rect, radius, RAISED);
 
@@ -1309,7 +1312,7 @@ fn grid(ui: &mut Ui, count: usize, columns: usize, cell: Vec2, gap: Vec2, mut pa
 fn section_view(ui: &mut Ui, cx: &mut Cx, title: &str, layout: Layout, items: &[Item], id: Id, numbered: bool) {
     let width = ui.available_width();
     let (cards, card_width) = columns(width, CARD_MIN, CARD_GAP);
-    let (cells, _cell_width) = columns(width, COMPACT_MIN, 12.0);
+    let (cells, cell_width) = columns(width, COMPACT_MIN, 12.0);
     let visible = match layout {
         Layout::Cards => cards,
         Layout::Compact => cells * COMPACT_ROWS,
@@ -1338,24 +1341,32 @@ fn section_view(ui: &mut Ui, cx: &mut Cx, title: &str, layout: Layout, items: &[
             });
         }
         Layout::Compact => {
-            let pad_x = 10.0;
-            let pad_y = 10.0;
-            let inner_w = width - pad_x * 2.0;
-            let (inner_cells, inner_cell_width) = columns(inner_w, COMPACT_MIN, 12.0);
-            let rows = (shown + inner_cells.max(1) - 1) / inner_cells.max(1);
-            let total_h = rows as f32 * 64.0 + (rows.saturating_sub(1)) as f32 * 2.0 + pad_y * 2.0;
-            let (box_rect, _) = ui.allocate_exact_size(vec2(width, total_h), Sense::hover());
-            ui.painter().rect_filled(box_rect, 14.0, veil(0.04));
-            ui.painter().rect_stroke(box_rect, 14.0, Stroke::new(1.0_f32, veil(0.08)), StrokeKind::Inside);
-            let cell = vec2(inner_cell_width, 64.0);
-            let start = box_rect.min + vec2(pad_x, pad_y);
-            for index in 0..shown {
-                let col = index % inner_cells.max(1);
-                let row = index / inner_cells.max(1);
-                let x = start.x + col as f32 * (inner_cell_width + 12.0);
-                let y = start.y + row as f32 * (64.0 + 2.0);
-                let rect = Rect::from_min_size(pos2(x, y), cell);
-                compact(ui, cx, items, index, rect, id.with(index));
+            let is_quick_picks = title.eq_ignore_ascii_case("quick picks") || title == QUICK_PICKS;
+            if is_quick_picks {
+                let pad_x = 10.0;
+                let pad_y = 10.0;
+                let inner_w = width - pad_x * 2.0;
+                let (inner_cells, inner_cell_width) = columns(inner_w, COMPACT_MIN, 12.0);
+                let rows = (shown + inner_cells.max(1) - 1) / inner_cells.max(1);
+                let total_h = rows as f32 * 64.0 + (rows.saturating_sub(1)) as f32 * 2.0 + pad_y * 2.0;
+                let (box_rect, _) = ui.allocate_exact_size(vec2(width, total_h), Sense::hover());
+                ui.painter().rect_filled(box_rect, 14.0, veil(0.04));
+                ui.painter().rect_stroke(box_rect, 14.0, Stroke::new(1.0_f32, veil(0.08)), StrokeKind::Inside);
+                let cell = vec2(inner_cell_width, 64.0);
+                let start = box_rect.min + vec2(pad_x, pad_y);
+                for index in 0..shown {
+                    let col = index % inner_cells.max(1);
+                    let row = index / inner_cells.max(1);
+                    let x = start.x + col as f32 * (inner_cell_width + 12.0);
+                    let y = start.y + row as f32 * (64.0 + 2.0);
+                    let rect = Rect::from_min_size(pos2(x, y), cell);
+                    compact(ui, cx, items, index, rect, id.with(index));
+                }
+            } else {
+                let cell = vec2(cell_width, 64.0);
+                grid(ui, shown, cells, cell, vec2(12.0, 2.0), |ui, index, rect| {
+                    compact(ui, cx, items, index, rect, id.with(index))
+                });
             }
         }
         Layout::Tracks => {
@@ -1884,6 +1895,44 @@ fn topbar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     ui.painter().text(perf_rect.center(), Align2::CENTER_CENTER, label_text, medium(12.0), text_color);
     if perf_resp.clicked() {
         out.push(Action::TogglePerformanceMode);
+    }
+
+    // Listen Together / Sync Toggle
+    let sync_w = if app.sync_mode != crate::sync::SyncMode::Disconnected { 120.0 } else { 32.0 };
+    let sync_rect = Rect::from_min_size(
+        pos2(right_edge - discord_w - 8.0 - perf_w - 8.0 - sync_w, mid - 16.0),
+        vec2(sync_w, 32.0),
+    );
+    let sync_resp = ui.interact(sync_rect, Id::new("topbar-sync-together"), Sense::click());
+    let sync_hover = hover_of(ui, &sync_resp);
+    let (s_bg, s_stroke, s_color) = match app.sync_mode {
+        crate::sync::SyncMode::Disconnected => (
+            veil(0.04 + 0.03 * sync_hover),
+            veil(0.08 + 0.06 * sync_hover),
+            MUTED,
+        ),
+        crate::sync::SyncMode::Host | crate::sync::SyncMode::Guest => (
+            Color32::from_rgba_unmultiplied(16, 185, 129, 40),
+            Color32::from_rgb(16, 185, 129),
+            Color32::from_rgb(52, 211, 153),
+        ),
+    };
+    ui.painter().rect_filled(sync_rect, 16.0, s_bg);
+    ui.painter().rect_stroke(sync_rect, 16.0, Stroke::new(1.0_f32, s_stroke), StrokeKind::Inside);
+    if app.sync_mode != crate::sync::SyncMode::Disconnected {
+        let label = format!("🎧 Sync: {}", app.sync_room);
+        ui.painter().text(sync_rect.center(), Align2::CENTER_CENTER, label, medium(11.5), s_color);
+        describe(&sync_resp, "Listen Together Active (Click to disconnect or manage)");
+    } else {
+        ui.painter().text(sync_rect.center(), Align2::CENTER_CENTER, icon::HEADPHONES, solid(16.0), s_color);
+        describe(&sync_resp, "Listen Together / GitHub Sync (Click to host or join)");
+    }
+    if sync_resp.clicked() {
+        if app.sync_mode != crate::sync::SyncMode::Disconnected {
+            out.push(Action::StopSync);
+        } else {
+            out.push(Action::SetSettingsTab(SettingsTab::General));
+        }
     }
 
     ui.allocate_rect(bar, Sense::hover());
@@ -2791,6 +2840,15 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         if switch_row(ui, size, icon::PUSH_PIN, "Lock Mini Player Position (Disable Dragging)", app.saved.mini_locked) {
             out.push(Action::ToggleMiniLock);
         }
+        if app.saved.mini_variant == MiniVariant::CapsulePill {
+            if switch_row(ui, size, icon::ARROWS_IN_SIMPLE, "Retractable Orb Sub-Mode (Circle to Pill on Hover)", app.saved.mini_capsule_retractable) {
+                out.push(Action::ToggleMiniCapsuleRetractable);
+            }
+            let orb_desc = "Pill rests as a compact spinning vinyl circle; expands on hover and auto-retracts 5s after mouse leaves.";
+            let (orb_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 20.0), Sense::hover());
+            label(ui, pos2(orb_desc_row.left() + 46.0, orb_desc_row.center().y), Align2::LEFT_CENTER, orb_desc, sans(11.5), MUTED, size.x - 58.0);
+            ui.add_space(6.0);
+        }
         ui.add_space(8.0);
 
         // Launch Mini Mode Button
@@ -2908,6 +2966,15 @@ fn appearance_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         let q_desc = "Shows or hides the right side panel with upcoming tracks and current track artwork.";
         let (q_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 20.0), Sense::hover());
         label(ui, pos2(q_desc_row.left() + 46.0, q_desc_row.center().y), Align2::LEFT_CENTER, q_desc, sans(11.5), MUTED, size.x - 58.0);
+        ui.add_space(6.0);
+
+        // Retractable Queue Switch
+        if switch_row(ui, size, icon::CARET_LEFT, "Retractable Queue Mode (Off by default)", app.saved.queue_retractable) {
+            out.push(Action::ToggleQueueRetractable);
+        }
+        let qr_desc = "When enabled, provides header collapse button and right edge tab to retract or expand queue.";
+        let (qr_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 20.0), Sense::hover());
+        label(ui, pos2(qr_desc_row.left() + 46.0, qr_desc_row.center().y), Align2::LEFT_CENTER, qr_desc, sans(11.5), MUTED, size.x - 58.0);
     });
 }
 
@@ -2986,6 +3053,97 @@ fn player_bar_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             ui.painter().rect_filled(track, 2.0, veil(0.12));
             ui.painter().rect_filled(Rect::from_min_max(track.min, pos2(track.left() + track.width() * cur_frac, track.max.y)), 2.0, app.saved.theme_palette.color());
             ui.painter().circle_filled(pos2(track.left() + track.width() * cur_frac, track.center().y), 6.0, TEXT);
+        }
+    });
+}
+
+fn sync_together_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
+    let height = 2.0 * CARD_PAD + 4.0 * SETTING_ROW + 90.0;
+    section(ui, "Listen Together & GitHub Sync", height, |ui| {
+        let size = vec2(ui.available_width(), SETTING_ROW);
+
+        // Status row
+        let (row, _) = ui.allocate_exact_size(size, Sense::hover());
+        ui.painter().text(pos2(row.left() + 22.0, row.center().y), Align2::CENTER_CENTER, icon::HEADPHONES, glyph(17.0), MUTED);
+        label(ui, pos2(row.left() + 46.0, row.center().y - 9.0), Align2::LEFT_CENTER, "Session Status", medium(13.5), TEXT, size.x - 240.0);
+        let status_desc = match app.sync_mode {
+            crate::sync::SyncMode::Disconnected => "Disconnected (Host a room or join a friend's room code)".to_owned(),
+            crate::sync::SyncMode::Host => format!("Hosting Room: {} (Broadcasting playback)", app.sync_room),
+            crate::sync::SyncMode::Guest => format!("Syncing in Room: {} (Listening along with friend)", app.sync_room),
+        };
+        let status_tone = if app.sync_mode != crate::sync::SyncMode::Disconnected { Color32::from_rgb(16, 185, 129) } else { FAINT };
+        label(ui, pos2(row.left() + 46.0, row.center().y + 9.0), Align2::LEFT_CENTER, &status_desc, sans(12.0), status_tone, size.x - 240.0);
+
+        if app.sync_mode != crate::sync::SyncMode::Disconnected {
+            let disc_btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(100.0, 28.0));
+            let disc_resp = ui.interact(disc_btn, Id::new("sync-disconnect-btn"), Sense::click());
+            let disc_hover = hover_of(ui, &disc_resp);
+            ui.painter().rect_filled(disc_btn, 6.0, Color32::from_rgb(244, 63, 94).gamma_multiply(0.20 + 0.15 * disc_hover));
+            ui.painter().rect_stroke(disc_btn, 6.0, Stroke::new(1.0_f32, Color32::from_rgb(244, 63, 94)), StrokeKind::Inside);
+            ui.painter().text(disc_btn.center(), Align2::CENTER_CENTER, "Leave Room", medium(11.5), Color32::WHITE);
+            if disc_resp.clicked() {
+                out.push(Action::StopSync);
+            }
+        } else {
+            // Host button
+            let host_btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(100.0, 28.0));
+            let host_resp = ui.interact(host_btn, Id::new("sync-host-btn"), Sense::click());
+            let host_hover = hover_of(ui, &host_resp);
+            let pal_color = app.saved.theme_palette.color();
+            ui.painter().rect_filled(host_btn, 6.0, pal_color.gamma_multiply(0.20 + 0.15 * host_hover));
+            ui.painter().rect_stroke(host_btn, 6.0, Stroke::new(1.0_f32, pal_color), StrokeKind::Inside);
+            ui.painter().text(host_btn.center(), Align2::CENTER_CENTER, "Host Room", medium(11.5), TEXT);
+            if host_resp.clicked() {
+                let code = format!("AURI-{:04}", (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |e| e.as_millis()) % 10000));
+                out.push(Action::StartSyncHost(code));
+            }
+        }
+        ui.add_space(6.0);
+
+        // Join Room row
+        let (j_row, _) = ui.allocate_exact_size(size, Sense::hover());
+        ui.painter().text(pos2(j_row.left() + 22.0, j_row.center().y), Align2::CENTER_CENTER, icon::LINK, glyph(17.0), MUTED);
+        label(ui, pos2(j_row.left() + 46.0, j_row.center().y), Align2::LEFT_CENTER, "Join Friend's Room Code:", medium(13.5), TEXT, 180.0);
+        let input_rect = Rect::from_min_size(pos2(j_row.left() + 230.0, j_row.center().y - 14.0), vec2(size.x - 340.0, 28.0));
+        let join_id = Id::new("sync-join-input");
+        let mut join_code: String = ui.data(|d| d.get_temp(join_id)).unwrap_or_else(|| app.saved.sync_room_code.clone());
+        let input_resp = ui.put(input_rect, egui::TextEdit::singleline(&mut join_code).hint_text("Enter room code (e.g. AURI-1234)...").clip_text(false));
+        if input_resp.changed() {
+            ui.data_mut(|d| d.insert_temp(join_id, join_code.clone()));
+        }
+        let join_btn = Rect::from_min_size(pos2(j_row.right() - 100.0, j_row.center().y - 14.0), vec2(90.0, 28.0));
+        let join_resp = ui.interact(join_btn, Id::new("sync-join-btn"), Sense::click());
+        let join_hover = hover_of(ui, &join_resp);
+        ui.painter().rect_filled(join_btn, 6.0, veil(0.08 + 0.08 * join_hover));
+        ui.painter().rect_stroke(join_btn, 6.0, Stroke::new(1.0_f32, veil(0.18)), StrokeKind::Inside);
+        ui.painter().text(join_btn.center(), Align2::CENTER_CENTER, "Join", medium(11.5), TEXT);
+        if join_resp.clicked() && !join_code.trim().is_empty() {
+            out.push(Action::StartSyncJoin(join_code.trim().to_uppercase()));
+        }
+        ui.add_space(6.0);
+
+        // GitHub Gist Support row
+        let (gh_row, _) = ui.allocate_exact_size(size, Sense::hover());
+        ui.painter().text(pos2(gh_row.left() + 22.0, gh_row.center().y), Align2::CENTER_CENTER, icon::GITHUB_LOGO, glyph(17.0), MUTED);
+        label(ui, pos2(gh_row.left() + 46.0, gh_row.center().y - 9.0), Align2::LEFT_CENTER, "Optional GitHub Gist Sync", medium(13.5), TEXT, size.x - 360.0);
+        label(ui, pos2(gh_row.left() + 46.0, gh_row.center().y + 9.0), Align2::LEFT_CENTER, "Provide GitHub Token & Gist ID for private persistent GitHub synchronization", sans(11.0), MUTED, size.x - 360.0);
+
+        let tok_rect = Rect::from_min_size(pos2(gh_row.right() - 340.0, gh_row.center().y - 14.0), vec2(160.0, 28.0));
+        let tok_id_key = Id::new("sync-tok-id-input");
+        let mut tok_str = ui.data(|d| d.get_temp(tok_id_key)).unwrap_or_else(|| app.saved.sync_github_token.clone());
+        let t_resp = ui.put(tok_rect, egui::TextEdit::singleline(&mut tok_str).hint_text("GitHub Token (ghp_...)...").password(true).clip_text(false));
+        if t_resp.changed() {
+            ui.data_mut(|d| d.insert_temp(tok_id_key, tok_str.clone()));
+            out.push(Action::SetSyncGithubToken(tok_str));
+        }
+
+        let gist_rect = Rect::from_min_size(pos2(gh_row.right() - 170.0, gh_row.center().y - 14.0), vec2(165.0, 28.0));
+        let gist_id_key = Id::new("sync-gist-id-input");
+        let mut gist_str = ui.data(|d| d.get_temp(gist_id_key)).unwrap_or_else(|| app.saved.sync_gist_id.clone());
+        let g_resp = ui.put(gist_rect, egui::TextEdit::singleline(&mut gist_str).hint_text("Gist ID...").clip_text(false));
+        if g_resp.changed() {
+            ui.data_mut(|d| d.insert_temp(gist_id_key, gist_str.clone()));
+            out.push(Action::SetSyncGistId(gist_str));
         }
     });
 }
@@ -3152,6 +3310,7 @@ fn settings(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<Actio
     // Tab Content Routing
     match active_tab {
         SettingsTab::General => {
+            sync_together_section(ui, app, out);
             appearance_section(ui, app, out);
             player_bar_section(ui, app, out);
             storage_section(ui, app, out);
@@ -3684,9 +3843,11 @@ fn queue_panel(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
             ui.set_width(ui.available_width());
             let (q_head, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
             label(ui, pos2(q_head.left(), q_head.center().y), Align2::LEFT_CENTER, "NOW PLAYING", bold(11.0), FAINT, 120.0);
-            let col_resp = icon_button(ui, Rect::from_center_size(pos2(q_head.right() - 8.0, q_head.center().y), vec2(20.0, 20.0)), Id::new("queue-collapse-btn"), icon::CARET_RIGHT, solid(15.0), MUTED, "Collapse queue");
-            if col_resp.clicked() {
-                out.push(Action::ToggleQueue);
+            if app.saved.queue_retractable {
+                let col_resp = icon_button(ui, Rect::from_center_size(pos2(q_head.right() - 8.0, q_head.center().y), vec2(20.0, 20.0)), Id::new("queue-collapse-btn"), icon::CARET_RIGHT, solid(15.0), MUTED, "Collapse queue");
+                if col_resp.clicked() {
+                    out.push(Action::ToggleQueue);
+                }
             }
             ui.add_space(4.0);
 
@@ -4166,8 +4327,11 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     if app.saved.bar_layout == BarLayout::MiniCapsule {
         let pal_color = app.saved.theme_palette.color();
         let art_center = pos2(deck.left() + 28.0, mid);
-        let angle = if app.playing() {
-            ui.ctx().request_repaint_after(Duration::from_millis(16));
+        let angle = if app.playing() && !app.saved.performance_mode {
+            let minimized = ui.ctx().input(|i| i.viewport().minimized == Some(true));
+            if !minimized {
+                ui.ctx().request_repaint_after(Duration::from_millis(33));
+            }
             (ui.ctx().input(|i| i.time) * 1.5) as f32
         } else {
             0.0
@@ -4639,7 +4803,41 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
     egui::CentralPanel::default()
         .frame(Frame::new().fill(Color32::TRANSPARENT))
         .show(ctx, |ui| {
-            let (w, h) = app.saved.mini_variant.size(app.mini_queue_open);
+            let (mut w, h) = app.saved.mini_variant.size(app.mini_queue_open);
+            let mut is_retracted = false;
+
+            if app.saved.mini_variant == MiniVariant::CapsulePill && app.saved.mini_capsule_retractable {
+                let pointer_pos = ctx.input(|i| i.pointer.hover_pos());
+                let last_hover_id = Id::new("mini-capsule-last-hover-time");
+                let mut last_hover_time: f64 = ui.data(|d| d.get_temp(last_hover_id)).unwrap_or(0.0);
+                let now = ctx.input(|i| i.time);
+
+                let is_hovered = pointer_pos.map_or(false, |pos| ui.max_rect().expand(8.0).contains(pos));
+                if is_hovered {
+                    last_hover_time = now;
+                    ui.data_mut(|d| d.insert_temp(last_hover_id, last_hover_time));
+                }
+
+                let elapsed = now - last_hover_time;
+                let is_expanded = is_hovered || (elapsed < 5.0 && last_hover_time > 0.0);
+
+                if !is_hovered && elapsed < 5.0 && last_hover_time > 0.0 {
+                    let wait = (5.0 - elapsed).max(0.05);
+                    ctx.request_repaint_after(Duration::from_secs_f64(wait));
+                }
+
+                if !is_expanded {
+                    w = 56.0;
+                    is_retracted = true;
+                }
+
+                let prev_w: f32 = ui.data(|d| d.get_temp(Id::new("mini-prev-capsule-w"))).unwrap_or(320.0);
+                if (prev_w - w).abs() > 1.0 {
+                    ui.data_mut(|d| d.insert_temp(Id::new("mini-prev-capsule-w"), w));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(w, h)));
+                }
+            }
+
             let card_rect = Rect::from_min_size(ui.max_rect().min, vec2(w, h));
             let rounding = match app.saved.mini_variant {
                 MiniVariant::ClassicHud => 16.0,
@@ -4795,10 +4993,17 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                     }
                 }
                 MiniVariant::CapsulePill => {
-                    // 1. Left: Spinning vinyl circular album art
-                    let art_center = pos2(card_rect.left() + 28.0, card_rect.center().y);
-                    let angle = if app.playing() {
-                        ctx.request_repaint_after(Duration::from_millis(16));
+                    // 1. Spinning vinyl circular album art (centered if retracted, left if expanded)
+                    let art_center = if is_retracted {
+                        card_rect.center()
+                    } else {
+                        pos2(card_rect.left() + 28.0, card_rect.center().y)
+                    };
+                    let angle = if app.playing() && !app.saved.performance_mode {
+                        let minimized = ctx.input(|i| i.viewport().minimized == Some(true));
+                        if !minimized {
+                            ctx.request_repaint_after(Duration::from_millis(33));
+                        }
                         (ctx.input(|i| i.time) * 1.5) as f32
                     } else {
                         0.0
@@ -4806,66 +5011,68 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                     let cover = item.map_or("", |it| app.saved.covers.of(it));
                     rotating_circular_artwork(ui, &app.art, cover, art_center, 19.0, angle, pal_color);
 
-                    // 2. Compact Title & Artist
-                    let title_x = card_rect.left() + 54.0;
-                    let title_str = item.map_or("AURI", |it| it.title.as_str());
-                    let sub_str = item.map_or("Ready", |it| it.subtitle.as_str());
-                    label(ui, pos2(title_x, card_rect.center().y - 8.0), Align2::LEFT_CENTER, title_str, medium(11.5), TEXT, 75.0);
-                    label(ui, pos2(title_x, card_rect.center().y + 8.0), Align2::LEFT_CENTER, sub_str, sans(9.5), MUTED, 75.0);
+                    if !is_retracted {
+                        // 2. Compact Title & Artist
+                        let title_x = card_rect.left() + 54.0;
+                        let title_str = item.map_or("AURI", |it| it.title.as_str());
+                        let sub_str = item.map_or("Ready", |it| it.subtitle.as_str());
+                        label(ui, pos2(title_x, card_rect.center().y - 8.0), Align2::LEFT_CENTER, title_str, medium(11.5), TEXT, 75.0);
+                        label(ui, pos2(title_x, card_rect.center().y + 8.0), Align2::LEFT_CENTER, sub_str, sans(9.5), MUTED, 75.0);
 
-                    // 3. Centered 3 Transport Buttons
-                    let play_center = pos2(card_rect.center().x + 10.0, card_rect.center().y);
-                    let play_rect = Rect::from_center_size(play_center, vec2(26.0, 26.0));
-                    let play_resp = ui.interact(play_rect, Id::new("pill-play"), Sense::click());
-                    ui.painter().circle_filled(play_center, 12.0, if active { TEXT } else { veil(0.14) });
-                    let symbol = if app.playing() { icon::PAUSE } else { icon::PLAY };
-                    ui.painter().text(play_center, Align2::CENTER_CENTER, symbol, solid(13.0), if active { PANEL } else { FAINT });
-                    if play_resp.clicked() {
-                        out.push(Action::Toggle);
-                    }
+                        // 3. Centered 3 Transport Buttons
+                        let play_center = pos2(card_rect.center().x + 10.0, card_rect.center().y);
+                        let play_rect = Rect::from_center_size(play_center, vec2(26.0, 26.0));
+                        let play_resp = ui.interact(play_rect, Id::new("pill-play"), Sense::click());
+                        ui.painter().circle_filled(play_center, 12.0, if active { TEXT } else { veil(0.14) });
+                        let symbol = if app.playing() { icon::PAUSE } else { icon::PLAY };
+                        ui.painter().text(play_center, Align2::CENTER_CENTER, symbol, solid(13.0), if active { PANEL } else { FAINT });
+                        if play_resp.clicked() {
+                            out.push(Action::Toggle);
+                        }
 
-                    let prev_rect = Rect::from_center_size(pos2(play_center.x - 24.0, play_center.y), vec2(20.0, 20.0));
-                    if icon_button(ui, prev_rect, Id::new("pill-prev"), icon::SKIP_BACK, solid(12.0), if active { TEXT } else { FAINT }, "Previous").clicked() {
-                        out.push(Action::Previous);
-                    }
+                        let prev_rect = Rect::from_center_size(pos2(play_center.x - 24.0, play_center.y), vec2(20.0, 20.0));
+                        if icon_button(ui, prev_rect, Id::new("pill-prev"), icon::SKIP_BACK, solid(12.0), if active { TEXT } else { FAINT }, "Previous").clicked() {
+                            out.push(Action::Previous);
+                        }
 
-                    let next_rect = Rect::from_center_size(pos2(play_center.x + 24.0, play_center.y), vec2(20.0, 20.0));
-                    if icon_button(ui, next_rect, Id::new("pill-next"), icon::SKIP_FORWARD, solid(12.0), if active { TEXT } else { FAINT }, "Next").clicked() {
-                        out.push(Action::Next);
-                    }
+                        let next_rect = Rect::from_center_size(pos2(play_center.x + 24.0, play_center.y), vec2(20.0, 20.0));
+                        if icon_button(ui, next_rect, Id::new("pill-next"), icon::SKIP_FORWARD, solid(12.0), if active { TEXT } else { FAINT }, "Next").clicked() {
+                            out.push(Action::Next);
+                        }
 
-                    // 4. Volume Icon Button (Click to cycle, scroll to adjust)
-                    let vol_btn_rect = Rect::from_center_size(pos2(play_center.x + 50.0, play_center.y), vec2(20.0, 20.0));
-                    let vol_resp = icon_button(
-                        ui,
-                        vol_btn_rect,
-                        Id::new("pill-vol-btn"),
-                        icon::SPEAKER_HIGH,
-                        glyph(13.0),
-                        if app.saved.volume > 0.0 { pal_color } else { MUTED },
-                        &format!("Volume: {:.0}% (Click to cycle, scroll to adjust)", app.saved.volume * 100.0),
-                    );
-                    if vol_resp.clicked() {
-                        let next_vol = if app.saved.volume >= 0.99 { 0.35 } else if app.saved.volume >= 0.65 { 1.0 } else { 0.70 };
-                        out.push(Action::Volume(next_vol));
-                    }
-                    let scroll = ui.input(|i| i.raw_scroll_delta.y);
-                    if vol_resp.hovered() && scroll.abs() > 0.1 {
-                        let delta = if scroll > 0.0 { 0.05 } else { -0.05 };
-                        out.push(Action::Volume((app.saved.volume + delta).clamp(0.0, 1.0)));
-                    }
+                        // 4. Volume Icon Button (Click to cycle, scroll to adjust)
+                        let vol_btn_rect = Rect::from_center_size(pos2(play_center.x + 50.0, play_center.y), vec2(20.0, 20.0));
+                        let vol_resp = icon_button(
+                            ui,
+                            vol_btn_rect,
+                            Id::new("pill-vol-btn"),
+                            icon::SPEAKER_HIGH,
+                            glyph(13.0),
+                            if app.saved.volume > 0.0 { pal_color } else { MUTED },
+                            &format!("Volume: {:.0}% (Click to cycle, scroll to adjust)", app.saved.volume * 100.0),
+                        );
+                        if vol_resp.clicked() {
+                            let next_vol = if app.saved.volume >= 0.99 { 0.35 } else if app.saved.volume >= 0.65 { 1.0 } else { 0.70 };
+                            out.push(Action::Volume(next_vol));
+                        }
+                        let scroll = ui.input(|i| i.raw_scroll_delta.y);
+                        if vol_resp.hovered() && scroll.abs() > 0.1 {
+                            let delta = if scroll > 0.0 { 0.05 } else { -0.05 };
+                            out.push(Action::Volume((app.saved.volume + delta).clamp(0.0, 1.0)));
+                        }
 
-                    // 5. Far Right Utilities: Lock Pin & Restore
-                    let pin_rect = Rect::from_center_size(pos2(card_rect.right() - 36.0, card_rect.center().y), vec2(20.0, 20.0));
-                    let pin_tone = if is_locked { pal_color } else { MUTED };
-                    let pin_hint = if is_locked { "Mini Mode Position Locked (Click to unlock)" } else { "Lock Mini Mode Position (Restrict movement)" };
-                    if icon_button(ui, pin_rect, Id::new("pill-pin"), icon::PUSH_PIN, glyph(13.0), pin_tone, pin_hint).clicked() {
-                        out.push(Action::ToggleMiniLock);
-                    }
+                        // 5. Far Right Utilities: Lock Pin & Restore
+                        let pin_rect = Rect::from_center_size(pos2(card_rect.right() - 36.0, card_rect.center().y), vec2(20.0, 20.0));
+                        let pin_tone = if is_locked { pal_color } else { MUTED };
+                        let pin_hint = if is_locked { "Mini Mode Position Locked (Click to unlock)" } else { "Lock Mini Mode Position (Restrict movement)" };
+                        if icon_button(ui, pin_rect, Id::new("pill-pin"), icon::PUSH_PIN, glyph(13.0), pin_tone, pin_hint).clicked() {
+                            out.push(Action::ToggleMiniLock);
+                        }
 
-                    let restore_rect = Rect::from_center_size(pos2(card_rect.right() - 16.0, card_rect.center().y), vec2(20.0, 20.0));
-                    if icon_button(ui, restore_rect, Id::new("pill-restore"), icon::ARROWS_OUT_SIMPLE, glyph(13.0), MUTED, "Restore Normal Mode").clicked() {
-                        out.push(Action::ToggleMiniMode);
+                        let restore_rect = Rect::from_center_size(pos2(card_rect.right() - 16.0, card_rect.center().y), vec2(20.0, 20.0));
+                        if icon_button(ui, restore_rect, Id::new("pill-restore"), icon::ARROWS_OUT_SIMPLE, glyph(13.0), MUTED, "Restore Normal Mode").clicked() {
+                            out.push(Action::ToggleMiniMode);
+                        }
                     }
                     // No shuffle, repeat, queue, or bottom scrubber line
                 }

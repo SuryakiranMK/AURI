@@ -28,6 +28,8 @@ const ID_THUMB_NEXT: u32 = 103;
 static mut PREV_WNDPROC: Option<WNDPROC> = None;
 #[cfg(windows)]
 static THUMB_CALLBACK: std::sync::OnceLock<Box<dyn Fn(Action) + Send + Sync>> = std::sync::OnceLock::new();
+#[cfg(windows)]
+static MSG_TASKBAR_CREATED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
 #[cfg(windows)]
 unsafe extern "system" fn thumbbar_wndproc(
@@ -36,10 +38,14 @@ unsafe extern "system" fn thumbbar_wndproc(
     wparam: WPARAM,
     lparam: LPARAM,
 ) -> LRESULT {
+    let msg_created = MSG_TASKBAR_CREATED.load(std::sync::atomic::Ordering::Relaxed);
+    if msg != 0 && msg == msg_created {
+        // Taskbar button is created!
+    }
     if msg == WM_COMMAND {
         let notify = ((wparam.0 >> 16) & 0xFFFF) as u32;
         let id = (wparam.0 & 0xFFFF) as u32;
-        if notify == 0x1800 /* THBN_CLICKED */ {
+        if notify == 0x1800 /* THBN_CLICKED */ || notify == 0 {
             if let Some(cb) = THUMB_CALLBACK.get() {
                 match id {
                     ID_THUMB_PREV => cb(Action::Previous),
@@ -127,7 +133,16 @@ fn create_thumb_icon(kind: ThumbIconKind) -> HICON {
         }
     }
 
-    let mask = [0u8; 32];
+    let mut mask = [0xFFu8; 32];
+    for y in 0..16 {
+        for x in 0..16 {
+            if pixels[y * 16 + x] != 0 {
+                let byte_idx = y * 2 + (x / 8);
+                let bit_idx = 7 - (x % 8);
+                mask[byte_idx] &= !(1 << bit_idx);
+            }
+        }
+    }
     unsafe {
         let hbm_color = CreateBitmap(16, 16, 1, 32, Some(pixels.as_ptr() as *const _));
         let hbm_mask = CreateBitmap(16, 16, 1, 1, Some(mask.as_ptr() as *const _));
@@ -335,6 +350,10 @@ impl Media {
 
         let press_tb = press_arc.clone();
         let _ = THUMB_CALLBACK.set(Box::new(move |a| press_tb(a)));
+        let msg_created = unsafe {
+            windows::Win32::UI::WindowsAndMessaging::RegisterWindowMessageW(windows::core::w!("TaskbarButtonCreated"))
+        };
+        MSG_TASKBAR_CREATED.store(msg_created, std::sync::atomic::Ordering::Relaxed);
         unsafe {
             let old = SetWindowLongPtrW(hwnd, GWLP_WNDPROC, thumbbar_wndproc as *const () as isize);
             if old != 0 {
