@@ -255,15 +255,17 @@ pub enum BarLayout {
     #[default]
     Docked,
     FloatingPill,
+    MiniCapsule,
 }
 
 impl BarLayout {
-    pub const ALL: [BarLayout; 2] = [BarLayout::Docked, BarLayout::FloatingPill];
+    pub const ALL: [BarLayout; 3] = [BarLayout::Docked, BarLayout::FloatingPill, BarLayout::MiniCapsule];
 
     pub fn name(&self) -> &'static str {
         match self {
             BarLayout::Docked => "Docked Full-Width",
-            BarLayout::FloatingPill => "Floating Capsule Pill",
+            BarLayout::FloatingPill => "Floating Deck",
+            BarLayout::MiniCapsule => "Trim Mini Capsule",
         }
     }
 }
@@ -386,6 +388,9 @@ pub struct Saved {
     pub bar_grain: bool,
     #[serde(default = "default_bar_grain_strength")]
     pub bar_grain_strength: f32,
+
+    #[serde(default = "default_true")]
+    pub sidebar_open: bool,
 
     #[serde(default)]
     pub perf_profile: PerfProfile,
@@ -550,6 +555,7 @@ impl Default for Saved {
             bar_opacity: 0.95,
             bar_grain: false,
             bar_grain_strength: 0.10,
+            sidebar_open: true,
             perf_profile: PerfProfile::CompetitiveGaming,
             perf_audio_buffer_mb: 1.5,
             perf_art_cache_mb: 4,
@@ -603,6 +609,7 @@ pub enum Action {
     Share(Item),
     Pin(Item),
     ToggleQueue,
+    ToggleSidebar,
     ToggleShuffle,
     CycleRepeat,
     OpenSignIn,
@@ -702,6 +709,15 @@ enum Event {
     Discord(bool),
     Toast(String),
     StorageDir(String),
+    DownloadProgress { video_id: String, title: String, percent: f32 },
+    DownloadDone { title: String, error: Option<String> },
+}
+
+#[derive(Clone, Debug)]
+pub struct DownloadState {
+    pub video_id: String,
+    pub title: String,
+    pub percent: f32,
 }
 
 pub struct App {
@@ -750,6 +766,8 @@ pub struct App {
     pub mini_queue_open: bool,
     pub new_playlist_name: String,
     pub creating_playlist: bool,
+    pub download_queue: std::collections::VecDeque<Item>,
+    pub download_active: Option<DownloadState>,
     restart: Option<PathBuf>,
 }
 
@@ -831,6 +849,8 @@ impl App {
             mini_queue_open: false,
             new_playlist_name: String::new(),
             creating_playlist: false,
+            download_queue: std::collections::VecDeque::new(),
+            download_active: None,
             restart: None,
         };
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
@@ -880,6 +900,87 @@ impl App {
                 let _ = sender.send(event);
                 ctx.request_repaint();
             }
+        });
+    }
+
+    fn start_next_download(&mut self) {
+        if self.download_active.is_some() {
+            return;
+        }
+        let Some(item) = self.download_queue.pop_front() else {
+            return;
+        };
+        self.download_active = Some(DownloadState {
+            video_id: item.video_id.clone(),
+            title: item.title.clone(),
+            percent: 0.0,
+        });
+        let yt = self.yt.clone();
+        let dir = PathBuf::from(&self.saved.storage_dir).join("downloads");
+        let sender = self.sender.clone();
+        let ctx = self.ctx.clone();
+        let title = item.title.clone();
+        let artist = item.subtitle.clone();
+        let video_id = item.video_id.clone();
+
+        std::thread::spawn(move || {
+            let _ = std::fs::create_dir_all(&dir);
+            let run_dl = || -> Result<(), String> {
+                let stream = yt.stream(&video_id).map_err(|e| format!("Stream error: {e}"))?;
+                let ext = if stream.opus { "opus" } else { "m4a" };
+                let safe_name: String = format!("{} - {}", title, artist)
+                    .chars()
+                    .map(|c| match c {
+                        '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+                        _ => c,
+                    })
+                    .collect();
+                let safe_name = safe_name.trim();
+                let file_path = dir.join(format!("{}.{}", safe_name, ext));
+                let response = yt.agent.get(&stream.url).call().map_err(|e| format!("Network error: {e}"))?;
+                let total_bytes: u64 = response
+                    .header("Content-Length")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(0);
+                let mut reader = response.into_reader();
+                let mut file = std::fs::File::create(&file_path).map_err(|e| format!("File error: {e}"))?;
+
+                let mut buffer = [0u8; 32768];
+                let mut downloaded = 0u64;
+                let mut last_pct = 0.0f32;
+                loop {
+                    use std::io::Read;
+                    let n = reader.read(&mut buffer).map_err(|e| format!("Read error: {e}"))?;
+                    if n == 0 {
+                        break;
+                    }
+                    use std::io::Write;
+                    file.write_all(&buffer[..n]).map_err(|e| format!("Write error: {e}"))?;
+                    downloaded += n as u64;
+                    let pct = if total_bytes > 0 {
+                        (downloaded as f32 / total_bytes as f32).clamp(0.0, 1.0)
+                    } else {
+                        0.5
+                    };
+                    if (pct - last_pct).abs() >= 0.02 || pct >= 0.99 {
+                        last_pct = pct;
+                        let _ = sender.send(Event::DownloadProgress {
+                            video_id: video_id.clone(),
+                            title: title.clone(),
+                            percent: pct,
+                        });
+                        ctx.request_repaint();
+                    }
+                }
+                Ok(())
+            };
+
+            let err = run_dl().err();
+            let _ = sender.send(Event::DownloadDone {
+                title,
+                error: err,
+            });
+            ctx.request_repaint();
         });
     }
 
@@ -1272,6 +1373,26 @@ impl App {
                     self.saved.storage_dir = dir.clone();
                     self.notify(format!("Storage directory set to: {}", dir));
                 }
+                Event::DownloadProgress { video_id, title, percent } => {
+                    if let Some(active) = &mut self.download_active {
+                        if active.video_id == video_id {
+                            active.percent = percent;
+                        }
+                    } else {
+                        self.download_active = Some(DownloadState { video_id, title, percent });
+                    }
+                    self.ctx.request_repaint();
+                }
+                Event::DownloadDone { title, error } => {
+                    if let Some(err) = error {
+                        self.notify(format!("Download failed for '{}': {}", title, err));
+                    } else {
+                        self.notify(format!("Downloaded '{}'", title));
+                    }
+                    self.download_active = None;
+                    self.start_next_download();
+                    self.ctx.request_repaint();
+                }
             }
         }
         if self.yt.take_expired() {
@@ -1503,6 +1624,7 @@ impl App {
             }
             Action::Pin(item) => toggle(&mut self.saved.pinned, item),
             Action::ToggleQueue => self.saved.queue_open ^= true,
+            Action::ToggleSidebar => self.saved.sidebar_open ^= true,
             Action::ToggleShuffle => {
                 self.saved.shuffle ^= true;
                 let upcoming = self.saved.current.map_or(0, |current| current + 1).min(self.saved.queue.len());
@@ -1829,59 +1951,17 @@ impl App {
                 self.new_playlist_name.clear();
             }
             Action::DownloadSong(item) => {
-                let yt = self.yt.clone();
-                let dir = PathBuf::from(&self.saved.storage_dir).join("downloads");
-                let sender = self.sender.clone();
-                let ctx = self.ctx.clone();
-                let title = item.title.clone();
-                let artist = item.subtitle.clone();
-                let video_id = item.video_id.clone();
-                self.notify(format!("Downloading '{}'...", title));
-                std::thread::spawn(move || {
-                    let _ = std::fs::create_dir_all(&dir);
-                    match yt.stream(&video_id) {
-                        Ok(stream) => {
-                            let ext = if stream.opus { "opus" } else { "m4a" };
-                            let safe_name: String = format!("{} - {}", title, artist)
-                                .chars()
-                                .map(|c| match c {
-                                    '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-                                    _ => c,
-                                })
-                                .collect();
-                            let safe_name = safe_name.trim();
-                            let file_path = dir.join(format!("{}.{}", safe_name, ext));
-                            match yt.agent.get(&stream.url).call() {
-                                Ok(response) => {
-                                    let mut reader = response.into_reader();
-                                    match std::fs::File::create(&file_path) {
-                                        Ok(mut file) => {
-                                            if std::io::copy(&mut reader, &mut file).is_ok() {
-                                                let _ = sender.send(Event::Toast(format!("Saved: {}.{}", safe_name, ext)));
-                                                ctx.request_repaint();
-                                            } else {
-                                                let _ = sender.send(Event::Toast("Download write error".into()));
-                                                ctx.request_repaint();
-                                            }
-                                        }
-                                        Err(e) => {
-                                            let _ = sender.send(Event::Toast(format!("File error: {}", e)));
-                                            ctx.request_repaint();
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = sender.send(Event::Toast(format!("Download failed: {}", e)));
-                                    ctx.request_repaint();
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            let _ = sender.send(Event::Toast(format!("Stream error: {}", e)));
-                            ctx.request_repaint();
-                        }
+                let already_queued = self.download_active.as_ref().map_or(false, |a| a.video_id == item.video_id)
+                    || self.download_queue.iter().any(|it| it.video_id == item.video_id);
+                if !already_queued {
+                    let title = item.title.clone();
+                    self.download_queue.push_back(item);
+                    if self.download_active.is_none() {
+                        self.start_next_download();
+                    } else {
+                        self.notify(format!("Added to download queue: '{}'", title));
                     }
-                });
+                }
             }
             Action::SetMiniBackground(bg) => {
                 self.saved.mini_bg = bg;
@@ -2207,9 +2287,14 @@ mod tests {
 
     #[test]
     fn test_bar_layout_and_mini_sizes() {
-        assert_eq!(BarLayout::ALL.len(), 2);
+        assert_eq!(BarLayout::ALL.len(), 3);
         assert_eq!(BarLayout::Docked.name(), "Docked Full-Width");
-        assert_eq!(BarLayout::FloatingPill.name(), "Floating Capsule Pill");
+        assert_eq!(BarLayout::FloatingPill.name(), "Floating Deck");
+        assert_eq!(BarLayout::MiniCapsule.name(), "Trim Mini Capsule");
+
+        let saved = Saved::default();
+        assert!(saved.sidebar_open);
+        assert!(saved.queue_open);
 
         let (cw, ch) = MiniVariant::ClassicHud.size(false);
         assert_eq!((cw, ch), (384.0, 108.0));

@@ -607,10 +607,15 @@ impl TitleBar {
 pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
     let mut out = Vec::new();
     let plain = |fill: Color32| Frame::new().fill(fill);
+    let bar_frame = if app.saved.bar_glass || app.saved.bar_layout != BarLayout::Docked {
+        Frame::new().fill(Color32::TRANSPARENT)
+    } else {
+        plain(PANEL)
+    };
     let scrub = egui::TopBottomPanel::bottom("player")
         .exact_height(BAR_HEIGHT)
         .show_separator_line(false)
-        .frame(plain(PANEL))
+        .frame(bar_frame)
         .show(ctx, |ui| player_bar(app, ui, &mut out))
         .inner;
     let mut frame = PANEL;
@@ -620,22 +625,66 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
             .show(ctx, |ui| now_playing(app, ui, &mut out))
             .inner;
     } else {
-        egui::SidePanel::left("sidebar")
-            .exact_width(SIDEBAR_WIDTH)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(plain(PANEL))
-            .show(ctx, |ui| sidebar(app, ui, &mut out));
+        if app.saved.sidebar_open {
+            egui::SidePanel::left("sidebar")
+                .exact_width(SIDEBAR_WIDTH)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(plain(PANEL))
+                .show(ctx, |ui| sidebar(app, ui, &mut out));
+        }
         let queue_fits = app.saved.queue_open && ctx.content_rect().width() >= QUEUE_MIN_WINDOW;
-        egui::SidePanel::right("queue")
-            .exact_width(QUEUE_WIDTH)
-            .resizable(false)
-            .show_separator_line(false)
-            .frame(plain(PANEL))
-            .show_animated(ctx, queue_fits, |ui| queue_panel(app, ui, &mut out));
+        if app.saved.queue_open {
+            egui::SidePanel::right("queue")
+                .exact_width(QUEUE_WIDTH)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(plain(PANEL))
+                .show_animated(ctx, queue_fits, |ui| queue_panel(app, ui, &mut out));
+        }
         egui::CentralPanel::default()
             .frame(plain(BASE))
             .show(ctx, |ui| content(app, ui, &mut out));
+
+        if !app.saved.sidebar_open {
+            let screen = ctx.content_rect();
+            let tab_y = screen.center().y - 28.0;
+            egui::Area::new(Id::new("sidebar-expand-tab"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(pos2(0.0, tab_y))
+                .show(ctx, |ui| {
+                    let (tab_rect, resp) = ui.allocate_exact_size(vec2(22.0, 56.0), Sense::click());
+                    let hover = hover_of(ui, &resp);
+                    let pal_color = app.saved.theme_palette.color();
+                    ui.painter().rect_filled(tab_rect, 8.0, veil(0.12 + 0.10 * hover));
+                    ui.painter().rect_stroke(tab_rect, 8.0, Stroke::new(1.0_f32, veil(0.18 + 0.12 * hover)), StrokeKind::Inside);
+                    ui.painter().text(tab_rect.center(), Align2::CENTER_CENTER, icon::CARET_RIGHT, solid(15.0), if hover > 0.1 { pal_color } else { MUTED });
+                    describe(&resp, "Expand navigation sidebar");
+                    if resp.clicked() {
+                        out.push(Action::ToggleSidebar);
+                    }
+                });
+        }
+
+        if !app.saved.queue_open {
+            let screen = ctx.content_rect();
+            let tab_y = screen.center().y - 28.0;
+            egui::Area::new(Id::new("queue-expand-tab"))
+                .order(egui::Order::Foreground)
+                .fixed_pos(pos2(screen.right() - 22.0, tab_y))
+                .show(ctx, |ui| {
+                    let (tab_rect, resp) = ui.allocate_exact_size(vec2(22.0, 56.0), Sense::click());
+                    let hover = hover_of(ui, &resp);
+                    let pal_color = app.saved.theme_palette.color();
+                    ui.painter().rect_filled(tab_rect, 8.0, veil(0.12 + 0.10 * hover));
+                    ui.painter().rect_stroke(tab_rect, 8.0, Stroke::new(1.0_f32, veil(0.18 + 0.12 * hover)), StrokeKind::Inside);
+                    ui.painter().text(tab_rect.center(), Align2::CENTER_CENTER, icon::CARET_LEFT, solid(15.0), if hover > 0.1 { pal_color } else { MUTED });
+                    describe(&resp, "Expand song queue");
+                    if resp.clicked() {
+                        out.push(Action::ToggleQueue);
+                    }
+                });
+        }
     }
     app.title_bar.paint(frame);
     paint_scrubber(ctx, &scrub);
@@ -1260,7 +1309,7 @@ fn grid(ui: &mut Ui, count: usize, columns: usize, cell: Vec2, gap: Vec2, mut pa
 fn section_view(ui: &mut Ui, cx: &mut Cx, title: &str, layout: Layout, items: &[Item], id: Id, numbered: bool) {
     let width = ui.available_width();
     let (cards, card_width) = columns(width, CARD_MIN, CARD_GAP);
-    let (cells, cell_width) = columns(width, COMPACT_MIN, 12.0);
+    let (cells, _cell_width) = columns(width, COMPACT_MIN, 12.0);
     let visible = match layout {
         Layout::Cards => cards,
         Layout::Compact => cells * COMPACT_ROWS,
@@ -1289,10 +1338,25 @@ fn section_view(ui: &mut Ui, cx: &mut Cx, title: &str, layout: Layout, items: &[
             });
         }
         Layout::Compact => {
-            let cell = vec2(cell_width, 64.0);
-            grid(ui, shown, cells, cell, vec2(12.0, 2.0), |ui, index, rect| {
-                compact(ui, cx, items, index, rect, id.with(index))
-            });
+            let pad_x = 10.0;
+            let pad_y = 10.0;
+            let inner_w = width - pad_x * 2.0;
+            let (inner_cells, inner_cell_width) = columns(inner_w, COMPACT_MIN, 12.0);
+            let rows = (shown + inner_cells.max(1) - 1) / inner_cells.max(1);
+            let total_h = rows as f32 * 64.0 + (rows.saturating_sub(1)) as f32 * 2.0 + pad_y * 2.0;
+            let (box_rect, _) = ui.allocate_exact_size(vec2(width, total_h), Sense::hover());
+            ui.painter().rect_filled(box_rect, 14.0, veil(0.04));
+            ui.painter().rect_stroke(box_rect, 14.0, Stroke::new(1.0_f32, veil(0.08)), StrokeKind::Inside);
+            let cell = vec2(inner_cell_width, 64.0);
+            let start = box_rect.min + vec2(pad_x, pad_y);
+            for index in 0..shown {
+                let col = index % inner_cells.max(1);
+                let row = index / inner_cells.max(1);
+                let x = start.x + col as f32 * (inner_cell_width + 12.0);
+                let y = start.y + row as f32 * (64.0 + 2.0);
+                let rect = Rect::from_min_size(pos2(x, y), cell);
+                compact(ui, cx, items, index, rect, id.with(index));
+            }
         }
         Layout::Tracks => {
             for index in 0..shown {
@@ -1773,20 +1837,20 @@ fn topbar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let discord_on = app.saved.discord;
     let (d_bg, d_stroke, d_color) = if discord_on {
         (
-            Color32::from_rgba_unmultiplied(88, 101, 242, 38),
             Color32::from_rgb(88, 101, 242),
-            Color32::from_rgb(88, 101, 242),
+            Color32::from_rgb(121, 133, 246),
+            Color32::WHITE,
         )
     } else {
         (
-            veil(0.04 + 0.03 * discord_hover),
-            veil(0.08 + 0.06 * discord_hover),
-            MUTED,
+            veil(0.06 + 0.05 * discord_hover),
+            veil(0.18 + 0.12 * discord_hover),
+            TEXT,
         )
     };
     ui.painter().rect_filled(discord_rect, 16.0, d_bg);
-    ui.painter().rect_stroke(discord_rect, 16.0, Stroke::new(1.0_f32, d_stroke), StrokeKind::Inside);
-    ui.painter().text(discord_rect.center(), Align2::CENTER_CENTER, icon::DISCORD_LOGO, glyph(17.0), d_color);
+    ui.painter().rect_stroke(discord_rect, 16.0, Stroke::new(1.2_f32, d_stroke), StrokeKind::Inside);
+    ui.painter().text(discord_rect.center(), Align2::CENTER_CENTER, icon::DISCORD_LOGO, solid(18.0), d_color);
     describe(&discord_resp, if discord_on { "Discord Presence Active (Click to disable)" } else { "Discord Presence Disabled (Click to enable)" });
     if discord_resp.clicked() {
         out.push(Action::ShowOnDiscord(!discord_on));
@@ -2447,16 +2511,16 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
                     ui.painter().text(pos2(mini_rect.right() - 52.0, mini_rect.top() + 14.0), Align2::CENTER_CENTER, icon::LIST, glyph(13.0), MUTED);
                 }
 
-                // Far right vertical volume slider (Moved a bit left)
+                // Far right vertical volume slider (Moved down and left)
                 if app.saved.mini_show_volume {
-                    let v_track = Rect::from_min_max(pos2(mini_rect.right() - 20.0, mini_rect.top() + 20.0), pos2(mini_rect.right() - 17.0, mini_rect.top() + 70.0));
+                    let v_track = Rect::from_min_max(pos2(mini_rect.right() - 20.0, mini_rect.top() + 32.0), pos2(mini_rect.right() - 17.0, mini_rect.top() + 78.0));
                     ui.painter().rect_filled(v_track, 1.5, veil(0.10));
                     let v_fill = Rect::from_min_max(pos2(v_track.left(), v_track.bottom() - v_track.height() * app.saved.volume), v_track.max);
                     ui.painter().rect_filled(v_fill, 1.5, pal_color);
                 }
 
-                // Bottom Edge Progression Line (Moved a bit up, with thumb knob & timestamps)
-                let p_scrub = Rect::from_min_size(pos2(mini_rect.left() + 12.0, mini_rect.top() + 72.0), vec2(mini_rect.width() - 44.0, 3.5));
+                // Bottom Edge Progression Line (Moved down, with thumb knob & timestamps)
+                let p_scrub = Rect::from_min_size(pos2(mini_rect.left() + 12.0, mini_rect.top() + 80.0), vec2(mini_rect.width() - 44.0, 3.5));
                 ui.painter().rect_filled(p_scrub, 1.75, veil(0.12));
                 let fill_w = p_scrub.width() * 0.45;
                 ui.painter().rect_filled(Rect::from_min_size(p_scrub.min, vec2(fill_w, 3.5)), 1.75, pal_color);
@@ -2748,7 +2812,7 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn appearance_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let height = 2.0 * CARD_PAD + 4.0 * SETTING_ROW + 140.0;
+    let height = 2.0 * CARD_PAD + 6.0 * SETTING_ROW + 180.0;
     section(ui, "Appearance & Theming (Normal Mode)", height, |ui| {
         let size = vec2(ui.available_width(), SETTING_ROW);
 
@@ -2826,6 +2890,24 @@ fn appearance_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         let sel_desc = "Adds a luminous accent border and soft aura around active navigation tabs and selections.";
         let (sel_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 20.0), Sense::hover());
         label(ui, pos2(sel_desc_row.left() + 46.0, sel_desc_row.center().y), Align2::LEFT_CENTER, sel_desc, sans(11.5), MUTED, size.x - 58.0);
+        ui.add_space(6.0);
+
+        // Sidebar Switch
+        if switch_row(ui, size, icon::SIDEBAR, "Navigation Sidebar", app.saved.sidebar_open) {
+            out.push(Action::ToggleSidebar);
+        }
+        let sb_desc = "Shows or hides the left navigation panel with your playlists, home, and library.";
+        let (sb_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 20.0), Sense::hover());
+        label(ui, pos2(sb_desc_row.left() + 46.0, sb_desc_row.center().y), Align2::LEFT_CENTER, sb_desc, sans(11.5), MUTED, size.x - 58.0);
+        ui.add_space(6.0);
+
+        // Queue Switch
+        if switch_row(ui, size, icon::LIST, "Song Queue Sidebar", app.saved.queue_open) {
+            out.push(Action::ToggleQueue);
+        }
+        let q_desc = "Shows or hides the right side panel with upcoming tracks and current track artwork.";
+        let (q_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 20.0), Sense::hover());
+        label(ui, pos2(q_desc_row.left() + 46.0, q_desc_row.center().y), Align2::LEFT_CENTER, q_desc, sans(11.5), MUTED, size.x - 58.0);
     });
 }
 
@@ -2837,7 +2919,8 @@ fn player_bar_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         // Bar Layout Selector: Docked vs Floating Capsule Pill
         eyebrow(ui, "Deck Structure & Layout", 0.0);
         let (layout_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
-        let pill_w = (size.x - 5.0) / 2.0;
+        let count = BarLayout::ALL.len() as f32;
+        let pill_w = (size.x - 5.0 * (count - 1.0)) / count;
         for (i, &layout) in BarLayout::ALL.iter().enumerate() {
             let active = app.saved.bar_layout == layout;
             let slot = Rect::from_min_size(
@@ -3139,6 +3222,16 @@ fn sidebar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let banner_rect = Rect::from_min_size(pos2(brand.left() + 2.0, brand.center().y - 40.0), vec2(240.0, 80.0));
     ui.painter().image(texture.id(), banner_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
 
+    let col_btn_rect = Rect::from_center_size(pos2(brand.right() - 22.0, brand.center().y), vec2(26.0, 26.0));
+    let col_resp = ui.interact(col_btn_rect, Id::new("sidebar-collapse-btn"), Sense::click());
+    let col_hover = hover_of(ui, &col_resp);
+    ui.painter().rect_filled(col_btn_rect, 6.0, veil(0.04 + 0.06 * col_hover));
+    ui.painter().text(col_btn_rect.center(), Align2::CENTER_CENTER, icon::CARET_LEFT, solid(16.0), if col_hover > 0.1 { TEXT } else { MUTED });
+    describe(&col_resp, "Collapse sidebar");
+    if col_resp.clicked() {
+        out.push(Action::ToggleSidebar);
+    }
+
     let count = |items: &[Item]| if items.is_empty() { String::new() } else { items.len().to_string() };
     let links = [
         (icon::HOUSE, "Home", Route::Home, String::new()),
@@ -3207,7 +3300,38 @@ fn sidebar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
 
     let foot = Rect::from_min_max(pos2(area.left(), area.bottom() - ACCOUNT_HEIGHT), area.max);
     account(app, ui, foot, out);
-    let lift = if app.update.is_some() { UPDATE_HEIGHT } else { 0.0 };
+
+    let dl_box_h = 46.0;
+    let dl_lift = if app.download_active.is_some() { dl_box_h + 8.0 } else { 0.0 };
+    if let Some(active) = &app.download_active {
+        let dl_rect = Rect::from_min_size(
+            pos2(area.left() + 10.0, foot.top() - dl_box_h - 4.0),
+            vec2(area.width() - 20.0, dl_box_h),
+        );
+        let pal_color = app.saved.theme_palette.color();
+        ui.painter().rect_filled(dl_rect, 8.0, veil(0.06));
+        ui.painter().rect_stroke(dl_rect, 8.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.35)), StrokeKind::Inside);
+
+        let icon_pos = pos2(dl_rect.left() + 18.0, dl_rect.top() + 16.0);
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(30));
+        ui.painter().text(icon_pos, Align2::CENTER_CENTER, icon::ARROW_DOWN, solid(14.0), pal_color);
+
+        let pct_str = format!("{:.0}%", active.percent * 100.0);
+        label(ui, pos2(dl_rect.left() + 34.0, dl_rect.top() + 16.0), Align2::LEFT_CENTER, &active.title, medium(12.0), TEXT, dl_rect.width() - 86.0);
+        label(ui, pos2(dl_rect.right() - 10.0, dl_rect.top() + 16.0), Align2::RIGHT_CENTER, &pct_str, sans(11.5), pal_color, 45.0);
+
+        let p_track = Rect::from_min_size(pos2(dl_rect.left() + 12.0, dl_rect.bottom() - 10.0), vec2(dl_rect.width() - 24.0, 3.5));
+        ui.painter().rect_filled(p_track, 1.75, veil(0.12));
+        let fill_w = p_track.width() * active.percent.clamp(0.0, 1.0);
+        if fill_w > 0.0 {
+            ui.painter().rect_filled(Rect::from_min_size(p_track.min, vec2(fill_w, 3.5)), 1.75, pal_color);
+            let knob_x = p_track.left() + fill_w;
+            ui.painter().circle_filled(pos2(knob_x, p_track.center().y), 3.5, pal_color);
+            ui.painter().circle_filled(pos2(knob_x, p_track.center().y), 1.5, Color32::WHITE);
+        }
+    }
+
+    let lift = dl_lift + if app.update.is_some() { UPDATE_HEIGHT } else { 0.0 };
     let offer = Rect::from_min_max(pos2(area.left(), foot.top() - lift), foot.right_top());
     update_offer(app, ui, offer, out);
 
@@ -3527,6 +3651,14 @@ fn queue_panel(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
     egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
         Frame::new().inner_margin(Margin::same(20)).show(ui, |ui| {
             ui.set_width(ui.available_width());
+            let (q_head, _) = ui.allocate_exact_size(vec2(ui.available_width(), 24.0), Sense::hover());
+            label(ui, pos2(q_head.left(), q_head.center().y), Align2::LEFT_CENTER, "NOW PLAYING", bold(11.0), FAINT, 120.0);
+            let col_resp = icon_button(ui, Rect::from_center_size(pos2(q_head.right() - 8.0, q_head.center().y), vec2(20.0, 20.0)), Id::new("queue-collapse-btn"), icon::CARET_RIGHT, solid(15.0), MUTED, "Collapse queue");
+            if col_resp.clicked() {
+                out.push(Action::ToggleQueue);
+            }
+            ui.add_space(4.0);
+
             let Some(item) = app.now_playing() else {
                 message(
                     ui,
@@ -3536,7 +3668,6 @@ fn queue_panel(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
                 );
                 return;
             };
-            eyebrow(ui, "Now playing", 0.0);
             let (head, cover) = ui.allocate_exact_size(vec2(ui.available_width(), QUEUE_ART), Sense::click());
             let art = Rect::from_min_size(head.min, Vec2::splat(QUEUE_ART));
             artwork(ui, &app.art, app.saved.covers.of(item), art, ART_RADIUS);
@@ -3872,6 +4003,12 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
             let pill_rect = Rect::from_center_size(pos2(bar.center().x, bar.center().y - 2.0), vec2(pill_w, pill_h));
             (pill_rect, 26.0)
         }
+        BarLayout::MiniCapsule => {
+            let pill_w = 460.0_f32.min(bar.width() - 24.0);
+            let pill_h = 56.0_f32;
+            let pill_rect = Rect::from_center_size(pos2(bar.center().x, bar.center().y - 2.0), vec2(pill_w, pill_h));
+            (pill_rect, 28.0)
+        }
     };
     let mid = deck.center().y + 2.0;
     let duration = app.player.duration_ms();
@@ -3893,7 +4030,7 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         let glow = mood(ui, "bar-glow", Some(tint), PANEL, 0.16 * opacity);
         ui.painter().rect_filled(deck, rounding, glow);
     }
-    if app.saved.bar_layout == BarLayout::FloatingPill {
+    if app.saved.bar_layout == BarLayout::FloatingPill || app.saved.bar_layout == BarLayout::MiniCapsule {
         ui.painter().rect_stroke(
             deck,
             rounding,
@@ -3903,6 +4040,99 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     }
     if app.saved.bar_grain {
         paint_glass_grain(ui.painter(), deck, app.saved.bar_grain_strength);
+    }
+
+    if app.saved.bar_layout == BarLayout::MiniCapsule {
+        let pal_color = app.saved.theme_palette.color();
+        let art_center = pos2(deck.left() + 28.0, mid);
+        let angle = if app.playing() {
+            ui.ctx().request_repaint_after(Duration::from_millis(16));
+            (ui.ctx().input(|i| i.time) * 1.5) as f32
+        } else {
+            0.0
+        };
+        let cover_str = item.map_or("", |it| app.saved.covers.of(it));
+        rotating_circular_artwork(ui, &app.art, cover_str, art_center, 18.0, angle, pal_color);
+
+        let title_x = deck.left() + 54.0;
+        let title_w = (deck.center().x - 70.0 - title_x).max(60.0);
+        let title_str = item.map_or("AURI", |it| it.title.as_str());
+        let sub_str = item.map_or("Ready", |it| it.subtitle.as_str());
+        label(ui, pos2(title_x, mid - 8.0), Align2::LEFT_CENTER, title_str, medium(12.0), TEXT, title_w);
+        label(ui, pos2(title_x, mid + 8.0), Align2::LEFT_CENTER, sub_str, sans(10.0), MUTED, title_w);
+
+        let play_center = pos2(deck.center().x + 20.0, mid);
+        let play_rect = Rect::from_center_size(play_center, vec2(30.0, 30.0));
+        let play_resp = ui.interact(play_rect, Id::new("capsule-bar-play"), Sense::click());
+        let active = item.is_some();
+        ui.painter().circle_filled(play_center, 14.0, if active { TEXT } else { veil(0.14) });
+        let symbol = if app.playing() { icon::PAUSE } else { icon::PLAY };
+        ui.painter().text(play_center, Align2::CENTER_CENTER, symbol, solid(14.0), if active { PANEL } else { FAINT });
+        if play_resp.clicked() {
+            out.push(Action::Toggle);
+        }
+
+        let prev_rect = Rect::from_center_size(pos2(play_center.x - 30.0, mid), vec2(24.0, 24.0));
+        if icon_button(ui, prev_rect, Id::new("capsule-bar-prev"), icon::SKIP_BACK, solid(13.0), if active { TEXT } else { FAINT }, "Previous").clicked() {
+            out.push(Action::Previous);
+        }
+
+        let next_rect = Rect::from_center_size(pos2(play_center.x + 30.0, mid), vec2(24.0, 24.0));
+        if icon_button(ui, next_rect, Id::new("capsule-bar-next"), icon::SKIP_FORWARD, solid(13.0), if active { TEXT } else { FAINT }, "Next").clicked() {
+            out.push(Action::Next);
+        }
+
+        let vol_rect = Rect::from_center_size(pos2(deck.right() - 56.0, mid), vec2(24.0, 24.0));
+        let vol_resp = icon_button(
+            ui,
+            vol_rect,
+            Id::new("capsule-bar-vol"),
+            if app.saved.volume <= 0.001 { icon::SPEAKER_SIMPLE_SLASH } else { icon::SPEAKER_HIGH },
+            glyph(14.0),
+            MUTED,
+            &format!("Volume: {:.0}% (Scroll to adjust)", app.saved.volume * 100.0),
+        );
+        let scroll_delta = ui.input(|i| i.raw_scroll_delta.y);
+        if vol_resp.hovered() && scroll_delta.abs() > 0.1 {
+            let next_vol = (app.saved.volume + scroll_delta.signum() * 0.05).clamp(0.0, 1.0);
+            out.push(Action::Volume(next_vol));
+        }
+        if vol_resp.clicked() {
+            let next_vol = if app.saved.volume > 0.05 { 0.0 } else { 0.70 };
+            out.push(Action::Volume(next_vol));
+        }
+
+        let expand_rect = Rect::from_center_size(pos2(deck.right() - 26.0, mid), vec2(24.0, 24.0));
+        let exp_symbol = if app.expanded { icon::ARROWS_IN_SIMPLE } else { icon::ARROWS_OUT_SIMPLE };
+        if icon_button(ui, expand_rect, Id::new("capsule-bar-exp"), exp_symbol, glyph(13.0), MUTED, "Toggle Now Playing").clicked() {
+            out.push(Action::Expand(!app.expanded));
+        }
+
+        let scrub_track = Rect::from_min_size(pos2(deck.left() + 24.0, deck.bottom() - 4.5), vec2(deck.width() - 48.0, 3.0));
+        let sense = if duration > 0 { Sense::click_and_drag() } else { Sense::hover() };
+        let scrub_resp = ui.interact(scrub_track.expand(4.0), Id::new("capsule-bar-scrub"), sense);
+        if let (true, Some(pointer)) = (scrub_resp.dragged() || scrub_resp.clicked(), scrub_resp.interact_pointer_pos()) {
+            if duration > 0 {
+                let fraction = ((pointer.x - scrub_track.left()) / scrub_track.width()).clamp(0.0, 1.0);
+                out.push(Action::Seek((fraction * duration as f32) as u64));
+            }
+        }
+        let pos_ms = app.player.position_ms().min(duration);
+        let frac = if duration > 0 { pos_ms as f32 / duration as f32 } else { 0.0 };
+        ui.painter().rect_filled(scrub_track, 1.5, veil(0.12));
+        let fill_rect = Rect::from_min_size(scrub_track.min, vec2(scrub_track.width() * frac, 3.0));
+        ui.painter().rect_filled(fill_rect, 1.5, pal_color);
+        let thumb_x = scrub_track.left() + scrub_track.width() * frac;
+        ui.painter().circle_filled(pos2(thumb_x, scrub_track.center().y), 3.5, pal_color);
+        ui.painter().circle_filled(pos2(thumb_x, scrub_track.center().y), 1.5, Color32::WHITE);
+
+        return Scrub {
+            bar: scrub_track,
+            played: frac,
+            buffered: if item.is_some() { app.player.buffered() } else { 0.0 },
+            hover: 0.0,
+            aim: None,
+        };
     }
 
     let backdrop = ui.interact(deck, Id::new("bar-backdrop"), Sense::click());
@@ -4398,11 +4628,11 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                         }
                     }
 
-                    // 5. Vertical Volume Bar (Moved left into card)
+                    // 5. Vertical Volume Bar (Moved down and left into card)
                     if app.saved.mini_show_volume {
                         let vol_rect = Rect::from_min_max(
-                            pos2(card_rect.right() - 24.0, card_rect.top() + 22.0),
-                            pos2(card_rect.right() - 20.0, card_rect.top() + 78.0),
+                            pos2(card_rect.right() - 24.0, card_rect.top() + 36.0),
+                            pos2(card_rect.right() - 20.0, card_rect.top() + 88.0),
                         );
                         let vol_resp = ui.interact(vol_rect.expand(6.0), Id::new("mini-vert-vol"), Sense::click_and_drag());
                         if let (true, Some(pointer)) = (vol_resp.dragged() || vol_resp.clicked(), vol_resp.interact_pointer_pos()) {
@@ -4416,8 +4646,8 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                         describe(&vol_resp, &format!("Volume: {:.0}%", app.saved.volume * 100.0));
                     }
 
-                    // 6. Bottom Song Control Bar (Moved a bit up, with thumb knob & timestamps)
-                    let scrub_y = card_rect.top() + 82.0;
+                    // 6. Bottom Song Control Bar (Moved down with thumb knob & timestamps)
+                    let scrub_y = card_rect.top() + 92.0;
                     let scrub_rect = Rect::from_min_max(
                         pos2(card_rect.left() + 14.0, scrub_y),
                         pos2(card_rect.right() - 36.0, scrub_y + 3.5),

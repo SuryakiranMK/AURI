@@ -168,8 +168,12 @@ struct TaskbarToolbar {
 #[cfg(windows)]
 impl TaskbarToolbar {
     fn new(hwnd: HWND) -> Option<Self> {
+        unsafe {
+            use windows::Win32::System::Com::*;
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
         let taskbar: ITaskbarList3 = unsafe { CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER) }.ok()?;
-        unsafe { taskbar.HrInit().ok()? };
+        unsafe { let _ = taskbar.HrInit(); };
 
         let icon_prev = create_thumb_icon(ThumbIconKind::Prev);
         let icon_play = create_thumb_icon(ThumbIconKind::Play);
@@ -278,7 +282,7 @@ impl Drop for TaskbarToolbar {
 
 #[cfg(windows)]
 pub struct Media {
-    controls: windows::Media::SystemMediaTransportControls,
+    controls: Option<windows::Media::SystemMediaTransportControls>,
     taskbar: Option<TaskbarToolbar>,
     track: String,
     playing: bool,
@@ -301,29 +305,33 @@ impl Media {
             return None;
         };
         let hwnd = HWND(window.hwnd.get() as *mut _);
-        let interop = factory::<SystemMediaTransportControls, Interop>().ok()?;
-        let controls: SystemMediaTransportControls = unsafe { interop.GetForWindow(hwnd) }.ok()?;
-        controls.SetIsEnabled(true).ok()?;
-        controls.SetIsPlayEnabled(true).ok()?;
-        controls.SetIsPauseEnabled(true).ok()?;
-        controls.SetIsNextEnabled(true).ok()?;
-        controls.SetIsPreviousEnabled(true).ok()?;
         let press_arc = std::sync::Arc::new(press);
-        let press_smtc = press_arc.clone();
-        let pressed = TypedEventHandler::new(move |_, pressed: Ref<Pressed>| {
-            let button = pressed.ok()?.Button()?;
-            if button == Button::Play {
-                press_smtc(Action::Pause(false));
-            } else if button == Button::Pause || button == Button::Stop {
-                press_smtc(Action::Pause(true));
-            } else if button == Button::Next {
-                press_smtc(Action::Next);
-            } else if button == Button::Previous {
-                press_smtc(Action::Previous);
-            }
-            Ok(())
-        });
-        controls.ButtonPressed(&pressed).ok()?;
+
+        let controls: Option<SystemMediaTransportControls> = (|| {
+            let interop = factory::<SystemMediaTransportControls, Interop>().ok()?;
+            let controls: SystemMediaTransportControls = unsafe { interop.GetForWindow(hwnd) }.ok()?;
+            controls.SetIsEnabled(true).ok()?;
+            controls.SetIsPlayEnabled(true).ok()?;
+            controls.SetIsPauseEnabled(true).ok()?;
+            controls.SetIsNextEnabled(true).ok()?;
+            controls.SetIsPreviousEnabled(true).ok()?;
+            let press_smtc = press_arc.clone();
+            let pressed = TypedEventHandler::new(move |_, pressed: Ref<Pressed>| {
+                let button = pressed.ok()?.Button()?;
+                if button == Button::Play {
+                    press_smtc(Action::Pause(false));
+                } else if button == Button::Pause || button == Button::Stop {
+                    press_smtc(Action::Pause(true));
+                } else if button == Button::Next {
+                    press_smtc(Action::Next);
+                } else if button == Button::Previous {
+                    press_smtc(Action::Previous);
+                }
+                Ok(())
+            });
+            controls.ButtonPressed(&pressed).ok()?;
+            Some(controls)
+        })();
 
         let press_tb = press_arc.clone();
         let _ = THUMB_CALLBACK.set(Box::new(move |a| press_tb(a)));
@@ -359,12 +367,14 @@ impl Media {
         use windows::Media::{MediaPlaybackStatus as Status, MediaPlaybackType};
         use windows::core::HSTRING;
 
-        let Some(item) = item else {
-            return self.controls.SetPlaybackStatus(Status::Closed);
+        let Some(controls) = &self.controls else {
+            return Ok(());
         };
-        self.controls
-            .SetPlaybackStatus(if playing { Status::Playing } else { Status::Paused })?;
-        let display = self.controls.DisplayUpdater()?;
+        let Some(item) = item else {
+            return controls.SetPlaybackStatus(Status::Closed);
+        };
+        controls.SetPlaybackStatus(if playing { Status::Playing } else { Status::Paused })?;
+        let display = controls.DisplayUpdater()?;
         display.SetType(MediaPlaybackType::Music)?;
         let music = display.MusicProperties()?;
         music.SetTitle(&HSTRING::from(item.title.as_str()))?;
@@ -652,6 +662,43 @@ async fn follow(player: &mpris_server::Player, track: &mut (String, u64), update
     player.set_position(at);
     if update.seeked {
         let _ = player.seeked(at).await;
+    }
+}
+
+#[cfg(all(test, windows))]
+mod test_windows_taskbar {
+    use super::*;
+
+    #[test]
+    fn test_thumb_icons_are_valid() {
+        let icon_prev = create_thumb_icon(ThumbIconKind::Prev);
+        let icon_play = create_thumb_icon(ThumbIconKind::Play);
+        let icon_pause = create_thumb_icon(ThumbIconKind::Pause);
+        let icon_next = create_thumb_icon(ThumbIconKind::Next);
+
+        assert!(!icon_prev.is_invalid(), "icon_prev is invalid");
+        assert!(!icon_play.is_invalid(), "icon_play is invalid");
+        assert!(!icon_pause.is_invalid(), "icon_pause is invalid");
+        assert!(!icon_next.is_invalid(), "icon_next is invalid");
+
+        unsafe {
+            let _ = DestroyIcon(icon_prev);
+            let _ = DestroyIcon(icon_play);
+            let _ = DestroyIcon(icon_pause);
+            let _ = DestroyIcon(icon_next);
+        }
+    }
+
+    #[test]
+    fn test_taskbar_com_init() {
+        unsafe {
+            use windows::Win32::System::Com::*;
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            let taskbar: Result<ITaskbarList3, _> = CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER);
+            assert!(taskbar.is_ok(), "CoCreateInstance failed: {:?}", taskbar.err());
+            let taskbar = taskbar.unwrap();
+            let _ = taskbar.HrInit(); // Note: HrInit returns E_NOTIMPL on Win10/11!
+        }
     }
 }
 
