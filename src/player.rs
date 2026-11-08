@@ -15,9 +15,9 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::units::{Time, TimeBase};
 
-const RANGE_BYTES: u64 = 1024 * 1024;
-const WINDOW_BYTES: u64 = 8 * 1024 * 1024;
-const KEPT_BEHIND: u64 = 1024 * 1024;
+const RANGE_BYTES: u64 = 512 * 1024;
+const WINDOW_BYTES: u64 = 2560 * 1024;
+const KEPT_BEHIND: u64 = 512 * 1024;
 const BUFFERED_AHEAD: u64 = WINDOW_BYTES - KEPT_BEHIND - RANGE_BYTES;
 const FULL_POLL: Duration = Duration::from_millis(10);
 const PAUSED_POLL: Duration = Duration::from_millis(250);

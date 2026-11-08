@@ -7,8 +7,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-const WORKERS: usize = 4;
-const BUDGET_BYTES: usize = 16 * 1024 * 1024;
+const WORKERS: usize = 2;
+const BUDGET_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES: u64 = 6 * 1024 * 1024;
 const RETRY_AFTER: Duration = Duration::from_secs(20);
 // ponytail: the 8 px size is the blur, stretched with linear filtering

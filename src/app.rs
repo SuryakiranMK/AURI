@@ -1,6 +1,7 @@
 use crate::art::Art;
 use crate::auth;
 use crate::discord::{Discord, Headline};
+use crate::hotkeys::{self, Combo, Command, Hotkeys};
 use crate::media::Media;
 use crate::player::Player;
 use crate::ui;
@@ -18,8 +19,8 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const RECENT_LIMIT: usize = 100;
-const CACHED_PAGES: usize = 24;
-const PAGES_KEPT_ON_TRIM: usize = 8;
+const CACHED_PAGES: usize = 6;
+const PAGES_KEPT_ON_TRIM: usize = 3;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
 const RESTART_AFTER_MS: u64 = 3000;
 const NOTICE_TIME: Duration = Duration::from_secs(6);
@@ -43,6 +44,7 @@ pub enum Route {
     Browse(String),
     Liked,
     Recent,
+    Settings,
 }
 
 pub enum Load {
@@ -82,6 +84,9 @@ pub struct Saved {
     pub discord_name: String,
     pub mini_mode: bool,
     pub loudness_normalizer: bool,
+    pub hotkeys: bool,
+    pub hotkey_combos: [Option<Combo>; 5],
+    pub auto_purge_ram: bool,
 }
 
 pub enum Words {
@@ -151,6 +156,9 @@ impl Default for Saved {
             discord_name: String::new(),
             mini_mode: false,
             loudness_normalizer: true,
+            hotkeys: false,
+            hotkey_combos: hotkeys::standard_combos(),
+            auto_purge_ram: true,
         }
     }
 }
@@ -224,6 +232,11 @@ pub enum Action {
     ToggleMiniMode,
     ToggleLoudness,
     PurgeMemory,
+    VolumeBy(f32),
+    GlobalHotkeys(bool),
+    Record(Option<Command>),
+    ResetHotkeys,
+    AutoPurgeRam(bool),
 }
 
 enum Event {
@@ -259,6 +272,7 @@ pub struct App {
     cover_lookups: usize,
     media: Option<Media>,
     discord: Option<Discord>,
+    hotkeys: Option<Hotkeys>,
     replaced: Option<(Vec<Item>, Option<usize>, u64)>,
     curated: bool,
     growing: Option<(Route, usize, usize)>,
@@ -282,6 +296,8 @@ pub struct App {
     pub update: Option<String>,
     pub updating: bool,
     pub discord_linked: Option<bool>,
+    pub hotkey_taken: Vec<Command>,
+    pub recording: Option<Command>,
     restart: Option<PathBuf>,
 }
 
@@ -332,6 +348,7 @@ impl App {
             cover_lookups: 0,
             media,
             discord,
+            hotkeys: None,
             replaced: None,
             curated: !saved.queue.is_empty(),
             growing: None,
@@ -354,6 +371,8 @@ impl App {
             update: None,
             updating: false,
             discord_linked: None,
+            hotkey_taken: Vec::new(),
+            recording: None,
             restart: None,
         };
         match query {
@@ -363,6 +382,7 @@ impl App {
             }
             None => app.ensure(&Route::Home),
         }
+        app.restart_hotkeys();
         app.load_library();
         app.background(|yt| {
             yt.refresh_clients();
@@ -497,7 +517,7 @@ impl App {
     }
 
     fn ensure(&mut self, route: &Route) {
-        if self.pages.contains_key(route) || matches!(route, Route::Liked | Route::Recent) {
+        if self.pages.contains_key(route) || matches!(route, Route::Liked | Route::Recent | Route::Settings) {
             return;
         }
         if self.pages.len() >= CACHED_PAGES {
@@ -530,7 +550,7 @@ impl App {
                     let _ = sender.send(Event::Page(route.clone(), Ok(Box::new(page.clone()))));
                     ctx.request_repaint();
                 }),
-                Route::Liked | Route::Recent => return,
+                Route::Liked | Route::Recent | Route::Settings => return,
             };
             let _ = sender.send(Event::Page(route, result.map(Box::new)));
             ctx.request_repaint();
@@ -816,6 +836,83 @@ impl App {
         }
     }
 
+    fn restart_hotkeys(&mut self) {
+        self.hotkeys = None;
+        self.hotkey_taken.clear();
+        if !self.saved.hotkeys || self.recording.is_some() {
+            return;
+        }
+        let bindings = Command::ALL
+            .into_iter()
+            .filter_map(|command| Some((command, self.saved.hotkey_combos[command as usize]?)))
+            .collect();
+        let (sender, ctx) = (self.sender.clone(), self.ctx.clone());
+        let press = move |command: Command| {
+            let _ = sender.send(Event::Pressed(command.action()));
+            ctx.request_repaint();
+        };
+        if let Some((hotkeys, taken)) = Hotkeys::start(bindings, press) {
+            self.hotkeys = Some(hotkeys);
+            self.hotkey_taken = taken;
+        }
+    }
+
+    fn set_recording(&mut self, command: Option<Command>) {
+        if self.recording != command {
+            self.recording = command;
+            self.restart_hotkeys();
+        }
+    }
+
+    fn bind(&mut self, command: Command, combo: Option<Combo>) {
+        for other in &mut self.saved.hotkey_combos {
+            if combo.is_some() && *other == combo {
+                *other = None;
+            }
+        }
+        self.saved.hotkey_combos[command as usize] = combo;
+        self.restart_hotkeys();
+    }
+
+    fn record(&mut self, ctx: &egui::Context) -> bool {
+        if *self.route() != Route::Settings {
+            self.set_recording(None);
+        }
+        let Some(command) = self.recording else {
+            return false;
+        };
+        let pressed = ctx.input_mut(|input| {
+            let pressed = input.events.iter().find_map(|event| match event {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => Some((*key, *modifiers)),
+                _ => None,
+            });
+            input
+                .events
+                .retain(|event| !matches!(event, egui::Event::Key { .. } | egui::Event::Text(_)));
+            pressed
+        });
+        match pressed {
+            Some((Key::Escape, _)) => self.set_recording(None),
+            Some((Key::Backspace | Key::Delete, _)) => {
+                self.set_recording(None);
+                self.bind(command, None);
+            }
+            Some((key, modifiers)) => {
+                if let Some(combo) = Combo::from_input(key, modifiers) {
+                    self.set_recording(None);
+                    self.bind(command, Some(combo));
+                }
+            }
+            None => {}
+        }
+        true
+    }
+
     fn shortcuts(&mut self, ctx: &egui::Context) -> Vec<Action> {
         let mut out = Vec::new();
         let free = !ctx.wants_keyboard_input() && ctx.memory(|memory| memory.focused().is_none());
@@ -1050,6 +1147,9 @@ impl App {
                 if self.saved.mini_mode {
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, 110.0)));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+                    if self.saved.auto_purge_ram {
+                        self.apply(Action::PurgeMemory);
+                    }
                 } else {
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
@@ -1072,6 +1172,19 @@ impl App {
                     }
                 }
             }
+            Action::VolumeBy(step) => self.apply(Action::Volume(self.saved.volume + step)),
+            Action::GlobalHotkeys(enabled) => {
+                self.saved.hotkeys = enabled;
+                self.recording = None;
+                self.restart_hotkeys();
+            }
+            Action::Record(command) => self.set_recording(command),
+            Action::ResetHotkeys => {
+                self.saved.hotkey_combos = hotkeys::standard_combos();
+                self.recording = None;
+                self.restart_hotkeys();
+            }
+            Action::AutoPurgeRam(enabled) => self.saved.auto_purge_ram = enabled,
         }
     }
 }
@@ -1079,12 +1192,15 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let (size, minimized) = ctx.input(|input| (input.content_rect().size(), input.viewport().minimized == Some(true)));
+        if minimized && self.saved.auto_purge_ram {
+            self.apply(Action::PurgeMemory);
+        }
         if !minimized && !self.saved.mini_mode && (size.x < WINDOW_MIN[0] - 1.0 || size.y < WINDOW_MIN[1] - 1.0) {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
         }
         self.art.begin_frame(ctx);
         self.drain(ctx);
-        let mut actions = self.shortcuts(ctx);
+        let mut actions = if self.record(ctx) { Vec::new() } else { self.shortcuts(ctx) };
         if self.saved.mini_mode {
             actions.extend(ui::draw_mini(self, ctx));
         } else {

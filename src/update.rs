@@ -4,7 +4,7 @@ use std::process::Command;
 
 pub const UPDATED_FLAG: &str = "--updated";
 const DOWNLOADS: &str = concat!(env!("CARGO_PKG_REPOSITORY"), "/releases/download");
-const PROGRAM: &str = "tubefast.exe";
+const PROGRAM: &str = "auri.exe";
 const CHECKSUMS: &str = "SHA256SUMS.txt";
 const PROGRAM_BYTES: u64 = 64 * 1024 * 1024;
 const SCOOP_FOLDER: &str = "\\scoop\\apps\\";
