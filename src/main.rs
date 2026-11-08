@@ -431,7 +431,11 @@ fn main() -> Result<(), slint::PlatformError> {
     let ytm_home = Arc::clone(&ytm);
     let win_home = win_weak.clone();
     std::thread::spawn(move || {
-        if let Ok(page) = ytm_home.browse("FEmusic_home", &|_| {}) {
+        // Prefer explore (Top Trending Charts) or home feed
+        let page = ytm_home.browse("FEmusic_explore", &|_| {})
+            .or_else(|_| ytm_home.browse("FEmusic_home", &|_| {}));
+
+        if let Ok(page) = page {
             let mut dynamic_tracks = Vec::new();
             let mut dynamic_albums = Vec::new();
             let mut dynamic_artists = Vec::new();
@@ -476,10 +480,30 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
 
+            // If regional explore returned no artist channels, extract trending artists from tracks
+            if dynamic_artists.is_empty() {
+                let mut seen_artists = std::collections::HashSet::new();
+                for t in &dynamic_tracks {
+                    let artist_str = t.artist.as_str();
+                    let clean = artist_str.split(&[',', '•', '&'][..]).next().unwrap_or(artist_str).trim();
+                    if !clean.is_empty() && clean != "Video" && clean != "Song" && seen_artists.insert(clean.to_string()) {
+                        dynamic_artists.push(ArtistData {
+                            name: clean.into(),
+                            role: "Trending Artist".into(),
+                            color_hue: t.color_hue,
+                        });
+                        if dynamic_artists.len() >= 5 {
+                            break;
+                        }
+                    }
+                }
+            }
+
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(w) = win_home.upgrade() {
                     if !dynamic_tracks.is_empty() {
-                        w.set_home_tracks(ModelRc::new(VecModel::from(dynamic_tracks)));
+                        w.set_home_tracks(ModelRc::new(VecModel::from(dynamic_tracks.clone())));
+                        w.set_queue_tracks(ModelRc::new(VecModel::from(dynamic_tracks)));
                     }
                     if !dynamic_albums.is_empty() {
                         w.set_home_albums(ModelRc::new(VecModel::from(dynamic_albums)));

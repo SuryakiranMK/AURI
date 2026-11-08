@@ -267,8 +267,9 @@ export component NormalModeView inherits Rectangle {
 
                         HorizontalLayout {
                             padding_left: 14px;
-                            padding_right: 14px;
+                            padding_right: 12px;
                             spacing: 10px;
+                            alignment: center;
 
                             Image {
                                 source: @image-url("../assets/icons/search.svg");
@@ -309,8 +310,9 @@ export component NormalModeView inherits Rectangle {
 
                             if search_input.text != "": AuriIconButton {
                                 icon_source: @image-url("../assets/icons/close.svg");
-                                icon_size: 14px;
-                                btn_size: 26px;
+                                icon_size: 12px;
+                                btn_size: 22px;
+                                y: (parent.height - self.height) / 2;
                                 tooltip: "Clear Search";
                                 clicked => {
                                     search_input.text = "";
@@ -353,15 +355,18 @@ export component NormalModeView inherits Rectangle {
                         }
                     }
 
-                    // Volume Slider with Mute
+                    // Volume Slider with Mute (Subpixel Center Aligned)
                     HorizontalLayout {
                         spacing: 6px;
                         width: 125px;
+                        alignment: center;
+                        y: (parent.height - self.height) / 2;
 
                         AuriIconButton {
                             icon_source: root.volume == 0.0 ? @image-url("../assets/icons/volume-mute.svg") : @image-url("../assets/icons/volume.svg");
-                            icon_size: 16px;
-                            btn_size: 28px;
+                            icon_size: 15px;
+                            btn_size: 26px;
+                            y: (parent.height - self.height) / 2;
                             tooltip: root.volume == 0.0 ? "Unmute" : "Mute";
                             clicked => {
                                 if root.volume > 0.0 {
@@ -374,6 +379,8 @@ export component NormalModeView inherits Rectangle {
 
                         AuriSlider {
                             width: 88px;
+                            height: 26px;
+                            y: (parent.height - self.height) / 2;
                             value: root.volume;
                             value_changed(val) => { root.volume_changed(val); }
                         }
@@ -430,22 +437,36 @@ export component NormalModeView inherits Rectangle {
                                     spacing: 20px;
                                     alignment: start;
 
-                                    // Left Artist Portrait
+                                    // Left Track Artwork / Portrait (Rounded Glass)
                                     Rectangle {
                                         width: 76px;
                                         height: 76px;
                                         border-radius: Theme.radius_md;
-                                        background: @linear-gradient(135deg, #F43F5E 0%, #8B5CF6 100%);
+                                        clip: true;
+                                        background: #141624;
                                         border-width: 2px;
-                                        border-color: Theme.border_glass_highlight;
+                                        border-color: root.is_playing ? Theme.accent : Theme.border_glass_highlight;
 
-                                        Text {
-                                            text: "TH";
-                                            font_size: 26px;
-                                            font_weight: 800;
-                                            color: #FFFFFF;
-                                            horizontal_alignment: center;
-                                            vertical_alignment: center;
+                                        if root.has_artwork : Image {
+                                            source: root.artwork;
+                                            width: parent.width;
+                                            height: parent.height;
+                                            image-fit: cover;
+                                        }
+
+                                        if !root.has_artwork : Rectangle {
+                                            width: parent.width;
+                                            height: parent.height;
+                                            background: @linear-gradient(135deg, #F43F5E 0%, #8B5CF6 100%);
+
+                                            Image {
+                                                source: @image-url("../assets/icons/music.svg");
+                                                width: 28px;
+                                                height: 28px;
+                                                image-fit: contain;
+                                                x: (parent.width - self.width) / 2;
+                                                y: (parent.height - self.height) / 2;
+                                            }
                                         }
                                     }
 
@@ -456,7 +477,7 @@ export component NormalModeView inherits Rectangle {
                                         spacing: 6px;
 
                                         Text {
-                                            text: "FEATURED ARTIST";
+                                            text: root.is_playing ? "NOW STREAMING" : "FEATURED TRACK";
                                             font_size: 10px;
                                             font_weight: 800;
                                             letter_spacing: 1.2px;
@@ -464,10 +485,19 @@ export component NormalModeView inherits Rectangle {
                                         }
 
                                         Text {
-                                            text: "Taco Hemingway";
-                                            font_size: 24px;
+                                            text: root.track_title != "No Track Selected" ? root.track_title : (root.home_tracks.length > 0 ? root.home_tracks[0].title : "Trending Music");
+                                            font_size: 22px;
                                             font_weight: 800;
                                             color: #FFFFFF;
+                                            overflow: elide;
+                                        }
+
+                                        Text {
+                                            text: root.track_artist != "Choose any song to play" ? root.track_artist : (root.home_tracks.length > 0 ? root.home_tracks[0].artist : "Lossless WASAPI");
+                                            font_size: 13px;
+                                            font_weight: 500;
+                                            color: Theme.text_secondary;
+                                            overflow: elide;
                                         }
 
                                         HorizontalLayout {
@@ -476,39 +506,65 @@ export component NormalModeView inherits Rectangle {
 
                                             Rectangle {
                                                 width: 96px;
-                                                height: 28px;
+                                                height: 30px;
                                                 border-radius: Theme.radius_pill;
-                                                background: Theme.accent;
+                                                background: @linear-gradient(135deg, #6366F1 0%, #EC4899 100%);
 
                                                 TouchArea {
                                                     clicked => { root.toggle_play(); }
                                                 }
 
-                                                Text {
-                                                    text: root.is_playing ? "⏸ Pause" : "▶ Play All";
-                                                    font_size: 11px;
-                                                    font_weight: 700;
-                                                    color: #FFFFFF;
-                                                    horizontal_alignment: center;
-                                                    vertical_alignment: center;
+                                                HorizontalLayout {
+                                                    spacing: 6px;
+                                                    alignment: center;
+
+                                                    Image {
+                                                        source: root.is_playing ? @image-url("../assets/icons/pause.svg") : @image-url("../assets/icons/play.svg");
+                                                        width: 13px;
+                                                        height: 13px;
+                                                        colorize: #FFFFFF;
+                                                    }
+
+                                                    Text {
+                                                        text: root.is_playing ? "Pause" : "Play";
+                                                        font_size: 11px;
+                                                        font_weight: 700;
+                                                        color: #FFFFFF;
+                                                    }
                                                 }
                                             }
 
                                             Rectangle {
-                                                width: 80px;
-                                                height: 28px;
+                                                width: 90px;
+                                                height: 30px;
                                                 border-radius: Theme.radius_pill;
                                                 background: Theme.bg_surface_elevated;
                                                 border-width: 1px;
                                                 border-color: Theme.border_glass;
 
-                                                Text {
-                                                    text: "+ Follow";
-                                                    font_size: 11px;
-                                                    font_weight: 600;
-                                                    color: Theme.text_primary;
-                                                    horizontal_alignment: center;
-                                                    vertical_alignment: center;
+                                                TouchArea {
+                                                    clicked => {
+                                                        root.navigate("search");
+                                                    }
+                                                }
+
+                                                HorizontalLayout {
+                                                    spacing: 5px;
+                                                    alignment: center;
+
+                                                    Image {
+                                                        source: @image-url("../assets/icons/search.svg");
+                                                        width: 12px;
+                                                        height: 12px;
+                                                        colorize: Theme.text_primary;
+                                                    }
+
+                                                    Text {
+                                                        text: "Discover";
+                                                        font_size: 11px;
+                                                        font_weight: 600;
+                                                        color: Theme.text_primary;
+                                                    }
                                                 }
                                             }
                                         }
@@ -554,59 +610,77 @@ export component NormalModeView inherits Rectangle {
                                             padding: 10px;
                                             spacing: 8px;
 
+                                            // Album Art Sleeve Container
                                             Rectangle {
-                                                height: 100px;
+                                                height: 104px;
                                                 border-radius: Theme.radius_sm;
-                                                background: @linear-gradient(135deg, album.color_hue.darker(50%) 0%, #0E1017 100%);
+                                                clip: true;
+                                                background: @linear-gradient(135deg, album.color_hue.darker(30%) 0%, #0F111A 100%);
                                                 border-width: 1px;
                                                 border-color: Theme.border_glass;
 
-                                                // Vinyl disc groove motif
+                                                // Stylized LP Sleeve Artwork (Left-Aligned)
                                                 Rectangle {
-                                                    width: 48px;
-                                                    height: 48px;
-                                                    border-radius: 24px;
+                                                    width: 44px;
+                                                    height: 44px;
+                                                    border-radius: 22px;
                                                     background: @linear-gradient(135deg, #1A1D2B 0%, #0A0B10 100%);
-                                                    border-width: 2px;
-                                                    border-color: Theme.border_glass_highlight;
-                                                    x: (parent.width - self.width) / 2;
+                                                    border-width: 1.5px;
+                                                    border-color: album.color_hue;
+                                                    x: 14px;
                                                     y: (parent.height - self.height) / 2;
 
-                                                    Rectangle {
-                                                        width: 16px;
-                                                        height: 16px;
-                                                        border-radius: 8px;
-                                                        background: album.color_hue;
+                                                    Image {
+                                                        source: @image-url("../assets/icons/album.svg");
+                                                        width: 20px;
+                                                        height: 20px;
+                                                        image-fit: contain;
+                                                        colorize: #FFFFFF;
                                                         x: (parent.width - self.width) / 2;
                                                         y: (parent.height - self.height) / 2;
+                                                    }
+                                                }
 
-                                                        Rectangle {
-                                                            width: 6px;
-                                                            height: 6px;
-                                                            border-radius: 3px;
-                                                            background: #07080B;
-                                                            x: (parent.width - self.width) / 2;
-                                                            y: (parent.height - self.height) / 2;
-                                                        }
+                                                // Play overlay on card hover
+                                                if album_item_touch.has_hover : Rectangle {
+                                                    width: 32px;
+                                                    height: 32px;
+                                                    border-radius: 16px;
+                                                    background: Theme.accent;
+                                                    x: parent.width - self.width - 12px;
+                                                    y: (parent.height - self.height) / 2;
+
+                                                    Image {
+                                                        source: @image-url("../assets/icons/play.svg");
+                                                        width: 14px;
+                                                        height: 14px;
+                                                        image-fit: contain;
+                                                        colorize: #FFFFFF;
+                                                        x: (parent.width - self.width) / 2;
+                                                        y: (parent.height - self.height) / 2;
                                                     }
                                                 }
                                             }
 
+                                            // Metadata (Strict Left-Aligned)
                                             VerticalLayout {
                                                 spacing: 2px;
                                                 alignment: start;
 
                                                 Text {
                                                     text: album.title;
-                                                    font_size: 12px;
+                                                    font_size: 13px;
                                                     font_weight: 700;
                                                     color: #FFFFFF;
                                                     overflow: elide;
+                                                    horizontal_alignment: left;
                                                 }
                                                 Text {
-                                                    text: album.year;
-                                                    font_size: 10px;
+                                                    text: album.artist != "" ? album.artist + " • " + album.year : album.year;
+                                                    font_size: 11px;
                                                     color: Theme.text_muted;
+                                                    overflow: elide;
+                                                    horizontal_alignment: left;
                                                 }
                                             }
                                         }
@@ -634,7 +708,7 @@ export component NormalModeView inherits Rectangle {
                                         spacing: 1px;
 
                                         for track[idx] in root.home_tracks: Rectangle {
-                                            height: 44px;
+                                            height: 48px;
                                             border-radius: Theme.radius_sm;
                                             background: pop_touch.has_hover ? Theme.bg_surface_hover : Colors.transparent;
 
@@ -659,7 +733,29 @@ export component NormalModeView inherits Rectangle {
                                                     vertical_alignment: center;
                                                 }
 
-                                                // Column 2: Stacked Title & Subtitle (Left-Aligned)
+                                                // Column 2: Track Artwork Thumbnail (Left-Aligned Studio Presentation)
+                                                Rectangle {
+                                                    width: 32px;
+                                                    height: 32px;
+                                                    border-radius: 6px;
+                                                    clip: true;
+                                                    background: @linear-gradient(135deg, track.color_hue.darker(30%) 0%, #151722 100%);
+                                                    border-width: 1px;
+                                                    border-color: Theme.border_glass;
+                                                    y: (parent.height - self.height) / 2;
+
+                                                    Image {
+                                                        source: @image-url("../assets/icons/music.svg");
+                                                        width: 14px;
+                                                        height: 14px;
+                                                        image-fit: contain;
+                                                        colorize: #FFFFFF;
+                                                        x: (parent.width - self.width) / 2;
+                                                        y: (parent.height - self.height) / 2;
+                                                    }
+                                                }
+
+                                                // Column 3: Stacked Title & Subtitle (Left-Aligned)
                                                 VerticalLayout {
                                                     horizontal_stretch: 1;
                                                     alignment: center;
@@ -769,15 +865,17 @@ export component NormalModeView inherits Rectangle {
                                                     width: 32px;
                                                     height: 32px;
                                                     border-radius: 16px;
-                                                    background: @linear-gradient(135deg, #1E2034 0%, #2A2D48 100%);
+                                                    background: @linear-gradient(135deg, artist.color_hue 0%, artist.color_hue.darker(35%) 100%);
                                                     border-width: 1px;
                                                     border-color: Theme.border_glass_highlight;
+                                                    y: (parent.height - self.height) / 2;
 
                                                     Image {
-                                                        source: @image-url("../assets/icons/queue.svg");
-                                                        width: 13px;
-                                                        height: 13px;
+                                                        source: @image-url("../assets/icons/user.svg");
+                                                        width: 14px;
+                                                        height: 14px;
                                                         image-fit: contain;
+                                                        colorize: #FFFFFF;
                                                         x: (parent.width - self.width) / 2;
                                                         y: (parent.height - self.height) / 2;
                                                     }
@@ -1734,9 +1832,9 @@ export component NormalModeView inherits Rectangle {
                     }
                 }
 
-                // Reference 1 Now Playing Glass Card
+                // Studio-Grade Now Playing Showcase Card (Large Artwork Showcase)
                 Rectangle {
-                    height: 220px;
+                    height: 380px;
                     border-radius: Theme.radius_lg;
                     background: Theme.bg_card;
                     border-width: 1px;
@@ -1744,16 +1842,16 @@ export component NormalModeView inherits Rectangle {
 
                     VerticalLayout {
                         padding: 12px;
-                        spacing: 6px;
+                        spacing: 8px;
                         alignment: center;
 
-                        // Track Artwork (Rounded with glowing playing state)
+                        // Large Cover Artwork Showcase (214x214px Studio Square)
                         Rectangle {
-                            width: 54px;
-                            height: 54px;
-                            border-radius: 12px;
+                            width: 214px;
+                            height: 214px;
+                            border-radius: 14px;
                             clip: true;
-                            background: #151722;
+                            background: #141624;
                             border-width: 1.5px;
                             border-color: root.is_playing ? Theme.accent : Theme.border_glass;
 
@@ -1767,13 +1865,13 @@ export component NormalModeView inherits Rectangle {
                             if !root.has_artwork : Rectangle {
                                 width: parent.width;
                                 height: parent.height;
-                                background: @linear-gradient(135deg, #EC4899 0%, #8B5CF6 100%);
+                                background: @linear-gradient(135deg, #1A1D2E 0%, #0E101A 100%);
 
-                                Rectangle {
-                                    width: 16px;
-                                    height: 16px;
-                                    border-radius: 8px;
-                                    background: #07080B;
+                                Image {
+                                    source: @image-url("../assets/brand_64.png");
+                                    width: 64px;
+                                    height: 64px;
+                                    image-fit: contain;
                                     x: (parent.width - self.width) / 2;
                                     y: (parent.height - self.height) / 2;
                                 }
@@ -1782,11 +1880,11 @@ export component NormalModeView inherits Rectangle {
 
                         // Track Title & Artist
                         VerticalLayout {
-                            spacing: 1px;
+                            spacing: 2px;
                             alignment: center;
                             Text {
                                 text: root.track_title;
-                                font_size: 13px;
+                                font_size: 14px;
                                 font_weight: 700;
                                 color: #FFFFFF;
                                 horizontal_alignment: center;
@@ -1794,7 +1892,8 @@ export component NormalModeView inherits Rectangle {
                             }
                             Text {
                                 text: root.track_artist;
-                                font_size: 10px;
+                                font_size: 11px;
+                                font_weight: 500;
                                 color: Theme.text_secondary;
                                 horizontal_alignment: center;
                                 overflow: elide;
@@ -1806,6 +1905,7 @@ export component NormalModeView inherits Rectangle {
                             spacing: 2px;
 
                             AuriSlider {
+                                height: 22px;
                                 value: root.track_progress;
                                 value_changed(val) => { root.seek(val); }
                             }
@@ -1813,13 +1913,15 @@ export component NormalModeView inherits Rectangle {
                             HorizontalLayout {
                                 Text {
                                     text: root.track_elapsed;
-                                    font_size: 9px;
+                                    font_size: 10px;
+                                    font_weight: 600;
                                     color: Theme.text_muted;
                                     horizontal_stretch: 1;
                                 }
                                 Text {
                                     text: root.track_duration;
-                                    font_size: 9px;
+                                    font_size: 10px;
+                                    font_weight: 600;
                                     color: Theme.text_muted;
                                 }
                             }
@@ -1827,13 +1929,13 @@ export component NormalModeView inherits Rectangle {
 
                         // Transport Controls
                         HorizontalLayout {
-                            spacing: 6px;
+                            spacing: 8px;
                             alignment: center;
 
                             AuriIconButton {
                                 icon_source: @image-url("../assets/icons/shuffle.svg");
                                 icon_size: 13px;
-                                btn_size: 26px;
+                                btn_size: 28px;
                                 is_active: root.is_shuffle;
                                 tooltip: "Shuffle";
                                 clicked => { root.toggle_shuffle(); }
@@ -1842,13 +1944,13 @@ export component NormalModeView inherits Rectangle {
                             AuriIconButton {
                                 icon_source: @image-url("../assets/icons/prev.svg");
                                 icon_size: 15px;
-                                btn_size: 26px;
+                                btn_size: 28px;
                                 tooltip: "Previous";
                                 clicked => { root.prev_track(); }
                             }
 
                             AuriPlayButton {
-                                button_size: 34px;
+                                button_size: 38px;
                                 is_playing: root.is_playing;
                                 clicked => { root.toggle_play(); }
                             }
@@ -1856,7 +1958,7 @@ export component NormalModeView inherits Rectangle {
                             AuriIconButton {
                                 icon_source: @image-url("../assets/icons/next.svg");
                                 icon_size: 15px;
-                                btn_size: 26px;
+                                btn_size: 28px;
                                 tooltip: "Next";
                                 clicked => { root.next_track(); }
                             }
@@ -1864,7 +1966,7 @@ export component NormalModeView inherits Rectangle {
                             AuriIconButton {
                                 icon_source: @image-url("../assets/icons/repeat.svg");
                                 icon_size: 13px;
-                                btn_size: 26px;
+                                btn_size: 28px;
                                 is_active: root.is_repeat;
                                 tooltip: "Repeat";
                                 clicked => { root.toggle_repeat(); }
