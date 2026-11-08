@@ -124,3 +124,47 @@ AURI fuses the visual luxury of **Apple Music & macOS Sonoma glassmorphism** wit
 - **Dynamic Gain Equation**: `gain_db = (TARGET_LUFS - (loudness_db - 14.0)).clamp(-24.0, +3.0)`.
 - **Soft-Knee Peak Limiter**: Zero-allocation transparent compression threshold at `0.95` to eliminate digital clipping.
 - **Atomic Real-Time Toggling**: `loudness_enabled` and `limiter_enabled` atomic flags allow instantaneous live toggle mid-playback without stream resets or audio drops.
+
+---
+
+## 6. Tubefast Layout Integration & Navigation
+
+### 6.1. Search Bar & Navigation (Image 1)
+- **Navigation Controls**: Left `<` (Back) and `>` (Forward) buttons navigating a thread-safe page history stack (`nav_history`, `nav_index`).
+- **Search Pill**:
+  - Warm translucent charcoal pill (`#23222499`) with subtle 1px border.
+  - Search magnifying glass icon (16px) left-aligned.
+  - Placeholder: `"Search songs, albums, artists"`.
+  - Right-aligned `"Ctrl K"` shortcut badge.
+  - Clear `X` button centered vertically on typing.
+- **Live Debouncing**: 300ms atomic revision debounce (`search_edited`) querying YouTube Music InnerTube and flipping directly to the search catalog.
+
+### 6.2. Home Page 2-Column Grid (Image 2)
+- **Quick Picks (2 Columns × 3 Rows)**:
+  - 6 prominent cards (`AuriTrackCard`) featuring 44x44px rounded album artwork, bold white track title, and subtitle (artist + play count).
+  - Hover play overlay with gradient circular play icon.
+- **More Like... (2 Columns × 3 Rows)**:
+  - Contextual recommendation shelves based on the currently playing or seed track (e.g. *Barbaad*, *Gehra Hua*).
+- **Curated Chart Seeds**:
+  - Initial first launch pre-seeded with chart hits: *Gehra Hua*, *KALYANI (Remix)*, *Bairan*, *Raataan Lambiyan*, *Veezha Veera*, *Alfaaz*, *Barbaad*, *Tum Hi Aana*, *Dhun*, *Tum Ho Toh*, *Saiyaara*.
+
+### 6.3. Bottom Player Bar (Default Layout) vs Right Sidebar Showcase
+- **Bottom Bar (Default - 80px)**:
+  - Full-width pinned footer bar across all views.
+  - Top 1px border divider and edge scrubber line across full window width (`AuriSlider`).
+  - Left: 48x48px album artwork + stacked track title & artist + Favorite heart button + Share icon.
+  - Center: Shuffle + Previous + **White Circular 38px Play/Pause Button** + Next + Repeat + Timestamp label (`1:18 / 3:34`).
+  - Right: Queue drawer toggle (`show_queue`) + Layout switcher (`toggle_player_layout`) + Mute/Unmute + Volume slider + Percentage label.
+- **Right Sidebar (Studio Layout)**:
+  - Switchable via Settings Section 4 or the bottom bar expand button.
+  - Showcase for 210x210px album artwork, lyrics, and extended queue.
+
+### 6.4. Recently Played Page & Disk Persistence (Image 3)
+- **Navigation Badge**: Left sidebar `Recently played` item displays a live counter badge (e.g. `17`).
+- **Hero Card**: 108px rounded charcoal card with orange clock icon (`history.svg`), title `"Recently played"`, track count subtitle, orange `"▶ Play"` pill button, and `"Clear history"` link.
+- **Persistent Storage**:
+  - Saved to `%APPDATA%\AURI\recent.json` (up to 100 tracks, deduplicated by video ID).
+  - Persists across application closes and restarts.
+  - Settings (player layout `"bottom"`/`"sidebar"`, volume level, loudness normalization) saved to `%APPDATA%\AURI\settings.json`.
+
+
