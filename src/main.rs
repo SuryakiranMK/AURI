@@ -3,6 +3,7 @@
 mod app;
 mod art;
 mod auth;
+mod cache;
 mod discord;
 mod dsp;
 mod hotkeys;

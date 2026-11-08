@@ -690,6 +690,8 @@ pub enum Action {
     BrowseStorageDir,
     OpenStorageDir,
     ResetStorageDir,
+    PurgeAudioCache,
+    OpenCacheDir,
 }
 
 enum Event {
@@ -2066,6 +2068,14 @@ impl App {
             Action::ResetStorageDir => {
                 self.saved.storage_dir = default_storage_dir();
                 self.notify("Storage directory reset to default");
+            }
+            Action::PurgeAudioCache => {
+                crate::cache::purge_cache();
+                self.notify("Offline audio cache purged");
+            }
+            Action::OpenCacheDir => {
+                let dir = crate::cache::get_cache_dir();
+                let _ = std::process::Command::new("explorer").arg(&dir).spawn();
             }
         }
     }

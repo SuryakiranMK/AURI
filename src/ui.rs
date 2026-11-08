@@ -2991,14 +2991,14 @@ fn player_bar_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn storage_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let height = 2.0 * CARD_PAD + 2.0 * SETTING_ROW + 36.0;
-    section(ui, "Storage & Local Downloads", height, |ui| {
+    let height = 2.0 * CARD_PAD + 4.0 * SETTING_ROW + 70.0;
+    section(ui, "Storage, Cache & Local Downloads", height, |ui| {
         let size = vec2(ui.available_width(), SETTING_ROW);
         let (row, _) = ui.allocate_exact_size(size, Sense::hover());
         ui.painter().text(pos2(row.left() + 22.0, row.center().y), Align2::CENTER_CENTER, icon::FOLDER_SIMPLE, glyph(17.0), MUTED);
-        label(ui, pos2(row.left() + 46.0, row.center().y - 9.0), Align2::LEFT_CENTER, "Main Storage & Downloads Directory", medium(13.5), TEXT, size.x - 220.0);
+        label(ui, pos2(row.left() + 46.0, row.center().y - 9.0), Align2::LEFT_CENTER, "Main Storage & Downloads Directory", medium(13.5), TEXT, size.x - 240.0);
         let display_path = format!("{}\\downloads", app.saved.storage_dir);
-        label(ui, pos2(row.left() + 46.0, row.center().y + 9.0), Align2::LEFT_CENTER, &display_path, sans(12.0), ACCENT, size.x - 220.0);
+        label(ui, pos2(row.left() + 46.0, row.center().y + 9.0), Align2::LEFT_CENTER, &display_path, sans(12.0), ACCENT, size.x - 240.0);
 
         let btn_w = 80.0;
         let browse_btn_rect = Rect::from_min_size(pos2(row.right() - 3.0 * btn_w - 12.0, row.center().y - 14.0), vec2(btn_w, 28.0));
@@ -3031,7 +3031,38 @@ fn storage_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             out.push(Action::ResetStorageDir);
         }
 
-        let desc = "Right-click any song in Home, Liked, or Search and select 'Download song' to save locally in high bitrate (Opus/160k or M4A). User preferences & playlists are saved in %APPDATA%\\auri\\app.ron.";
+        ui.add_space(8.0);
+
+        // Offline Audio Cache Row
+        let (cache_row, _) = ui.allocate_exact_size(size, Sense::hover());
+        ui.painter().text(pos2(cache_row.left() + 22.0, cache_row.center().y), Align2::CENTER_CENTER, icon::CLOUD_ARROW_DOWN, glyph(17.0), MUTED);
+        label(ui, pos2(cache_row.left() + 46.0, cache_row.center().y - 9.0), Align2::LEFT_CENTER, "Offline Audio Cache-as-You-Play", medium(13.5), TEXT, size.x - 240.0);
+        let cached_bytes = crate::cache::cache_size_bytes();
+        let cached_count = crate::cache::count_cached_tracks();
+        let cache_str = format!("{:.1} MB cached ({} songs ready offline)", cached_bytes as f64 / 1_048_576.0, cached_count);
+        label(ui, pos2(cache_row.left() + 46.0, cache_row.center().y + 9.0), Align2::LEFT_CENTER, &cache_str, sans(12.0), ACCENT, size.x - 240.0);
+
+        let purge_btn_rect = Rect::from_min_size(pos2(cache_row.right() - 2.0 * btn_w - 6.0, cache_row.center().y - 14.0), vec2(btn_w, 28.0));
+        let purge_resp = ui.interact(purge_btn_rect, Id::new("cache-purge-btn"), Sense::click());
+        let purge_hover = hover_of(ui, &purge_resp);
+        ui.painter().rect_filled(purge_btn_rect, 6.0, veil(0.06 + 0.05 * purge_hover));
+        ui.painter().rect_stroke(purge_btn_rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+        ui.painter().text(purge_btn_rect.center(), Align2::CENTER_CENTER, "Purge", medium(11.5), TEXT);
+        if purge_resp.clicked() {
+            out.push(Action::PurgeAudioCache);
+        }
+
+        let open_cache_rect = Rect::from_min_size(pos2(cache_row.right() - btn_w, cache_row.center().y - 14.0), vec2(btn_w, 28.0));
+        let open_cache_resp = ui.interact(open_cache_rect, Id::new("cache-open-btn"), Sense::click());
+        let open_cache_hover = hover_of(ui, &open_cache_resp);
+        ui.painter().rect_filled(open_cache_rect, 6.0, veil(0.06 + 0.05 * open_cache_hover));
+        ui.painter().rect_stroke(open_cache_rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+        ui.painter().text(open_cache_rect.center(), Align2::CENTER_CENTER, "Explore", sans(11.5), MUTED);
+        if open_cache_resp.clicked() {
+            out.push(Action::OpenCacheDir);
+        }
+
+        let desc = "Songs you stream are transparently cached on disk for instant, zero-latency replay at 0% network usage. Right-click any song to explicitly download as a high-bitrate audio file.";
         let (_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
         paragraph(ui, desc, sans(11.5), FAINT, 2);
     });
@@ -3736,6 +3767,20 @@ fn lyrics_view(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
             return;
         }
     };
+    let pal_color = app.saved.theme_palette.color();
+    let (tag_row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::hover());
+    let (sync_text, sync_icon) = if lyrics.synced {
+        ("Synchronized Karaoke Lyrics", icon::SPARKLE)
+    } else {
+        ("Plain Lyrics", icon::TEXT_T)
+    };
+    let tag_rect = Rect::from_min_size(tag_row.min, vec2(196.0, 22.0));
+    ui.painter().rect_filled(tag_rect, 6.0, pal_color.gamma_multiply(0.12));
+    ui.painter().rect_stroke(tag_rect, 6.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.30)), StrokeKind::Inside);
+    ui.painter().text(pos2(tag_rect.left() + 10.0, tag_rect.center().y), Align2::LEFT_CENTER, sync_icon, glyph(12.0), pal_color);
+    ui.painter().text(pos2(tag_rect.left() + 26.0, tag_rect.center().y), Align2::LEFT_CENTER, sync_text, medium(11.0), pal_color);
+    ui.add_space(8.0);
+
     let position = app.player.position_ms();
     let sung = lyrics
         .synced
@@ -3751,9 +3796,10 @@ fn lyrics_view(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
             ui.add_space(18.0);
             continue;
         }
-        let galley = fit(ui, line, bold(20.0), TEXT, width, 4);
-        let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y + 14.0), sense);
         let current = sung == Some(index);
+        let font = if current { bold(22.0) } else { medium(18.0) };
+        let galley = fit(ui, line, font, TEXT, width - 40.0, 4);
+        let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y + 14.0), sense);
         if current && moved {
             ui.scroll_to_rect(rect, Some(Align::Center));
         }
@@ -3764,10 +3810,26 @@ fn lyrics_view(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
             .ctx()
             .animate_bool_with_time(response.id.with("lit"), current || !lyrics.synced, 0.25);
         let hover = hover_of(ui, &response);
-        let ink = TEXT.gamma_multiply(0.34 + 0.66 * lit.max(0.5 * hover));
-        ui.painter().galley_with_override_text_color(rect.min + vec2(0.0, 7.0), galley, ink);
+
+        if current {
+            let glow_rect = rect.expand2(vec2(10.0, 2.0));
+            ui.painter().rect_filled(glow_rect, 10.0, pal_color.gamma_multiply(0.14 * lit));
+            ui.painter().rect_stroke(glow_rect, 10.0, Stroke::new(1.2_f32, pal_color.gamma_multiply(0.40 * lit)), StrokeKind::Inside);
+            ui.painter().circle_filled(pos2(rect.left() + 6.0, rect.center().y), 4.0, pal_color);
+        } else if hover > 0.05 {
+            ui.painter().rect_filled(rect.expand2(vec2(6.0, 0.0)), 8.0, veil(0.04 * hover));
+        }
+
+        let text_x = if current { rect.left() + 18.0 } else { rect.left() + 6.0 };
+        let ink = if current {
+            Color32::WHITE
+        } else {
+            TEXT.gamma_multiply(0.32 + 0.50 * lit.max(0.6 * hover))
+        };
+        ui.painter().galley_with_override_text_color(pos2(text_x, rect.min.y + 7.0), galley, ink);
         if lyrics.synced {
             point_at(&response);
+            describe(&response, "Click to seek to this line");
         }
         if response.clicked() {
             out.push(Action::Seek(*start));
@@ -3809,6 +3871,65 @@ fn queue_rows(app: &App, ui: &mut Ui, heading: bool, out: &mut Vec<Action>) -> b
     if heading {
         eyebrow(ui, "Next up", 0.0);
     }
+
+    let filter_id = Id::new("queue-filter-text");
+    let mut filter_text = ui.data(|d| d.get_temp::<String>(filter_id)).unwrap_or_default();
+
+    let search_w = ui.available_width();
+    let (search_row, _) = ui.allocate_exact_size(vec2(search_w, 28.0), Sense::hover());
+    ui.painter().rect_filled(search_row, 6.0, veil(0.06));
+    ui.painter().rect_stroke(search_row, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+    ui.painter().text(pos2(search_row.left() + 10.0, search_row.center().y), Align2::LEFT_CENTER, icon::MAGNIFYING_GLASS, glyph(12.0), MUTED);
+
+    let edit_rect = Rect::from_min_max(pos2(search_row.left() + 26.0, search_row.top() + 3.0), pos2(search_row.right() - 24.0, search_row.bottom() - 3.0));
+    let mut edit_ui = ui.new_child(UiBuilder::new().max_rect(edit_rect));
+    let mut new_text = filter_text.clone();
+    let edit_resp = edit_ui.add(egui::TextEdit::singleline(&mut new_text).hint_text("Filter upcoming tracks...").frame(false));
+    if edit_resp.changed() {
+        filter_text = new_text.clone();
+        ui.data_mut(|d| d.insert_temp(filter_id, new_text));
+    }
+    if !filter_text.is_empty() {
+        let clear_rect = Rect::from_center_size(pos2(search_row.right() - 12.0, search_row.center().y), vec2(16.0, 16.0));
+        let clear_resp = ui.interact(clear_rect, Id::new("clear-queue-filter"), Sense::click());
+        ui.painter().text(clear_rect.center(), Align2::CENTER_CENTER, icon::X, glyph(11.0), MUTED);
+        if clear_resp.clicked() {
+            ui.data_mut(|d| d.insert_temp(filter_id, String::new()));
+            filter_text.clear();
+        }
+    }
+    ui.add_space(8.0);
+
+    if !filter_text.is_empty() {
+        let query_lower = filter_text.to_lowercase();
+        let matching: Vec<(usize, &Item)> = (upcoming..queue.len())
+            .filter_map(|idx| {
+                let it = &queue[idx];
+                if it.title.to_lowercase().contains(&query_lower) || it.subtitle.to_lowercase().contains(&query_lower) {
+                    Some((idx, it))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if matching.is_empty() {
+            label(ui, pos2(ui.cursor().left() + 10.0, ui.cursor().top() + 12.0), Align2::LEFT_CENTER, "No upcoming tracks match filter", sans(12.5), MUTED, search_w);
+            ui.add_space(32.0);
+            return true;
+        }
+
+        for (actual_idx, item) in matching {
+            let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), QUEUE_ROW), Sense::click());
+            let hover = hover_of(ui, &response);
+            queue_row(ui, app, item, slot, hover);
+            if response.clicked() {
+                out.push(Action::Jump(actual_idx));
+            }
+        }
+        return true;
+    }
+
     let top = ui.cursor().top();
     let pointer = ui.ctx().pointer_interact_pos();
     let grab = Id::new("queue-grab");

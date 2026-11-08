@@ -264,6 +264,43 @@ struct Track {
 
 impl Track {
     fn open(yt: &ytm::Client, urls: &Urls, video_id: &str, generation: u64, shared: &Arc<Shared>) -> Result<Track, String> {
+        if let Some(cached_path) = crate::cache::get_cached_track_path(video_id) {
+            if let Ok(file) = std::fs::File::open(&cached_path) {
+                let is_opus = cached_path.extension().map_or(true, |ext| ext == "opus");
+                let source = MediaSourceStream::new(Box::new(file), Default::default());
+                let mut hint = Hint::new();
+                hint.with_extension(if is_opus { "webm" } else { "m4a" });
+                if let Ok(probed) = symphonia::default::get_probe().format(&hint, source, &FormatOptions::default(), &MetadataOptions::default()) {
+                    let format = probed.format;
+                    if let Some(track) = format.default_track() {
+                        let (id, time_base) = (track.id, track.codec_params.time_base);
+                        let options = DecoderOptions::default();
+                        let decoder: Result<Box<dyn Decoder>, _> = if is_opus {
+                            OpusStream::try_new(&track.codec_params, &options).map(|s| Box::new(s) as Box<dyn Decoder>).map_err(|e| e.to_string())
+                        } else {
+                            symphonia::default::get_codecs().make(&track.codec_params, &options).map_err(|e| e.to_string())
+                        };
+                        if let Ok(decoder) = decoder {
+                            if shared.generation.load(Relaxed) == generation {
+                                shared.buffered.store(1000, Relaxed);
+                            }
+                            return Ok(Track {
+                                video_id: video_id.to_owned(),
+                                generation,
+                                format,
+                                decoder,
+                                id,
+                                time_base,
+                                buffer: None,
+                                trim_ms: None,
+                                finished: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
         let mut stream = resolve(yt, urls, video_id)?;
         let fallback = stream.fallback.take();
         Self::open_stream(yt, stream, video_id, generation, shared).or_else(|message| match fallback {
@@ -287,6 +324,27 @@ impl Track {
                 .unwrap_or(1.0);
             shared.loudness_gain.store(gain.to_bits(), Relaxed);
         }
+
+        let cache_dir = crate::cache::get_cache_dir();
+        let target_ext = if opus { "opus" } else { "m4a" };
+        let target_file = cache_dir.join(format!("{video_id}.{target_ext}"));
+        if !target_file.exists() {
+            let vid = video_id.to_owned();
+            let stream_url = url.clone();
+            let agent = yt.agent.clone();
+            std::thread::spawn(move || {
+                let part = cache_dir.join(format!("{vid}.part"));
+                if let Ok(resp) = agent.get(&stream_url).call() {
+                    if let Ok(mut out_f) = std::fs::File::create(&part) {
+                        if std::io::copy(&mut resp.into_reader(), &mut out_f).is_ok() {
+                            let _ = std::fs::rename(part, target_file);
+                            crate::cache::trim_cache_if_needed(1024 * 1024 * 1024);
+                        }
+                    }
+                }
+            });
+        }
+
         let seekable = Arc::new(AtomicBool::new(false));
         let fetch = Fetch::start(yt, url, len, generation, shared.clone());
         let reader = Reader {
@@ -732,7 +790,27 @@ impl Player {
 
     pub fn preload(&self, video_id: &str) {
         let (yt, urls, video_id) = (self.yt.clone(), self.urls.clone(), video_id.to_owned());
-        std::thread::spawn(move || resolve(&yt, &urls, &video_id));
+        std::thread::spawn(move || {
+            if crate::cache::get_cached_track_path(&video_id).is_some() {
+                return;
+            }
+            if let Ok(stream) = resolve(&yt, &urls, &video_id) {
+                let cache_dir = crate::cache::get_cache_dir();
+                let target_ext = if stream.opus { "opus" } else { "m4a" };
+                let target_file = cache_dir.join(format!("{video_id}.{target_ext}"));
+                if !target_file.exists() {
+                    let part = cache_dir.join(format!("{video_id}.part"));
+                    if let Ok(resp) = yt.agent.get(&stream.url).call() {
+                        if let Ok(mut out_f) = std::fs::File::create(&part) {
+                            if std::io::copy(&mut resp.into_reader(), &mut out_f).is_ok() {
+                                let _ = std::fs::rename(part, target_file);
+                                crate::cache::trim_cache_if_needed(1024 * 1024 * 1024);
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     pub fn seek(&self, ms: u64) {
