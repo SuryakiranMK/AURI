@@ -80,10 +80,10 @@ export component NormalModeView inherits Rectangle {
             vertical_stretch: 1;
 
             // ==========================================
-            // 1. LEFT SIDEBAR: STREAMLINED GLASS NAVIGATION
+            // 1. LEFT SIDEBAR: STREAMLINED GLASS NAVIGATION (Tubefast 244px Width)
             // ==========================================
             Rectangle {
-                width: 210px;
+                width: 244px;
                 background: Theme.bg_sidebar;
                 border-width: 1px;
                 border-color: Theme.border_glass;
@@ -92,44 +92,19 @@ export component NormalModeView inherits Rectangle {
                 padding: 18px;
                 spacing: 16px;
 
-                // Brand Header (AURI)
-                HorizontalLayout {
-                    spacing: 10px;
-                    alignment: start;
+                // Brand Header with Official User-Uploaded AURI Banner
+                Rectangle {
+                    height: 44px;
+                    width: parent.width;
 
                     Image {
-                        source: @image-url("../assets/brand_64.png");
-                        width: 28px;
-                        height: 28px;
-                        image-fit: contain;
-                    }
-
-                    Text {
-                        text: "AURI";
-                        font_size: 17px;
-                        font_weight: 800;
-                        letter_spacing: 1.2px;
-                        color: #FFFFFF;
-                        vertical_alignment: center;
-                    }
-
-                    Rectangle {
-                        width: 48px;
-                        height: 18px;
-                        border-radius: Theme.radius_pill;
-                        background: Theme.badge_bg;
-                        border-width: 1px;
-                        border-color: Theme.badge_border;
+                        source: @image-url("../assets/brand_banner.png");
+                        width: 136px;
+                        height: 42px;
+                        x: 0;
                         y: (parent.height - self.height) / 2;
-
-                        Text {
-                            text: "v0.2.2";
-                            font_size: 9px;
-                            font_weight: 700;
-                            color: Theme.badge_text;
-                            horizontal_alignment: center;
-                            vertical_alignment: center;
-                        }
+                        image-fit: contain;
+                        horizontal_alignment: left;
                     }
                 }
 

@@ -115,3 +115,4 @@ pub fn save_settings(settings: &AppSettings) {
         let _ = serde_json::to_writer_pretty(writer, settings);
     }
 }
+

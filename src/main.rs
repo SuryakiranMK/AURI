@@ -26,6 +26,22 @@ fn format_duration(seconds: f64) -> String {
     format!("{}:{:02}", mins, secs)
 }
 
+fn parse_duration_to_secs(dur: &str) -> u64 {
+    let parts: Vec<&str> = dur.split(':').collect();
+    if parts.len() == 2 {
+        let mins: u64 = parts[0].trim().parse().unwrap_or(3);
+        let secs: u64 = parts[1].trim().parse().unwrap_or(30);
+        mins * 60 + secs
+    } else if parts.len() == 3 {
+        let hrs: u64 = parts[0].trim().parse().unwrap_or(0);
+        let mins: u64 = parts[1].trim().parse().unwrap_or(0);
+        let secs: u64 = parts[2].trim().parse().unwrap_or(0);
+        hrs * 3600 + mins * 60 + secs
+    } else {
+        210
+    }
+}
+
 fn persistent_to_track_data(p: &storage::PersistentTrack) -> TrackData {
     TrackData {
         id: p.id.clone().into(),
@@ -514,155 +530,11 @@ fn main() -> Result<(), slint::PlatformError> {
     let recent_slint_tracks: Vec<TrackData> = recent_history.iter().map(persistent_to_track_data).collect();
     window.set_recent_tracks(ModelRc::new(VecModel::from(recent_slint_tracks)));
 
-    // 2-Column Quick Picks and More Like Curated Tracks (Tubefast Image 2)
-    let qp_col1 = vec![
-        TrackData {
-            id: "gehra_hua".into(),
-            title: "Gehra Hua (From \"Dhurandhar\")".into(),
-            artist: "Shashwat Sachdev, Arijit Singh, Armaan Khan & Irshad K...".into(),
-            album: "Dhurandhar".into(),
-            duration: "3:30".into(),
-            format_badge: "Opus 160k".into(),
-            is_playing: false,
-            is_favorite: true,
-            color_hue: slint::Color::from_rgb_u8(236, 72, 153),
-        },
-        TrackData {
-            id: "bairan".into(),
-            title: "Bairan".into(),
-            artist: "Banjaare • 736M plays".into(),
-            album: "Bairan".into(),
-            duration: "3:45".into(),
-            format_badge: "Opus 160k".into(),
-            is_playing: false,
-            is_favorite: false,
-            color_hue: slint::Color::from_rgb_u8(99, 102, 241),
-        },
-        TrackData {
-            id: "veezha_veera".into(),
-            title: "Veezha Veera (From \"OM Chapter 1: Udhira...\"".into(),
-            artist: "Sai Abhyankkar, Tippu & Arun Srinivasan • 39M plays".into(),
-            album: "OM Chapter 1".into(),
-            duration: "4:12".into(),
-            format_badge: "FLAC 24b".into(),
-            is_playing: false,
-            is_favorite: false,
-            color_hue: slint::Color::from_rgb_u8(239, 68, 68),
-        },
-    ];
-
-    let qp_col2 = vec![
-        TrackData {
-            id: "kalyani_remix".into(),
-            title: "KALYANI (Remix)".into(),
-            artist: "ARJN, KDS, FIFTY4 & Shreya Ghoshal • 679M plays".into(),
-            album: "KALYANI".into(),
-            duration: "3:18".into(),
-            format_badge: "Opus 160k".into(),
-            is_playing: false,
-            is_favorite: true,
-            color_hue: slint::Color::from_rgb_u8(245, 158, 11),
-        },
-        TrackData {
-            id: "raataan_lambiyan".into(),
-            title: "Raataan Lambiyan (From \"Shershaah\")".into(),
-            artist: "Jubin Nautiyal, Tanishk Bagchi & Asees Kaur • 1.4B plays".into(),
-            album: "Shershaah".into(),
-            duration: "3:50".into(),
-            format_badge: "FLAC".into(),
-            is_playing: false,
-            is_favorite: false,
-            color_hue: slint::Color::from_rgb_u8(16, 185, 129),
-        },
-        TrackData {
-            id: "alfaaz".into(),
-            title: "Alfaaz".into(),
-            artist: "Hamza Malik & Zain Zohaib • 131M plays".into(),
-            album: "Alfaaz".into(),
-            duration: "3:22".into(),
-            format_badge: "Opus 160k".into(),
-            is_playing: false,
-            is_favorite: false,
-            color_hue: slint::Color::from_rgb_u8(139, 92, 246),
-        },
-    ];
-
-    let ml_col1 = vec![
-        TrackData {
-            id: "barbaad_rep".into(),
-            title: "Barbaad Reprise - Female (Movie: Saiyaara)".into(),
-            artist: "Shilpa Rao & The Rish".into(),
-            album: "Saiyaara".into(),
-            duration: "4:42".into(),
-            format_badge: "Opus 160k".into(),
-            is_playing: false,
-            is_favorite: true,
-            color_hue: slint::Color::from_rgb_u8(236, 72, 153),
-        },
-        TrackData {
-            id: "dhun_sai".into(),
-            title: "Dhun (Movie: Saiyaara)".into(),
-            artist: "Arijit Singh & Mithoon".into(),
-            album: "Saiyaara".into(),
-            duration: "4:15".into(),
-            format_badge: "FLAC 24b".into(),
-            is_playing: false,
-            is_favorite: false,
-            color_hue: slint::Color::from_rgb_u8(59, 130, 246),
-        },
-        TrackData {
-            id: "khushi_sai".into(),
-            title: "Khushi Ko Barbaad Hone Mein (Movie: Saiyaara)".into(),
-            artist: "The Rish & John Stewart Eduri".into(),
-            album: "Saiyaara".into(),
-            duration: "3:58".into(),
-            format_badge: "Opus 160k".into(),
-            is_playing: false,
-            is_favorite: false,
-            color_hue: slint::Color::from_rgb_u8(139, 92, 246),
-        },
-    ];
-
-    let ml_col2 = vec![
-        TrackData {
-            id: "tum_hi_aana".into(),
-            title: "Tum Hi Aana (From \"Marjaavaan\")".into(),
-            artist: "Payal Dev & Jubin Nautiyal".into(),
-            album: "Marjaavaan".into(),
-            duration: "4:09".into(),
-            format_badge: "Opus 160k".into(),
-            is_playing: false,
-            is_favorite: false,
-            color_hue: slint::Color::from_rgb_u8(16, 185, 129),
-        },
-        TrackData {
-            id: "tum_ho_toh".into(),
-            title: "Tum Ho Toh (Movie: Saiyaara)".into(),
-            artist: "Vishal Mishra, Raj Shekhar & Hansika Pareek".into(),
-            album: "Saiyaara".into(),
-            duration: "3:40".into(),
-            format_badge: "Opus 160k".into(),
-            is_playing: false,
-            is_favorite: true,
-            color_hue: slint::Color::from_rgb_u8(99, 102, 241),
-        },
-        TrackData {
-            id: "saiyaara_title".into(),
-            title: "Saiyaara (Movie: Saiyaara)".into(),
-            artist: "Faheem Abdullah, Arslan Nizami & Irshad Kamil".into(),
-            album: "Saiyaara".into(),
-            duration: "4:30".into(),
-            format_badge: "FLAC".into(),
-            is_playing: false,
-            is_favorite: false,
-            color_hue: slint::Color::from_rgb_u8(245, 158, 11),
-        },
-    ];
-
-    window.set_quick_picks_col1(ModelRc::new(VecModel::from(qp_col1)));
-    window.set_quick_picks_col2(ModelRc::new(VecModel::from(qp_col2)));
-    window.set_more_like_col1(ModelRc::new(VecModel::from(ml_col1)));
-    window.set_more_like_col2(ModelRc::new(VecModel::from(ml_col2)));
+    // 2-Column Dynamic Quick Picks & More Like Models (Populated 100% dynamically via InnerTube)
+    window.set_quick_picks_col1(ModelRc::new(VecModel::from(vec![])));
+    window.set_quick_picks_col2(ModelRc::new(VecModel::from(vec![])));
+    window.set_more_like_col1(ModelRc::new(VecModel::from(vec![])));
+    window.set_more_like_col2(ModelRc::new(VecModel::from(vec![])));
 
     // Populate initial models
     window.set_home_tracks(ModelRc::new(VecModel::from(home_tracks.clone())));
@@ -684,22 +556,67 @@ fn main() -> Result<(), slint::PlatformError> {
     // Initial artwork load
     load_artwork_async(win_weak.clone(), "dhurandhar".to_string());
 
-    // Asynchronously fetch live YouTube Music Home Feed & Recommendations (Tubefast architecture)
+    // Asynchronously fetch live YouTube Music Home Feed & Recommendations (Tubefast Engine)
     let ytm_home = Arc::clone(&ytm);
     let win_home = win_weak.clone();
     std::thread::spawn(move || {
-        // Prefer explore (Top Trending Charts) or home feed
-        let page = ytm_home.browse("FEmusic_explore", &|_| {})
-            .or_else(|_| ytm_home.browse("FEmusic_home", &|_| {}));
+        // 1. Fetch live FEmusic_home (Provides "Quick picks" and "Trending songs for you")
+        if let Ok(home_page) = ytm_home.browse("FEmusic_home", &|_| {}) {
+            let mut qp_tracks: Vec<TrackData> = Vec::new();
 
-        if let Ok(page) = page {
-            let mut dynamic_tracks = Vec::new();
-            let mut dynamic_albums = Vec::new();
-            let mut dynamic_artists = Vec::new();
+            for sec in &home_page.sections {
+                if sec.title == "Quick picks" || sec.title.contains("Quick") || qp_tracks.is_empty() {
+                    for (i, item) in sec.items.iter().enumerate() {
+                        if item.is_song() {
+                            let hue = match i % 5 {
+                                0 => slint::Color::from_rgb_u8(236, 72, 153),
+                                1 => slint::Color::from_rgb_u8(99, 102, 241),
+                                2 => slint::Color::from_rgb_u8(139, 92, 246),
+                                3 => slint::Color::from_rgb_u8(16, 185, 129),
+                                _ => slint::Color::from_rgb_u8(245, 158, 11),
+                            };
+                            qp_tracks.push(TrackData {
+                                id: item.video_id.clone().into(),
+                                title: item.title.clone().into(),
+                                artist: item.subtitle.clone().into(),
+                                album: item.extra.clone().into(),
+                                duration: if item.duration.is_empty() { "3:30".into() } else { item.duration.clone().into() },
+                                format_badge: "Opus 160k".into(),
+                                is_playing: false,
+                                is_favorite: false,
+                                color_hue: hue,
+                            });
+                        }
+                    }
+                }
+                if qp_tracks.len() >= 6 {
+                    break;
+                }
+            }
 
-            for sec in page.sections {
-                for (i, item) in sec.items.into_iter().enumerate() {
-                    if item.is_song() && dynamic_tracks.len() < 15 {
+            if qp_tracks.len() >= 6 {
+                let qp1: Vec<TrackData> = qp_tracks.iter().take(3).cloned().collect();
+                let qp2: Vec<TrackData> = qp_tracks.iter().skip(3).take(3).cloned().collect();
+                let win_qp = win_home.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(w) = win_qp.upgrade() {
+                        w.set_quick_picks_col1(ModelRc::new(VecModel::from(qp1)));
+                        w.set_quick_picks_col2(ModelRc::new(VecModel::from(qp2)));
+                    }
+                });
+            }
+        }
+
+        // 2. Fetch Radio Recommendations for Recent Seeds ("More like {seed}")
+        let recent_items = storage::load_recent_history();
+        if let Some(seed) = recent_items.first() {
+            if let Ok(radio_items) = ytm_home.radio(&seed.id) {
+                let ml_tracks: Vec<TrackData> = radio_items
+                    .into_iter()
+                    .filter(|it| it.is_song() && it.video_id != seed.id)
+                    .take(6)
+                    .enumerate()
+                    .map(|(i, it)| {
                         let hue = match i % 5 {
                             0 => slint::Color::from_rgb_u8(236, 72, 153),
                             1 => slint::Color::from_rgb_u8(99, 102, 241),
@@ -707,18 +624,44 @@ fn main() -> Result<(), slint::PlatformError> {
                             3 => slint::Color::from_rgb_u8(16, 185, 129),
                             _ => slint::Color::from_rgb_u8(245, 158, 11),
                         };
-                        dynamic_tracks.push(TrackData {
-                            id: item.video_id.into(),
-                            title: item.title.into(),
-                            artist: item.subtitle.into(),
-                            album: item.extra.into(),
-                            duration: if item.duration.is_empty() { "3:30".into() } else { item.duration.into() },
+                        TrackData {
+                            id: it.video_id.into(),
+                            title: it.title.into(),
+                            artist: it.subtitle.into(),
+                            album: "YouTube Music".into(),
+                            duration: if it.duration.is_empty() { "3:30".into() } else { it.duration.into() },
                             format_badge: "Opus 160k".into(),
                             is_playing: false,
                             is_favorite: false,
                             color_hue: hue,
-                        });
-                    } else if !item.album_id.is_empty() && dynamic_albums.len() < 8 {
+                        }
+                    })
+                    .collect();
+
+                if ml_tracks.len() >= 6 {
+                    let ml1: Vec<TrackData> = ml_tracks.iter().take(3).cloned().collect();
+                    let ml2: Vec<TrackData> = ml_tracks.iter().skip(3).take(3).cloned().collect();
+                    let seed_title = format!("More like {}", seed.title);
+                    let win_ml = win_home.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(w) = win_ml.upgrade() {
+                            w.set_more_like_title(seed_title.into());
+                            w.set_more_like_col1(ModelRc::new(VecModel::from(ml1)));
+                            w.set_more_like_col2(ModelRc::new(VecModel::from(ml2)));
+                        }
+                    });
+                }
+            }
+        }
+
+        // 3. Fetch FEmusic_explore for Dynamic Albums and Artists
+        if let Ok(explore_page) = ytm_home.browse("FEmusic_explore", &|_| {}) {
+            let mut dynamic_albums = Vec::new();
+            let mut dynamic_artists = Vec::new();
+
+            for sec in explore_page.sections {
+                for item in sec.items {
+                    if !item.album_id.is_empty() && dynamic_albums.len() < 8 {
                         dynamic_albums.push(AlbumData {
                             id: item.album_id.into(),
                             title: item.title.into(),
@@ -737,44 +680,9 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
 
-            // If regional explore returned no artist channels, extract trending artists from tracks
-            if dynamic_artists.is_empty() {
-                let mut seen_artists = std::collections::HashSet::new();
-                for t in &dynamic_tracks {
-                    let artist_str = t.artist.as_str();
-                    let clean = artist_str.split(&[',', '•', '&'][..]).next().unwrap_or(artist_str).trim();
-                    if !clean.is_empty() && clean != "Video" && clean != "Song" && seen_artists.insert(clean.to_string()) {
-                        dynamic_artists.push(ArtistData {
-                            name: clean.into(),
-                            role: "Trending Artist".into(),
-                            color_hue: t.color_hue,
-                        });
-                        if dynamic_artists.len() >= 5 {
-                            break;
-                        }
-                    }
-                }
-            }
-
+            let win_exp = win_home.clone();
             let _ = slint::invoke_from_event_loop(move || {
-                if let Some(w) = win_home.upgrade() {
-                    if !dynamic_tracks.is_empty() {
-                        w.set_home_tracks(ModelRc::new(VecModel::from(dynamic_tracks.clone())));
-                        w.set_queue_tracks(ModelRc::new(VecModel::from(dynamic_tracks.clone())));
-
-                        let qp1: Vec<TrackData> = dynamic_tracks.iter().take(3).cloned().collect();
-                        let qp2: Vec<TrackData> = dynamic_tracks.iter().skip(3).take(3).cloned().collect();
-                        let ml1: Vec<TrackData> = dynamic_tracks.iter().skip(6).take(3).cloned().collect();
-                        let ml2: Vec<TrackData> = dynamic_tracks.iter().skip(9).take(3).cloned().collect();
-                        if qp1.len() == 3 && qp2.len() == 3 {
-                            w.set_quick_picks_col1(ModelRc::new(VecModel::from(qp1)));
-                            w.set_quick_picks_col2(ModelRc::new(VecModel::from(qp2)));
-                        }
-                        if ml1.len() == 3 && ml2.len() == 3 {
-                            w.set_more_like_col1(ModelRc::new(VecModel::from(ml1)));
-                            w.set_more_like_col2(ModelRc::new(VecModel::from(ml2)));
-                        }
-                    }
+                if let Some(w) = win_exp.upgrade() {
                     if !dynamic_albums.is_empty() {
                         w.set_home_albums(ModelRc::new(VecModel::from(dynamic_albums)));
                     }
@@ -1117,6 +1025,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // 13. Play Track (Instant Real Music Playback & History Persistence)
     let audio_play = Arc::clone(&audio);
     let ytm_play = Arc::clone(&ytm);
+    let lib_play = Arc::clone(&library);
     let win_track = win_weak.clone();
     window.on_play_track(move |id, title, artist, dur_secs| {
         let video_id = id.to_string();
@@ -1157,6 +1066,79 @@ fn main() -> Result<(), slint::PlatformError> {
         let audio = Arc::clone(&audio_play);
         let yt = Arc::clone(&ytm_play);
         let win_art = win_track.clone();
+
+        // Dynamically auto-generate queue from radio when playing any track!
+        let yt_radio = Arc::clone(&ytm_play);
+        let lib_q = Arc::clone(&lib_play);
+        let win_queue = win_track.clone();
+        let seed_id = video_id.clone();
+        let seed_tit = tit.clone();
+        let seed_art = art.clone();
+
+        std::thread::spawn(move || {
+            if !seed_id.starts_with("local:") && !seed_id.is_empty() {
+                let actual_vid = if seed_id.starts_with("curated-") {
+                    let q = format!("{} {}", seed_tit, seed_art);
+                    yt_radio.search(&q).ok().and_then(|p| p.songs().first().map(|s| s.video_id.clone())).unwrap_or_default()
+                } else {
+                    seed_id.clone()
+                };
+
+                if !actual_vid.is_empty() {
+                    if let Ok(radio_items) = yt_radio.radio(&actual_vid) {
+                        let mut lib_items = Vec::new();
+                        let mut slint_items = Vec::new();
+
+                        for (i, it) in radio_items.into_iter().filter(|it| it.is_song() && it.video_id != actual_vid).enumerate() {
+                            let hue = match i % 5 {
+                                0 => slint::Color::from_rgb_u8(236, 72, 153),
+                                1 => slint::Color::from_rgb_u8(99, 102, 241),
+                                2 => slint::Color::from_rgb_u8(139, 92, 246),
+                                3 => slint::Color::from_rgb_u8(16, 185, 129),
+                                _ => slint::Color::from_rgb_u8(245, 158, 11),
+                            };
+
+                            let dur_str = if it.duration.is_empty() { "3:30".to_string() } else { it.duration.clone() };
+                            let dur_secs = parse_duration_to_secs(&dur_str);
+
+                            lib_items.push(crate::provider::TrackItem {
+                                id: it.video_id.clone(),
+                                title: it.title.clone(),
+                                artist: it.subtitle.clone(),
+                                album: "YouTube Music".to_string(),
+                                duration_secs: dur_secs,
+                                thumbnail_url: String::new(),
+                                is_local: false,
+                                file_path: None,
+                                loudness_db: None,
+                                format_badge: "Opus 160k".to_string(),
+                            });
+
+                            slint_items.push(TrackData {
+                                id: it.video_id.into(),
+                                title: it.title.into(),
+                                artist: it.subtitle.into(),
+                                album: "YouTube Music".into(),
+                                duration: dur_str.into(),
+                                format_badge: "Opus 160k".into(),
+                                is_playing: false,
+                                is_favorite: false,
+                                color_hue: hue,
+                            });
+                        }
+
+                        if !slint_items.is_empty() {
+                            lib_q.queue().set_items(lib_items, Some(0));
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(w) = win_queue.upgrade() {
+                                    w.set_queue_tracks(ModelRc::new(VecModel::from(slint_items)));
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        });
 
         std::thread::spawn(move || {
             if video_id.starts_with("local:") {

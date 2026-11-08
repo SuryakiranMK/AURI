@@ -1,6 +1,10 @@
 # AURI: Minimalist, Ultra-Lightweight, Gaming-First Desktop Music Player
 
-[![Release](https://img.shields.io/badge/Release-v1.0.0-8B5CF6.svg?style=flat-square)](https://github.com/SuryakiranMK/AURI/releases/tag/v1.0.0)
+<p align="center">
+  <img src="assets/banner_wide.jpg" alt="AURI Banner" width="100%" />
+</p>
+
+[![Release](https://img.shields.io/badge/Release-v1.1.0-8B5CF6.svg?style=flat-square)](https://github.com/SuryakiranMK/AURI/releases/tag/v1.1.0)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square)](LICENSE)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-0078D6.svg?style=flat-square)](https://github.com/SuryakiranMK/AURI)
 [![Rust](https://img.shields.io/badge/Rust-1.99.1%20(2021)-orange.svg?style=flat-square)](https://www.rust-lang.org/)

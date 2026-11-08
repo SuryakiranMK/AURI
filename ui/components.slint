@@ -217,36 +217,36 @@ export component AuriTrackCard inherits Rectangle {
     in property <bool> is_playing: false;
     callback clicked();
 
-    height: 54px;
-    border-radius: Theme.radius_sm;
-    background: card_touch.has_hover ? Theme.bg_surface_hover : Colors.transparent;
-    animate background { duration: 120ms; }
+    height: 64px;
+    border-radius: 8px;
+    background: card_touch.has_hover ? #FFFFFF10 : Colors.transparent;
+    animate background { duration: 100ms; }
 
     card_touch := TouchArea {
         clicked => { root.clicked(); }
     }
 
     HorizontalLayout {
-        padding_left: 6px;
+        padding_left: 8px;
         padding_right: 8px;
-        spacing: 12px;
+        spacing: 14px;
         alignment: center;
 
-        // Artwork (44x44px rounded)
+        // Artwork (48x48px rounded square matching Tubefast Compact Layout)
         Rectangle {
-            width: 44px;
-            height: 44px;
+            width: 48px;
+            height: 48px;
             border-radius: 6px;
             clip: true;
             background: @linear-gradient(135deg, root.color_hue.darker(30%) 0%, #151722 100%);
             border-width: 1px;
-            border-color: root.is_playing ? Theme.accent : Theme.border_glass;
+            border-color: root.is_playing ? Theme.accent : #FFFFFF15;
             y: (parent.height - self.height) / 2;
 
             Image {
                 source: @image-url("../assets/icons/music.svg");
-                width: 18px;
-                height: 18px;
+                width: 20px;
+                height: 20px;
                 image-fit: contain;
                 colorize: #FFFFFF;
                 x: (parent.width - self.width) / 2;
@@ -261,8 +261,8 @@ export component AuriTrackCard inherits Rectangle {
 
                 Image {
                     source: @image-url("../assets/icons/play.svg");
-                    width: 16px;
-                    height: 16px;
+                    width: 18px;
+                    height: 18px;
                     image-fit: contain;
                     colorize: #FFFFFF;
                     x: (parent.width - self.width) / 2;
@@ -271,24 +271,25 @@ export component AuriTrackCard inherits Rectangle {
             }
         }
 
-        // Title and Subtitle Stacked (Left-Aligned)
+        // Title and Subtitle Stacked (Left-Aligned Precision Typography)
         VerticalLayout {
             horizontal_stretch: 1;
             alignment: center;
-            spacing: 2px;
+            spacing: 3px;
 
             Text {
                 text: root.title;
-                font_size: 13px;
+                font_size: 14px;
                 font_weight: 600;
-                color: #FFFFFF;
+                color: root.is_playing ? Theme.accent : #ECEDEF;
                 overflow: elide;
             }
 
             Text {
                 text: root.subtitle;
-                font_size: 11px;
-                color: Theme.text_muted;
+                font_size: 12px;
+                font_weight: 400;
+                color: #A6A6A6;
                 overflow: elide;
             }
         }
