@@ -37,6 +37,88 @@ const WINDOW_KEY: &str = "window";
 pub const WINDOW_SIZE: [f32; 2] = [1360.0, 860.0];
 pub const WINDOW_MIN: [f32; 2] = [940.0, 600.0];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum SettingsTab {
+    #[default]
+    General,
+    Equalizer,
+    Performance,
+    MiniMode,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Default)]
+pub enum MiniPalette {
+    #[default]
+    CyberViolet,
+    NeonEmerald,
+    ElectricCyan,
+    SunsetCrimson,
+    AmberGold,
+    Monochrome,
+}
+
+impl MiniPalette {
+    pub const ALL: [MiniPalette; 6] = [
+        MiniPalette::CyberViolet,
+        MiniPalette::NeonEmerald,
+        MiniPalette::ElectricCyan,
+        MiniPalette::SunsetCrimson,
+        MiniPalette::AmberGold,
+        MiniPalette::Monochrome,
+    ];
+
+    #[allow(dead_code)]
+    pub fn name(&self) -> &'static str {
+        match self {
+            MiniPalette::CyberViolet => "Cyber Violet",
+            MiniPalette::NeonEmerald => "Neon Emerald",
+            MiniPalette::ElectricCyan => "Electric Cyan",
+            MiniPalette::SunsetCrimson => "Sunset Crimson",
+            MiniPalette::AmberGold => "Amber Gold",
+            MiniPalette::Monochrome => "Monochrome Glass",
+        }
+    }
+
+    pub fn color(&self) -> eframe::egui::Color32 {
+        match self {
+            MiniPalette::CyberViolet => eframe::egui::Color32::from_rgb(139, 92, 246),
+            MiniPalette::NeonEmerald => eframe::egui::Color32::from_rgb(16, 185, 129),
+            MiniPalette::ElectricCyan => eframe::egui::Color32::from_rgb(6, 182, 212),
+            MiniPalette::SunsetCrimson => eframe::egui::Color32::from_rgb(244, 63, 94),
+            MiniPalette::AmberGold => eframe::egui::Color32::from_rgb(245, 158, 11),
+            MiniPalette::Monochrome => eframe::egui::Color32::from_rgb(226, 232, 240),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Default)]
+pub enum PerfProfile {
+    #[default]
+    CompetitiveGaming,
+    Balanced,
+    Audiophile,
+    Custom,
+}
+
+impl PerfProfile {
+    pub const ALL: [PerfProfile; 4] = [
+        PerfProfile::CompetitiveGaming,
+        PerfProfile::Balanced,
+        PerfProfile::Audiophile,
+        PerfProfile::Custom,
+    ];
+
+    #[allow(dead_code)]
+    pub fn name(&self) -> &'static str {
+        match self {
+            PerfProfile::CompetitiveGaming => "Competitive Gaming",
+            PerfProfile::Balanced => "Balanced Desktop",
+            PerfProfile::Audiophile => "Audiophile Max",
+            PerfProfile::Custom => "Custom Profile",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Route {
     Home,
@@ -44,7 +126,7 @@ pub enum Route {
     Browse(String),
     Liked,
     Recent,
-    Settings,
+    Settings(SettingsTab),
 }
 
 pub enum Load {
@@ -103,6 +185,30 @@ pub struct Saved {
     pub eq_preset: crate::dsp::EqPreset,
     #[serde(default = "default_eq_gains")]
     pub eq_gains: [f32; 10],
+
+    #[serde(default)]
+    pub mini_palette: MiniPalette,
+    #[serde(default = "default_mini_opacity")]
+    pub mini_opacity: f32,
+    #[serde(default = "default_true")]
+    pub mini_show_shuffle_repeat: bool,
+    #[serde(default = "default_true")]
+    pub mini_show_queue: bool,
+    #[serde(default = "default_true")]
+    pub mini_show_volume: bool,
+    #[serde(default = "default_true")]
+    pub mini_show_clock: bool,
+    #[serde(default = "default_true")]
+    pub mini_always_on_top: bool,
+
+    #[serde(default)]
+    pub perf_profile: PerfProfile,
+    #[serde(default = "default_perf_audio_buffer")]
+    pub perf_audio_buffer_mb: f32,
+    #[serde(default = "default_perf_art_cache")]
+    pub perf_art_cache_mb: usize,
+    #[serde(default = "default_perf_tick_fps")]
+    pub perf_tick_fps: u32,
 }
 
 fn default_true() -> bool {
@@ -119,6 +225,22 @@ fn default_eq_preset() -> crate::dsp::EqPreset {
 
 fn default_eq_gains() -> [f32; 10] {
     [0.0; 10]
+}
+
+fn default_mini_opacity() -> f32 {
+    0.92
+}
+
+fn default_perf_audio_buffer() -> f32 {
+    1.5
+}
+
+fn default_perf_art_cache() -> usize {
+    4
+}
+
+fn default_perf_tick_fps() -> u32 {
+    1
 }
 
 pub enum Words {
@@ -199,6 +321,17 @@ impl Default for Saved {
             eq_enabled: false,
             eq_preset: crate::dsp::EqPreset::Flat,
             eq_gains: [0.0; 10],
+            mini_palette: MiniPalette::CyberViolet,
+            mini_opacity: 0.92,
+            mini_show_shuffle_repeat: true,
+            mini_show_queue: true,
+            mini_show_volume: true,
+            mini_show_clock: true,
+            mini_always_on_top: true,
+            perf_profile: PerfProfile::CompetitiveGaming,
+            perf_audio_buffer_mb: 1.5,
+            perf_art_cache_mb: 4,
+            perf_tick_fps: 1,
         }
     }
 }
@@ -280,12 +413,27 @@ pub enum Action {
     AutoPurgeRam(bool),
     TogglePerformanceMode,
     SetPerfAggressiveRam(bool),
+    #[allow(dead_code)]
     SetPerfSuspendAnimations(bool),
     SetPerfDisableBlurs(bool),
     SetPerfCompactBuffers(bool),
     ToggleEq(bool),
     SetEqPreset(crate::dsp::EqPreset),
     SetEqGain(usize, f32),
+    #[allow(dead_code)]
+    SetSettingsTab(SettingsTab),
+    SetMiniPalette(MiniPalette),
+    SetMiniOpacity(f32),
+    SetMiniShowShuffleRepeat(bool),
+    SetMiniShowQueue(bool),
+    SetMiniShowVolume(bool),
+    SetMiniShowClock(bool),
+    SetMiniAlwaysOnTop(bool),
+    ToggleMiniQueue,
+    SetPerfProfile(PerfProfile),
+    SetPerfAudioBuffer(f32),
+    SetPerfArtCache(usize),
+    SetPerfTickFps(u32),
 }
 
 enum Event {
@@ -348,6 +496,7 @@ pub struct App {
     pub hotkey_taken: Vec<Command>,
     pub recording: Option<Command>,
     pub last_purge: Instant,
+    pub mini_queue_open: bool,
     restart: Option<PathBuf>,
 }
 
@@ -426,14 +575,18 @@ impl App {
             hotkey_taken: Vec::new(),
             recording: None,
             last_purge: Instant::now(),
+            mini_queue_open: false,
             restart: None,
         };
+        app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
         if app.saved.mini_mode {
+            app.title_bar.enable_transparency();
             app.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
             app.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
             app.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
-            app.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, 104.0)));
-            app.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+            app.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(384.0, 108.0)));
+            let level = if app.saved.mini_always_on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
+            app.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
         }
         match query {
             Some(query) => {
@@ -577,7 +730,7 @@ impl App {
     }
 
     fn ensure(&mut self, route: &Route) {
-        if self.pages.contains_key(route) || matches!(route, Route::Liked | Route::Recent | Route::Settings) {
+        if self.pages.contains_key(route) || matches!(route, Route::Liked | Route::Recent | Route::Settings(_)) {
             return;
         }
         if self.pages.len() >= CACHED_PAGES {
@@ -610,7 +763,7 @@ impl App {
                     let _ = sender.send(Event::Page(route.clone(), Ok(Box::new(page.clone()))));
                     ctx.request_repaint();
                 }),
-                Route::Liked | Route::Recent | Route::Settings => return,
+                Route::Liked | Route::Recent | Route::Settings(_) => return,
             };
             let _ = sender.send(Event::Page(route, result.map(Box::new)));
             ctx.request_repaint();
@@ -938,7 +1091,7 @@ impl App {
     }
 
     fn record(&mut self, ctx: &egui::Context) -> bool {
-        if *self.route() != Route::Settings {
+        if !matches!(*self.route(), Route::Settings(_)) {
             self.set_recording(None);
         }
         let Some(command) = self.recording else {
@@ -1208,12 +1361,15 @@ impl App {
             Action::ToggleMiniMode => {
                 self.saved.mini_mode = !self.saved.mini_mode;
                 if self.saved.mini_mode {
+                    self.title_bar.enable_transparency();
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, 104.0)));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
-                    if self.saved.auto_purge_ram {
+                    let height = if self.mini_queue_open { 260.0 } else { 108.0 };
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(384.0, height)));
+                    let level = if self.saved.mini_always_on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+                    if self.saved.auto_purge_ram || (self.saved.performance_mode && self.saved.perf_aggressive_ram) {
                         self.apply(Action::PurgeMemory);
                     }
                 } else {
@@ -1281,11 +1437,94 @@ impl App {
                     self.player.set_eq_gains(self.saved.eq_gains);
                 }
             }
+            Action::SetSettingsTab(tab) => {
+                self.expanded = false;
+                self.go(Route::Settings(tab));
+            }
+            Action::SetMiniPalette(p) => self.saved.mini_palette = p,
+            Action::SetMiniOpacity(o) => self.saved.mini_opacity = o.clamp(0.40, 1.0),
+            Action::SetMiniShowShuffleRepeat(v) => self.saved.mini_show_shuffle_repeat = v,
+            Action::SetMiniShowQueue(v) => self.saved.mini_show_queue = v,
+            Action::SetMiniShowVolume(v) => self.saved.mini_show_volume = v,
+            Action::SetMiniShowClock(v) => self.saved.mini_show_clock = v,
+            Action::SetMiniAlwaysOnTop(v) => {
+                self.saved.mini_always_on_top = v;
+                if self.saved.mini_mode {
+                    let level = if v { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+                }
+            }
+            Action::ToggleMiniQueue => {
+                self.mini_queue_open = !self.mini_queue_open;
+                if self.saved.mini_mode {
+                    let height = if self.mini_queue_open { 260.0 } else { 108.0 };
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(384.0, height)));
+                }
+            }
+            Action::SetPerfProfile(profile) => {
+                self.saved.perf_profile = profile;
+                match profile {
+                    PerfProfile::CompetitiveGaming => {
+                        self.saved.perf_audio_buffer_mb = 1.5;
+                        self.saved.perf_art_cache_mb = 4;
+                        self.saved.perf_tick_fps = 1;
+                        self.saved.perf_aggressive_ram = true;
+                        self.saved.perf_disable_blurs = true;
+                        self.saved.perf_compact_buffers = true;
+                        self.apply(Action::PurgeMemory);
+                    }
+                    PerfProfile::Balanced => {
+                        self.saved.perf_audio_buffer_mb = 4.0;
+                        self.saved.perf_art_cache_mb = 12;
+                        self.saved.perf_tick_fps = 30;
+                        self.saved.perf_aggressive_ram = false;
+                        self.saved.perf_disable_blurs = false;
+                        self.saved.perf_compact_buffers = false;
+                    }
+                    PerfProfile::Audiophile => {
+                        self.saved.perf_audio_buffer_mb = 8.0;
+                        self.saved.perf_art_cache_mb = 32;
+                        self.saved.perf_tick_fps = 60;
+                        self.saved.perf_aggressive_ram = false;
+                        self.saved.perf_disable_blurs = false;
+                        self.saved.perf_compact_buffers = false;
+                    }
+                    PerfProfile::Custom => {}
+                }
+                self.art.set_budget_bytes(self.saved.perf_art_cache_mb * 1024 * 1024);
+            }
+            Action::SetPerfAudioBuffer(mb) => {
+                self.saved.perf_profile = PerfProfile::Custom;
+                self.saved.perf_audio_buffer_mb = mb.clamp(1.0, 32.0);
+            }
+            Action::SetPerfArtCache(mb) => {
+                self.saved.perf_profile = PerfProfile::Custom;
+                self.saved.perf_art_cache_mb = mb.clamp(2, 64);
+                self.art.set_budget_bytes(self.saved.perf_art_cache_mb * 1024 * 1024);
+            }
+            Action::SetPerfTickFps(fps) => {
+                self.saved.perf_profile = PerfProfile::Custom;
+                self.saved.perf_tick_fps = fps.clamp(1, 144);
+            }
         }
     }
 }
 
 impl eframe::App for App {
+    fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
+        if self.saved.mini_mode {
+            [0.0, 0.0, 0.0, 0.0]
+        } else {
+            let fill = visuals.panel_fill;
+            [
+                fill.r() as f32 / 255.0,
+                fill.g() as f32 / 255.0,
+                fill.b() as f32 / 255.0,
+                1.0,
+            ]
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let (size, minimized) = ctx.input(|input| (input.content_rect().size(), input.viewport().minimized == Some(true)));
         if minimized && (self.saved.auto_purge_ram || (self.saved.performance_mode && self.saved.perf_aggressive_ram)) {
@@ -1307,7 +1546,8 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, 104.0)));
+                let height = if self.mini_queue_open { 260.0 } else { 108.0 };
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(384.0, height)));
             }
             actions.extend(ui::draw_mini(self, ctx));
         } else {
@@ -1319,8 +1559,8 @@ impl eframe::App for App {
         self.look_up_covers();
         self.look_up_lyrics();
         if self.playing() || self.player.loading() {
-            let tick = if self.saved.performance_mode && self.saved.perf_suspend_animations {
-                Duration::from_millis(1000)
+            let tick = if self.saved.performance_mode {
+                Duration::from_millis(1000 / self.saved.perf_tick_fps.max(1) as u64)
             } else {
                 PROGRESS_TICK
             };

@@ -3,12 +3,13 @@ use eframe::egui::{self, Color32, ColorImage, TextureHandle, TextureId, TextureO
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
+use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 const WORKERS: usize = 2;
-const BUDGET_BYTES: usize = 4 * 1024 * 1024;
+const DEFAULT_BUDGET_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES: u64 = 6 * 1024 * 1024;
 const RETRY_AFTER: Duration = Duration::from_secs(20);
 // ponytail: the 8 px size is the blur, stretched with linear filtering
@@ -46,6 +47,7 @@ pub struct Art {
     cache: RefCell<Cache>,
     jobs: Jobs,
     loaded: Receiver<Loaded>,
+    budget: Arc<AtomicUsize>,
 }
 
 impl Art {
@@ -60,7 +62,12 @@ impl Art {
             cache: RefCell::default(),
             jobs,
             loaded,
+            budget: Arc::new(AtomicUsize::new(DEFAULT_BUDGET_BYTES)),
         }
+    }
+
+    pub fn set_budget_bytes(&self, bytes: usize) {
+        self.budget.store(bytes, Relaxed);
     }
 
     pub fn begin_frame(&self, ctx: &egui::Context) {
@@ -83,7 +90,8 @@ impl Art {
             };
             cache.slots.insert(key, slot);
         }
-        if cache.bytes > BUDGET_BYTES {
+        let budget = self.budget.load(Relaxed);
+        if cache.bytes > budget {
             let mut idle: Vec<(u64, usize, Sized)> = cache
                 .slots
                 .iter()
@@ -94,7 +102,7 @@ impl Art {
                 .collect();
             idle.sort_unstable();
             for (_, bytes, key) in idle {
-                if cache.bytes <= BUDGET_BYTES * 3 / 4 {
+                if cache.bytes <= budget * 3 / 4 {
                     break;
                 }
                 cache.slots.remove(&key);
