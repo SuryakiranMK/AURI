@@ -49,6 +49,8 @@ struct Shared {
     error: Mutex<Option<String>>,
     loudness_normalizer: AtomicBool,
     loudness_gain: AtomicU32,
+    eq_enabled: AtomicBool,
+    eq_gains: Mutex<[f32; 10]>,
 }
 
 struct Chunk {
@@ -416,6 +418,7 @@ struct PcmSource {
     shared: Arc<Shared>,
     wake: Wake,
     limiter: crate::dsp::SoftLimiter,
+    eq: crate::dsp::Equalizer,
 }
 
 impl PcmSource {
@@ -429,6 +432,7 @@ impl PcmSource {
             shared,
             wake,
             limiter: crate::dsp::SoftLimiter::default(),
+            eq: crate::dsp::Equalizer::default(),
         }
     }
 
@@ -450,10 +454,18 @@ impl PcmSource {
             self.rate = chunk.rate;
             self.channels = chunk.channels;
             self.samples = chunk.samples;
+            if self.shared.eq_enabled.load(Relaxed) {
+                if let Ok(gains) = self.shared.eq_gains.try_lock() {
+                    self.eq.set_gains(*gains);
+                }
+                self.eq.process_interleaved(&mut self.samples, self.channels as usize, self.rate);
+            }
             if self.shared.loudness_normalizer.load(Relaxed) {
                 let bits = self.shared.loudness_gain.load(Relaxed);
                 let gain = if bits == 0 { 1.0 } else { f32::from_bits(bits) };
                 self.limiter.process_buffer(&mut self.samples, gain);
+            } else if self.shared.eq_enabled.load(Relaxed) {
+                self.limiter.process_buffer(&mut self.samples, 1.0);
             }
             return;
         }
@@ -750,6 +762,16 @@ impl Player {
 
     pub fn set_loudness_normalizer(&self, enabled: bool) {
         self.shared.loudness_normalizer.store(enabled, Relaxed);
+    }
+
+    pub fn set_eq_enabled(&self, enabled: bool) {
+        self.shared.eq_enabled.store(enabled, Relaxed);
+    }
+
+    pub fn set_eq_gains(&self, gains: [f32; 10]) {
+        if let Ok(mut g) = self.shared.eq_gains.lock() {
+            *g = gains;
+        }
     }
 
     #[allow(dead_code)]

@@ -87,6 +87,38 @@ pub struct Saved {
     pub hotkeys: bool,
     pub hotkey_combos: [Option<Combo>; 5],
     pub auto_purge_ram: bool,
+    #[serde(default = "default_false")]
+    pub performance_mode: bool,
+    #[serde(default = "default_true")]
+    pub perf_aggressive_ram: bool,
+    #[serde(default = "default_true")]
+    pub perf_suspend_animations: bool,
+    #[serde(default = "default_true")]
+    pub perf_disable_blurs: bool,
+    #[serde(default = "default_true")]
+    pub perf_compact_buffers: bool,
+    #[serde(default = "default_false")]
+    pub eq_enabled: bool,
+    #[serde(default = "default_eq_preset")]
+    pub eq_preset: crate::dsp::EqPreset,
+    #[serde(default = "default_eq_gains")]
+    pub eq_gains: [f32; 10],
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_false() -> bool {
+    false
+}
+
+fn default_eq_preset() -> crate::dsp::EqPreset {
+    crate::dsp::EqPreset::Flat
+}
+
+fn default_eq_gains() -> [f32; 10] {
+    [0.0; 10]
 }
 
 pub enum Words {
@@ -159,6 +191,14 @@ impl Default for Saved {
             hotkeys: false,
             hotkey_combos: hotkeys::standard_combos(),
             auto_purge_ram: true,
+            performance_mode: false,
+            perf_aggressive_ram: true,
+            perf_suspend_animations: true,
+            perf_disable_blurs: true,
+            perf_compact_buffers: true,
+            eq_enabled: false,
+            eq_preset: crate::dsp::EqPreset::Flat,
+            eq_gains: [0.0; 10],
         }
     }
 }
@@ -236,7 +276,16 @@ pub enum Action {
     GlobalHotkeys(bool),
     Record(Option<Command>),
     ResetHotkeys,
+    #[allow(dead_code)]
     AutoPurgeRam(bool),
+    TogglePerformanceMode,
+    SetPerfAggressiveRam(bool),
+    SetPerfSuspendAnimations(bool),
+    SetPerfDisableBlurs(bool),
+    SetPerfCompactBuffers(bool),
+    ToggleEq(bool),
+    SetEqPreset(crate::dsp::EqPreset),
+    SetEqGain(usize, f32),
 }
 
 enum Event {
@@ -298,6 +347,7 @@ pub struct App {
     pub discord_linked: Option<bool>,
     pub hotkey_taken: Vec<Command>,
     pub recording: Option<Command>,
+    pub last_purge: Instant,
     restart: Option<PathBuf>,
 }
 
@@ -322,6 +372,8 @@ impl App {
         });
         player.set_volume(saved.volume);
         player.set_loudness_normalizer(saved.loudness_normalizer);
+        player.set_eq_enabled(saved.eq_enabled);
+        player.set_eq_gains(saved.eq_gains);
         let (sender, events) = mpsc::channel();
         let media = Media::new(cc, {
             let (sender, ctx) = (sender.clone(), ctx.clone());
@@ -373,8 +425,16 @@ impl App {
             discord_linked: None,
             hotkey_taken: Vec::new(),
             recording: None,
+            last_purge: Instant::now(),
             restart: None,
         };
+        if app.saved.mini_mode {
+            app.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+            app.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
+            app.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+            app.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, 104.0)));
+            app.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+        }
         match query {
             Some(query) => {
                 app.query = query.clone();
@@ -651,6 +711,9 @@ impl App {
         self.resume_at = None;
         self.saved.current = Some(index);
         self.player.load(&item.video_id);
+        if self.saved.performance_mode && self.saved.perf_aggressive_ram {
+            self.apply(Action::PurgeMemory);
+        }
         if let Some(next) = self.saved.queue.get(index + 1) {
             self.player.preload(&next.video_id);
         }
@@ -1145,12 +1208,17 @@ impl App {
             Action::ToggleMiniMode => {
                 self.saved.mini_mode = !self.saved.mini_mode;
                 if self.saved.mini_mode {
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, 110.0)));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, 104.0)));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
                     if self.saved.auto_purge_ram {
                         self.apply(Action::PurgeMemory);
                     }
                 } else {
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
                 }
@@ -1185,6 +1253,34 @@ impl App {
                 self.restart_hotkeys();
             }
             Action::AutoPurgeRam(enabled) => self.saved.auto_purge_ram = enabled,
+            Action::TogglePerformanceMode => {
+                self.saved.performance_mode = !self.saved.performance_mode;
+                if self.saved.performance_mode && self.saved.perf_aggressive_ram {
+                    self.apply(Action::PurgeMemory);
+                }
+            }
+            Action::SetPerfAggressiveRam(enabled) => self.saved.perf_aggressive_ram = enabled,
+            Action::SetPerfSuspendAnimations(enabled) => self.saved.perf_suspend_animations = enabled,
+            Action::SetPerfDisableBlurs(enabled) => self.saved.perf_disable_blurs = enabled,
+            Action::SetPerfCompactBuffers(enabled) => self.saved.perf_compact_buffers = enabled,
+            Action::ToggleEq(enabled) => {
+                self.saved.eq_enabled = enabled;
+                self.player.set_eq_enabled(enabled);
+            }
+            Action::SetEqPreset(preset) => {
+                self.saved.eq_preset = preset;
+                if preset != crate::dsp::EqPreset::Custom {
+                    self.saved.eq_gains = preset.gains();
+                    self.player.set_eq_gains(self.saved.eq_gains);
+                }
+            }
+            Action::SetEqGain(band, gain) => {
+                if band < 10 {
+                    self.saved.eq_preset = crate::dsp::EqPreset::Custom;
+                    self.saved.eq_gains[band] = gain;
+                    self.player.set_eq_gains(self.saved.eq_gains);
+                }
+            }
         }
     }
 }
@@ -1192,8 +1288,12 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let (size, minimized) = ctx.input(|input| (input.content_rect().size(), input.viewport().minimized == Some(true)));
-        if minimized && self.saved.auto_purge_ram {
+        if minimized && (self.saved.auto_purge_ram || (self.saved.performance_mode && self.saved.perf_aggressive_ram)) {
             self.apply(Action::PurgeMemory);
+        }
+        if self.saved.performance_mode && self.saved.perf_aggressive_ram && self.last_purge.elapsed() >= Duration::from_secs(30) {
+            self.apply(Action::PurgeMemory);
+            self.last_purge = Instant::now();
         }
         if !minimized && !self.saved.mini_mode && (size.x < WINDOW_MIN[0] - 1.0 || size.y < WINDOW_MIN[1] - 1.0) {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
@@ -1202,6 +1302,13 @@ impl eframe::App for App {
         self.drain(ctx);
         let mut actions = if self.record(ctx) { Vec::new() } else { self.shortcuts(ctx) };
         if self.saved.mini_mode {
+            let is_maximized = ctx.input(|input| input.viewport().maximized == Some(true));
+            if is_maximized {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, 104.0)));
+            }
             actions.extend(ui::draw_mini(self, ctx));
         } else {
             actions.extend(ui::draw(self, ctx));
@@ -1212,7 +1319,12 @@ impl eframe::App for App {
         self.look_up_covers();
         self.look_up_lyrics();
         if self.playing() || self.player.loading() {
-            ctx.request_repaint_after(PROGRESS_TICK);
+            let tick = if self.saved.performance_mode && self.saved.perf_suspend_animations {
+                Duration::from_millis(1000)
+            } else {
+                PROGRESS_TICK
+            };
+            ctx.request_repaint_after(tick);
         }
         let item = self.saved.current.and_then(|current| self.saved.queue.get(current));
         let playing = item.is_some() && !self.player.paused();

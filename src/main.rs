@@ -111,6 +111,7 @@ fn main() -> eframe::Result {
         .with_app_id(app_id())
         .with_inner_size(app::WINDOW_SIZE)
         .with_min_inner_size(app::WINDOW_MIN)
+        .with_transparent(true)
         .with_icon(ui::app_icon());
     let options = eframe::NativeOptions {
         viewport,

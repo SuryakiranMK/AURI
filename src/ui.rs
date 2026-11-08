@@ -1520,6 +1520,37 @@ fn topbar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
         app.typed = None;
         response.request_focus();
     }
+
+    // Extreme Performance Mode quick toggle on top right
+    let perf_rect = Rect::from_min_size(
+        pos2(bar.right() - PAGE_MARGIN as f32 - 128.0, mid - 16.0),
+        vec2(128.0, 32.0),
+    );
+    let perf_resp = ui.interact(perf_rect, Id::new("topbar-perf-mode"), Sense::click());
+    let perf_hover = hover_of(ui, &perf_resp);
+    let perf_on = app.saved.performance_mode;
+    let (bg_color, stroke_color, text_color, label_text) = if perf_on {
+        (
+            Color32::from_rgba_unmultiplied(139, 92, 246, 36),
+            ACCENT,
+            ACCENT,
+            "⚡ Perf ON",
+        )
+    } else {
+        (
+            veil(0.04 + 0.03 * perf_hover),
+            veil(0.08 + 0.06 * perf_hover),
+            MUTED,
+            "⚡ Perf OFF",
+        )
+    };
+    ui.painter().rect_filled(perf_rect, 16.0, bg_color);
+    ui.painter().rect_stroke(perf_rect, 16.0, Stroke::new(1.0_f32, stroke_color), StrokeKind::Inside);
+    ui.painter().text(perf_rect.center(), Align2::CENTER_CENTER, label_text, medium(12.0), text_color);
+    if perf_resp.clicked() {
+        out.push(Action::TogglePerformanceMode);
+    }
+
     ui.allocate_rect(bar, Sense::hover());
 }
 
@@ -1535,7 +1566,10 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let tint = picture(header).or_else(|| picture(playing)).map(|picture| picture.tint);
     let glow = mood(ui, "ambient", tint, BASE, 0.36);
     let haze = Rect::from_min_size(area.min, vec2(area.width(), AMBIENT_HEIGHT.min(area.height())));
-    wash(ui.painter(), haze, glow, BASE);
+    let disable_blurs = app.saved.performance_mode && app.saved.perf_disable_blurs;
+    if !disable_blurs {
+        wash(ui.painter(), haze, glow, BASE);
+    }
     topbar(app, ui, out);
 
     let loading = matches!(app.pages.get(&route), Some(Load::Loading));
@@ -1608,7 +1642,9 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     pane.set_clip_rect(strip);
     pane.set_opacity(stuck);
     pane.painter().rect_filled(strip, 0.0, BASE);
-    wash(pane.painter(), haze, glow, BASE);
+    if !disable_blurs {
+        wash(pane.painter(), haze, glow, BASE);
+    }
     if sticky(&pane, strip, title, playable) {
         let songs = match (&route, app.pages.get(&route)) {
             (Route::Liked, _) => app.saved.liked.clone(),
@@ -1808,7 +1844,8 @@ fn hotkey_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let height = 2.0 * CARD_PAD + 2.0 * SETTING_ROW + 36.0;
+    let eq_height = if app.saved.eq_enabled { 260.0 } else { 0.0 };
+    let height = 2.0 * CARD_PAD + 3.0 * SETTING_ROW + 44.0 + eq_height;
     section(ui, "Audio & DSP Engine", height, |ui| {
         let size = vec2(ui.available_width(), SETTING_ROW);
         if switch_row(ui, size, icon::WAVEFORM, "Studio Loudness Normalizer (-7.0 LUFS)", app.saved.loudness_normalizer) {
@@ -1824,20 +1861,148 @@ fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         label(ui, pos2(limiter_row.left() + 46.0, middle - 8.0), Align2::LEFT_CENTER, "Soft-Knee Peak Limiter (Active)", medium(13.5), TEXT, size.x - 58.0);
         let sub = "Prevents clipping and harsh distortion on loud transients with studio-grade brickwall limiting.";
         label(ui, pos2(limiter_row.left() + 46.0, middle + 10.0), Align2::LEFT_CENTER, sub, sans(12.0), MUTED, size.x - 58.0);
+
+        if switch_row(ui, size, icon::EQUALIZER, "10-Band Graphic Equalizer", app.saved.eq_enabled) {
+            out.push(Action::ToggleEq(!app.saved.eq_enabled));
+        }
+        let eq_desc = "Precision biquad peaking filter bank (31Hz–16kHz) for studio mastering & gaming audio tuning.";
+        let (row2, _) = ui.allocate_exact_size(vec2(size.x, 22.0), Sense::hover());
+        label(ui, pos2(row2.left() + 46.0, row2.center().y), Align2::LEFT_CENTER, eq_desc, sans(12.0), MUTED, size.x - 58.0);
+
+        if app.saved.eq_enabled {
+            ui.add_space(8.0);
+            // EQ Presets Row
+            let presets = crate::dsp::EqPreset::ALL;
+            let (preset_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
+            let pill_width = ((preset_row.width() - 5.0 * 8.0) / presets.len() as f32).max(70.0);
+            for (idx, preset) in presets.iter().enumerate() {
+                let pill_rect = Rect::from_min_size(
+                    pos2(preset_row.left() + idx as f32 * (pill_width + 8.0), preset_row.top()),
+                    vec2(pill_width, 30.0),
+                );
+                let selected = app.saved.eq_preset == *preset;
+                let resp = ui.interact(pill_rect, Id::new(("eq-preset", idx)), Sense::click());
+                let hover = hover_of(ui, &resp);
+                let fill = if selected { ACCENT } else { veil(0.06 + 0.04 * hover) };
+                let text_color = if selected { Color32::WHITE } else { TEXT };
+                ui.painter().rect_filled(pill_rect, 15.0, fill);
+                if selected {
+                    ui.painter().rect_stroke(pill_rect, 15.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 80)), StrokeKind::Inside);
+                }
+                let short_name = match preset {
+                    crate::dsp::EqPreset::Flat => "Flat",
+                    crate::dsp::EqPreset::FpsFootsteps => "FPS Footsteps",
+                    crate::dsp::EqPreset::BassPunch => "Bass Punch",
+                    crate::dsp::EqPreset::VocalClarity => "Vocal",
+                    crate::dsp::EqPreset::Cinematic => "Cinematic",
+                    crate::dsp::EqPreset::Custom => "Custom",
+                };
+                ui.painter().text(pill_rect.center(), Align2::CENTER_CENTER, short_name, medium(11.5), text_color);
+                if resp.clicked() {
+                    out.push(Action::SetEqPreset(*preset));
+                }
+            }
+
+            ui.add_space(12.0);
+            // 10-Band Slider Rack
+            let (rack_rect, _) = ui.allocate_exact_size(vec2(size.x, 150.0), Sense::hover());
+            ui.painter().rect_filled(rack_rect, 10.0, veil(0.03));
+            ui.painter().rect_stroke(rack_rect, 10.0, Stroke::new(1.0_f32, veil(0.06)), StrokeKind::Inside);
+
+            let band_width = (rack_rect.width() - 20.0) / 10.0;
+            let slider_height = 84.0;
+            let slider_top = rack_rect.top() + 32.0;
+
+            for b in 0..10 {
+                let bx = rack_rect.left() + 10.0 + b as f32 * band_width + band_width / 2.0;
+                let gain = app.saved.eq_gains[b];
+
+                // Value dB readout on top
+                let sign = if gain > 0.0 { "+" } else { "" };
+                let val_str = format!("{}{:.1}", sign, gain);
+                let val_color = if gain.abs() > 0.05 { ACCENT } else { FAINT };
+                ui.painter().text(pos2(bx, rack_rect.top() + 16.0), Align2::CENTER_CENTER, val_str, sans(10.5), val_color);
+
+                // Slider track
+                let track_rect = Rect::from_center_size(pos2(bx, slider_top + slider_height / 2.0), vec2(4.0, slider_height));
+                ui.painter().rect_filled(track_rect, 2.0, veil(0.12));
+
+                // Center 0 dB notch mark
+                let center_y = slider_top + slider_height / 2.0;
+                ui.painter().line_segment(
+                    [pos2(bx - 6.0, center_y), pos2(bx + 6.0, center_y)],
+                    Stroke::new(1.0_f32, veil(0.2)),
+                );
+
+                // Thumb position: gain ranges from -12.0 (bottom) to +12.0 (top)
+                let frac = ((gain + 12.0) / 24.0).clamp(0.0, 1.0);
+                let thumb_y = slider_top + slider_height * (1.0 - frac);
+
+                // Active fill from center 0dB to thumb
+                let fill_top = thumb_y.min(center_y);
+                let fill_bottom = thumb_y.max(center_y);
+                let active_track = Rect::from_min_max(pos2(bx - 2.0, fill_top), pos2(bx + 2.0, fill_bottom));
+                ui.painter().rect_filled(active_track, 2.0, ACCENT);
+
+                // Draggable interaction area
+                let hit_rect = Rect::from_center_size(pos2(bx, slider_top + slider_height / 2.0), vec2(band_width.min(32.0), slider_height + 12.0));
+                let resp = ui.interact(hit_rect, Id::new(("eq-slider", b)), Sense::click_and_drag());
+                if let (true, Some(pos)) = (resp.clicked() || resp.dragged(), resp.interact_pointer_pos()) {
+                    let new_frac = (1.0 - ((pos.y - slider_top) / slider_height)).clamp(0.0, 1.0);
+                    let mut new_gain = new_frac * 24.0 - 12.0;
+                    // Snap to 0.5 dB
+                    new_gain = (new_gain * 2.0).round() / 2.0;
+                    out.push(Action::SetEqGain(b, new_gain));
+                }
+
+                // Thumb circle
+                let thumb_hover = hover_of(ui, &resp);
+                let thumb_rad = 6.0 + 1.0 * thumb_hover;
+                ui.painter().circle_filled(pos2(bx, thumb_y), thumb_rad, TEXT);
+                ui.painter().circle_filled(pos2(bx, thumb_y), thumb_rad - 2.0, ACCENT);
+
+                // Frequency label at bottom
+                let label_text = crate::dsp::EQ_BAND_LABELS[b];
+                ui.painter().text(pos2(bx, rack_rect.bottom() - 14.0), Align2::CENTER_CENTER, label_text, sans(10.5), MUTED);
+            }
+        }
     });
 }
 
 fn gaming_ram_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let height = 2.0 * CARD_PAD + 2.0 * SETTING_ROW + 28.0;
-    let card = section(ui, "Gaming & RAM Optimization", height, |ui| {
+    let perf_mode = app.saved.performance_mode;
+    let custom_height = if perf_mode { 4.0 * SETTING_ROW + 16.0 } else { 0.0 };
+    let height = 2.0 * CARD_PAD + 2.0 * SETTING_ROW + 28.0 + custom_height;
+    let card = section(ui, "Extreme Performance Mode & Resource Optimizer", height, |ui| {
         let size = vec2(ui.available_width(), SETTING_ROW);
-        if switch_row(ui, size, icon::BROOM, "Auto-Trim Working Set on Mini Mode & Minimize", app.saved.auto_purge_ram) {
-            out.push(Action::AutoPurgeRam(!app.saved.auto_purge_ram));
+
+        // Master Switch
+        if switch_row(ui, size, icon::LIGHTNING, "⚡ Extreme Performance Mode", perf_mode) {
+            out.push(Action::TogglePerformanceMode);
         }
-        let desc = "Automatically trims OS working set memory whenever AURI is minimized or floating in Mini Mode.";
+        let desc = "When active, AURI minimizes resource footprint (<20 MB RAM, 0% CPU/GPU) for competitive gaming.";
         let (row, _) = ui.allocate_exact_size(vec2(size.x, 22.0), Sense::hover());
         label(ui, pos2(row.left() + 46.0, row.center().y), Align2::LEFT_CENTER, desc, sans(12.0), MUTED, size.x - 58.0);
 
+        // Sub-options when Extreme Performance Mode is active
+        if perf_mode {
+            ui.add_space(4.0);
+            if switch_row(ui, size, icon::BROOM, "Aggressive RAM Purge (Every 30s & Track Switch)", app.saved.perf_aggressive_ram) {
+                out.push(Action::SetPerfAggressiveRam(!app.saved.perf_aggressive_ram));
+            }
+            if switch_row(ui, size, icon::SPEEDOMETER, "Suspend 60 FPS UI Animations (1 FPS Static HUD)", app.saved.perf_suspend_animations) {
+                out.push(Action::SetPerfSuspendAnimations(!app.saved.perf_suspend_animations));
+            }
+            if switch_row(ui, size, icon::EYE_SLASH, "Disable Ambient Blurs & Background Shader Glows", app.saved.perf_disable_blurs) {
+                out.push(Action::SetPerfDisableBlurs(!app.saved.perf_disable_blurs));
+            }
+            if switch_row(ui, size, icon::DATABASE, "Compact Audio & Stream Buffers (Sub-2MB Window)", app.saved.perf_compact_buffers) {
+                out.push(Action::SetPerfCompactBuffers(!app.saved.perf_compact_buffers));
+            }
+            ui.add_space(4.0);
+        }
+
+        // Manual Purge Row
         let (purge_row, resp) = ui.allocate_exact_size(size, Sense::click());
         let hover = hover_of(ui, &resp);
         ui.painter().rect_filled(purge_row, 7.0, veil(0.08 * hover));
@@ -1849,7 +2014,7 @@ fn gaming_ram_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             out.push(Action::PurgeMemory);
         }
     });
-    let text = "Reduces active footprint down to ~25-35 MB so your games get 100% GPU/CPU/RAM priority.";
+    let text = "Extreme Performance Mode reduces active footprint down to ~16-20 MB so your games get 100% GPU/CPU/RAM priority.";
     let at = pos2(card.left() + 4.0, card.bottom() + SECTION_GAP / 2.0);
     label(ui, at, Align2::LEFT_CENTER, text, sans(12.0), FAINT, card.width());
 }
@@ -2995,24 +3160,25 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
     let active = item.is_some();
 
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(Color32::from_rgba_unmultiplied(10, 11, 16, 252)))
+        .frame(Frame::new().fill(Color32::TRANSPARENT))
         .show(ctx, |ui| {
-            let max_rect = ui.max_rect();
+            let card_size = vec2(380.0, 104.0);
+            let card_rect = Rect::from_min_size(ui.max_rect().min, card_size);
             let rounding = 16.0;
 
-            // Curved background with glass violet border
-            ui.painter().rect_filled(max_rect, rounding, Color32::from_rgba_unmultiplied(12, 13, 20, 250));
+            // Curved obsidian background with electric violet glowing border
+            ui.painter().rect_filled(card_rect, rounding, Color32::from_rgba_unmultiplied(12, 13, 20, 252));
             ui.painter().rect_stroke(
-                max_rect,
+                card_rect,
                 rounding,
-                Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(139, 92, 246, 140)),
+                Stroke::new(1.2_f32, Color32::from_rgba_unmultiplied(139, 92, 246, 160)),
                 StrokeKind::Inside,
             );
 
-            // Drag area: user can click and drag anywhere on background to move window
+            // Drag area: user can click and drag anywhere on the overlay card to move window
             let drag_rect = Rect::from_min_max(
-                max_rect.min,
-                pos2(max_rect.right() - 44.0, max_rect.min.y + 42.0),
+                card_rect.min,
+                pos2(card_rect.right() - 44.0, card_rect.min.y + 46.0),
             );
             let drag_resp = ui.interact(drag_rect, Id::new("mini-drag"), Sense::click_and_drag());
             if drag_resp.dragged() {
@@ -3020,7 +3186,7 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
             }
 
             // Left: Album Art
-            let art_rect = Rect::from_min_size(pos2(max_rect.left() + 14.0, max_rect.center().y - 36.0), vec2(72.0, 72.0));
+            let art_rect = Rect::from_min_size(pos2(card_rect.left() + 14.0, card_rect.center().y - 36.0), vec2(72.0, 72.0));
             if let Some(item) = item {
                 artwork(ui, &app.art, app.saved.covers.of(item), art_rect, 10.0);
             } else {
@@ -3030,8 +3196,8 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
 
             // Middle: Title, Subtitle, Progress
             let mid_left = art_rect.right() + 12.0;
-            let mid_width = (max_rect.width() - 220.0).max(80.0);
-            let title_y = max_rect.min.y + 20.0;
+            let mid_width = (card_rect.width() - 220.0).max(80.0);
+            let title_y = card_rect.min.y + 18.0;
             let title_str = item.map_or("AURI Gaming Mode", |it| it.title.as_str());
             let sub_str = item.map_or("Ready to play", |it| it.subtitle.as_str());
 
@@ -3061,11 +3227,11 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
             }
 
             // Right: Controls
-            let right_x = max_rect.right() - 20.0;
-            let ctrl_y = max_rect.center().y;
+            let right_x = card_rect.right() - 20.0;
+            let ctrl_y = card_rect.center().y;
 
             // Restore button (Top Right)
-            let restore_rect = Rect::from_center_size(pos2(max_rect.right() - 20.0, max_rect.min.y + 20.0), vec2(28.0, 28.0));
+            let restore_rect = Rect::from_center_size(pos2(card_rect.right() - 20.0, card_rect.min.y + 20.0), vec2(28.0, 28.0));
             if icon_button(ui, restore_rect, Id::new("mini-restore"), icon::ARROWS_OUT_SIMPLE, glyph(16.0), MUTED, "Restore Normal Mode").clicked() {
                 out.push(Action::ToggleMiniMode);
             }
@@ -3092,7 +3258,7 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
             }
 
             // Volume control (Mini slider at bottom)
-            let vol_rect = Rect::from_min_max(pos2(play_center.x - 45.0, max_rect.bottom() - 15.0), pos2(play_center.x + 45.0, max_rect.bottom() - 7.0));
+            let vol_rect = Rect::from_min_max(pos2(play_center.x - 45.0, card_rect.bottom() - 15.0), pos2(play_center.x + 45.0, card_rect.bottom() - 7.0));
             let vol_resp = ui.interact(vol_rect, Id::new("mini-volume"), Sense::click_and_drag());
             if let (true, Some(pointer)) = (vol_resp.dragged() || vol_resp.clicked(), vol_resp.interact_pointer_pos()) {
                 let new_vol = ((pointer.x - vol_rect.left()) / vol_rect.width()).clamp(0.0, 1.0);
