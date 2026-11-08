@@ -4,12 +4,15 @@ use crate::ytm::Item;
 #[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 #[cfg(windows)]
-use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
-#[cfg(windows)]
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 #[cfg(windows)]
 use windows::Win32::UI::Shell::{
     ITaskbarList3, TaskbarList, THBF_ENABLED, THB_FLAGS, THB_ICON, THB_TOOLTIP, THUMBBUTTON,
+};
+#[cfg(windows)]
+use windows::Win32::Graphics::Gdi::{
+    CreateBitmap, CreateDIBSection, DeleteObject, GetDC, ReleaseDC, BITMAPINFO, BITMAPINFOHEADER,
+    BI_RGB, DIB_RGB_COLORS,
 };
 #[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -30,6 +33,8 @@ static mut PREV_WNDPROC: Option<WNDPROC> = None;
 static THUMB_CALLBACK: std::sync::OnceLock<Box<dyn Fn(Action) + Send + Sync>> = std::sync::OnceLock::new();
 #[cfg(windows)]
 static MSG_TASKBAR_CREATED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+#[cfg(windows)]
+static NEED_THUMBBAR_INIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 #[cfg(windows)]
 unsafe extern "system" fn thumbbar_wndproc(
@@ -40,7 +45,7 @@ unsafe extern "system" fn thumbbar_wndproc(
 ) -> LRESULT {
     let msg_created = MSG_TASKBAR_CREATED.load(std::sync::atomic::Ordering::Relaxed);
     if msg != 0 && msg == msg_created {
-        // Taskbar button is created!
+        NEED_THUMBBAR_INIT.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     if msg == WM_COMMAND {
         let notify = ((wparam.0 >> 16) & 0xFFFF) as u32;
@@ -75,85 +80,89 @@ enum ThumbIconKind {
 
 #[cfg(windows)]
 fn create_thumb_icon(kind: ThumbIconKind) -> HICON {
-    let mut pixels = [0u32; 16 * 16];
+    let sz = 20usize;
+    let mut pixels = vec![0u32; sz * sz];
     let white = 0xFFFFFFFFu32;
 
     match kind {
         ThumbIconKind::Prev => {
-            // Left bar
-            for y in 3..=12 {
-                pixels[y * 16 + 2] = white;
-                pixels[y * 16 + 3] = white;
+            for y in 4..16 {
+                pixels[y * sz + 3] = white;
+                pixels[y * sz + 4] = white;
             }
-            // Left-pointing triangle
-            for y in 3..=12 {
-                let d = (y as f32 - 7.5).abs().round() as usize;
-                let start = 4 + d;
-                for x in start..=13 {
-                    pixels[y * 16 + x] = white;
+            for y in 4..16 {
+                let d = (y as f32 - 9.5).abs().round() as usize;
+                let start = 5 + d;
+                for x in start..17 {
+                    pixels[y * sz + x] = white;
                 }
             }
         }
         ThumbIconKind::Next => {
-            // Right bar
-            for y in 3..=12 {
-                pixels[y * 16 + 12] = white;
-                pixels[y * 16 + 13] = white;
+            for y in 4..16 {
+                pixels[y * sz + 15] = white;
+                pixels[y * sz + 16] = white;
             }
-            // Right-pointing triangle
-            for y in 3..=12 {
-                let d = (y as f32 - 7.5).abs().round() as usize;
-                let end = 11usize.saturating_sub(d);
-                for x in 2..=end {
-                    pixels[y * 16 + x] = white;
+            for y in 4..16 {
+                let d = (y as f32 - 9.5).abs().round() as usize;
+                let end = 14usize.saturating_sub(d);
+                for x in 3..=end {
+                    pixels[y * sz + x] = white;
                 }
             }
         }
         ThumbIconKind::Play => {
-            // Right-pointing triangle
-            for y in 3..=12 {
-                let d = (y as f32 - 7.5).abs().round() as usize;
-                let end = 13usize.saturating_sub(d);
-                for x in 4..=end {
-                    pixels[y * 16 + x] = white;
+            for y in 4..16 {
+                let d = (y as f32 - 9.5).abs().round() as usize;
+                let end = 16usize.saturating_sub(d);
+                for x in 5..=end {
+                    pixels[y * sz + x] = white;
                 }
             }
         }
         ThumbIconKind::Pause => {
-            // Two vertical bars
-            for y in 3..=12 {
-                pixels[y * 16 + 4] = white;
-                pixels[y * 16 + 5] = white;
-                pixels[y * 16 + 6] = white;
+            for y in 4..16 {
+                pixels[y * sz + 5] = white;
+                pixels[y * sz + 6] = white;
+                pixels[y * sz + 7] = white;
 
-                pixels[y * 16 + 9] = white;
-                pixels[y * 16 + 10] = white;
-                pixels[y * 16 + 11] = white;
+                pixels[y * sz + 12] = white;
+                pixels[y * sz + 13] = white;
+                pixels[y * sz + 14] = white;
             }
         }
     }
 
-    let mut mask = [0xFFu8; 32];
-    for y in 0..16 {
-        for x in 0..16 {
-            if pixels[y * 16 + x] != 0 {
-                let byte_idx = y * 2 + (x / 8);
-                let bit_idx = 7 - (x % 8);
-                mask[byte_idx] &= !(1 << bit_idx);
-            }
-        }
-    }
     unsafe {
-        let hbm_color = CreateBitmap(16, 16, 1, 32, Some(pixels.as_ptr() as *const _));
-        let hbm_mask = CreateBitmap(16, 16, 1, 1, Some(mask.as_ptr() as *const _));
-        let mut info = ICONINFO {
+        let bi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: sz as i32,
+                biHeight: -(sz as i32),
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let hdc = GetDC(None);
+        let hbm_color = CreateDIBSection(Some(hdc), &bi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap_or_default();
+        if !bits.is_null() {
+            std::ptr::copy_nonoverlapping(pixels.as_ptr() as *const u8, bits as *mut u8, sz * sz * 4);
+        }
+        let hbm_mask = CreateBitmap(sz as i32, sz as i32, 1, 1, None);
+        ReleaseDC(None, hdc);
+
+        let icon_info = ICONINFO {
             fIcon: true.into(),
             xHotspot: 0,
             yHotspot: 0,
             hbmMask: hbm_mask,
             hbmColor: hbm_color,
         };
-        let icon = CreateIconIndirect(&mut info).unwrap_or_default();
+        let icon = CreateIconIndirect(&icon_info).unwrap_or_default();
         let _ = DeleteObject(hbm_color.into());
         let _ = DeleteObject(hbm_mask.into());
         icon
@@ -236,7 +245,7 @@ impl TaskbarToolbar {
     }
 
     fn update(&self, playing: bool) {
-        if !self.added.get() {
+        if NEED_THUMBBAR_INIT.swap(false, std::sync::atomic::Ordering::Relaxed) || !self.added.get() {
             let btn_prev = THUMBBUTTON {
                 dwMask: THB_FLAGS | THB_ICON | THB_TOOLTIP,
                 iId: ID_THUMB_PREV,
@@ -264,9 +273,13 @@ impl TaskbarToolbar {
             unsafe {
                 if self.taskbar.ThumbBarAddButtons(self.hwnd, &[btn_prev, btn_play_pause, btn_next]).is_ok() {
                     self.added.set(true);
+                } else if self.taskbar.ThumbBarUpdateButtons(self.hwnd, &[btn_play_pause]).is_ok() {
+                    self.added.set(true);
                 }
             }
-            return;
+            if !self.added.get() {
+                return;
+            }
         }
 
         let btn = THUMBBUTTON {
@@ -716,7 +729,7 @@ mod test_windows_taskbar {
             let taskbar: Result<ITaskbarList3, _> = CoCreateInstance(&TaskbarList, None, CLSCTX_INPROC_SERVER);
             assert!(taskbar.is_ok(), "CoCreateInstance failed: {:?}", taskbar.err());
             let taskbar = taskbar.unwrap();
-            let _ = taskbar.HrInit(); // Note: HrInit returns E_NOTIMPL on Win10/11!
+            let _ = taskbar.HrInit();
         }
     }
 }

@@ -244,7 +244,7 @@ impl MiniVariant {
     pub fn size(&self, queue_open: bool) -> (f32, f32) {
         match self {
             MiniVariant::ClassicHud => (384.0, if queue_open { 260.0 } else { 108.0 }),
-            MiniVariant::CapsulePill => (320.0, 56.0),
+            MiniVariant::CapsulePill => (330.0, 68.0),
             MiniVariant::StudioCard => (280.0, if queue_open { 530.0 } else { 390.0 }),
         }
     }
@@ -277,8 +277,24 @@ pub enum Route {
     Browse(String),
     Liked,
     Recent,
+    Stats,
     Settings(SettingsTab),
     CustomPlaylist(String),
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrackStat {
+    pub video_id: String,
+    pub title: String,
+    pub artist: String,
+    pub plays: u32,
+    pub last_played: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ArtistStat {
+    pub artist: String,
+    pub plays: u32,
 }
 
 pub enum Load {
@@ -410,6 +426,32 @@ pub struct Saved {
     pub sync_gist_id: String,
     #[serde(default)]
     pub sync_room_code: String,
+
+    #[serde(default)]
+    pub stats_total_listen_ms: u64,
+    #[serde(default)]
+    pub stats_total_plays: u32,
+    #[serde(default)]
+    pub stats_top_tracks: Vec<TrackStat>,
+    #[serde(default)]
+    pub stats_top_artists: Vec<ArtistStat>,
+
+    #[serde(default = "default_true")]
+    pub lyrics_synced_mode: bool,
+    #[serde(default = "default_lyrics_font_size")]
+    pub lyrics_font_size: f32,
+    #[serde(default = "default_true")]
+    pub lyrics_align_center: bool,
+    #[serde(default = "default_lyrics_dim_unsung")]
+    pub lyrics_dim_unsung: f32,
+}
+
+fn default_lyrics_font_size() -> f32 {
+    24.0
+}
+
+fn default_lyrics_dim_unsung() -> f32 {
+    0.35
 }
 
 fn default_true() -> bool {
@@ -575,6 +617,14 @@ impl Default for Saved {
             sync_github_token: String::new(),
             sync_gist_id: String::new(),
             sync_room_code: String::new(),
+            stats_total_listen_ms: 0,
+            stats_total_plays: 0,
+            stats_top_tracks: Vec::new(),
+            stats_top_artists: Vec::new(),
+            lyrics_synced_mode: true,
+            lyrics_font_size: 24.0,
+            lyrics_align_center: true,
+            lyrics_dim_unsung: 0.35,
         }
     }
 }
@@ -714,6 +764,11 @@ pub enum Action {
     StopSync,
     SetSyncGithubToken(String),
     SetSyncGistId(String),
+    SetLyricsSyncedMode(bool),
+    SetLyricsFontSize(f32),
+    SetLyricsAlignCenter(bool),
+    SetLyricsDimUnsung(f32),
+    ClearStats,
 }
 
 enum Event {
@@ -797,6 +852,7 @@ pub struct App {
     pub sync_mode: crate::sync::SyncMode,
     pub sync_room: String,
     pub sync_last_publish: Option<Instant>,
+    pub last_listen_tick: Option<Instant>,
     restart: Option<PathBuf>,
 }
 
@@ -891,6 +947,7 @@ impl App {
             sync_mode: crate::sync::SyncMode::Disconnected,
             sync_room: String::new(),
             sync_last_publish: None,
+            last_listen_tick: None,
             restart: None,
         };
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
@@ -1126,7 +1183,7 @@ impl App {
     }
 
     fn ensure(&mut self, route: &Route) {
-        if self.pages.contains_key(route) || matches!(route, Route::Liked | Route::Recent | Route::Settings(_) | Route::CustomPlaylist(_)) {
+        if self.pages.contains_key(route) || matches!(route, Route::Liked | Route::Recent | Route::Stats | Route::Settings(_) | Route::CustomPlaylist(_)) {
             return;
         }
         if self.pages.len() >= CACHED_PAGES {
@@ -1159,7 +1216,7 @@ impl App {
                     let _ = sender.send(Event::Page(route.clone(), Ok(Box::new(page.clone()))));
                     ctx.request_repaint();
                 }),
-                Route::Liked | Route::Recent | Route::Settings(_) | Route::CustomPlaylist(_) => return,
+                Route::Liked | Route::Recent | Route::Stats | Route::Settings(_) | Route::CustomPlaylist(_) => return,
             };
             let _ = sender.send(Event::Page(route, result.map(Box::new)));
             ctx.request_repaint();
@@ -1276,9 +1333,45 @@ impl App {
                 }
             });
         }
+        self.record_stat_play(&item);
         self.saved.recent.retain(|recent| recent.video_id != item.video_id);
         self.saved.recent.insert(0, item);
         self.saved.recent.truncate(RECENT_LIMIT);
+    }
+
+    pub fn record_stat_play(&mut self, item: &Item) {
+        self.saved.stats_total_plays += 1;
+        let now = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs(),
+            Err(_) => 0,
+        };
+        if let Some(pos) = self.saved.stats_top_tracks.iter().position(|t| t.video_id == item.video_id) {
+            self.saved.stats_top_tracks[pos].plays += 1;
+            self.saved.stats_top_tracks[pos].last_played = now;
+        } else {
+            self.saved.stats_top_tracks.push(TrackStat {
+                video_id: item.video_id.clone(),
+                title: item.title.clone(),
+                artist: item.subtitle.clone(),
+                plays: 1,
+                last_played: now,
+            });
+        }
+        self.saved.stats_top_tracks.sort_by(|a, b| b.plays.cmp(&a.plays));
+        self.saved.stats_top_tracks.truncate(50);
+
+        if !item.subtitle.is_empty() {
+            if let Some(pos) = self.saved.stats_top_artists.iter().position(|a| a.artist == item.subtitle) {
+                self.saved.stats_top_artists[pos].plays += 1;
+            } else {
+                self.saved.stats_top_artists.push(ArtistStat {
+                    artist: item.subtitle.clone(),
+                    plays: 1,
+                });
+            }
+            self.saved.stats_top_artists.sort_by(|a, b| b.plays.cmp(&a.plays));
+            self.saved.stats_top_artists.truncate(30);
+        }
     }
 
     fn next(&mut self, automatic: bool) {
@@ -2174,6 +2267,17 @@ impl App {
             }
             Action::SetSyncGithubToken(tok) => self.saved.sync_github_token = tok,
             Action::SetSyncGistId(gist) => self.saved.sync_gist_id = gist,
+            Action::SetLyricsSyncedMode(v) => self.saved.lyrics_synced_mode = v,
+            Action::SetLyricsFontSize(sz) => self.saved.lyrics_font_size = sz,
+            Action::SetLyricsAlignCenter(v) => self.saved.lyrics_align_center = v,
+            Action::SetLyricsDimUnsung(dim) => self.saved.lyrics_dim_unsung = dim,
+            Action::ClearStats => {
+                self.saved.stats_total_listen_ms = 0;
+                self.saved.stats_total_plays = 0;
+                self.saved.stats_top_tracks.clear();
+                self.saved.stats_top_artists.clear();
+                self.notify("Listening statistics reset");
+            }
         }
     }
 }
@@ -2260,6 +2364,18 @@ impl eframe::App for App {
         }
         let item = self.saved.current.and_then(|current| self.saved.queue.get(current));
         let playing = item.is_some() && !self.player.paused();
+        if playing {
+            let now = std::time::Instant::now();
+            if let Some(prev) = self.last_listen_tick {
+                let delta = now.duration_since(prev).as_millis() as u64;
+                if delta < 2000 {
+                    self.saved.stats_total_listen_ms += delta;
+                }
+            }
+            self.last_listen_tick = Some(now);
+        } else {
+            self.last_listen_tick = None;
+        }
         let (position_ms, duration_ms) = (self.player.position_ms(), self.player.duration_ms());
         if let Some(media) = &mut self.media {
             media.show(item, playing, position_ms, duration_ms);
@@ -2430,10 +2546,34 @@ mod tests {
         let (cw, ch) = MiniVariant::ClassicHud.size(false);
         assert_eq!((cw, ch), (384.0, 108.0));
         let (pw, ph) = MiniVariant::CapsulePill.size(false);
-        assert_eq!((pw, ph), (320.0, 56.0));
+        assert_eq!((pw, ph), (330.0, 68.0));
         let (sw, sh) = MiniVariant::StudioCard.size(false);
         assert_eq!((sw, sh), (280.0, 390.0));
         let (sw_q, sh_q) = MiniVariant::StudioCard.size(true);
         assert_eq!((sw_q, sh_q), (280.0, 530.0));
+    }
+
+    #[test]
+    fn test_stats_and_lyrics_customization() {
+        let mut saved = Saved::default();
+        assert!(saved.lyrics_synced_mode);
+        assert_eq!(saved.lyrics_font_size, 24.0);
+        assert!(saved.lyrics_align_center);
+        assert_eq!(saved.lyrics_dim_unsung, 0.35);
+
+        saved.stats_total_plays += 5;
+        saved.stats_total_listen_ms += 120000;
+        assert_eq!(saved.stats_total_plays, 5);
+        assert_eq!(saved.stats_total_listen_ms, 120000);
+
+        saved.stats_top_tracks.push(TrackStat {
+            video_id: "test123".into(),
+            title: "Test Song".into(),
+            artist: "Test Artist".into(),
+            plays: 5,
+            last_played: 1000,
+        });
+        assert_eq!(saved.stats_top_tracks.len(), 1);
+        assert_eq!(saved.stats_top_tracks[0].plays, 5);
     }
 }
