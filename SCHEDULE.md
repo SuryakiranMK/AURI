@@ -95,6 +95,68 @@ This document serves as the **contract and single source of truth** for all plan
    - Global media shortcuts (`Win+Alt+Space`, `Win+Alt+M`) and Windows SMTC volume flyout.
 
 ### Phase 5: Verification, Benchmarking & Packaging (Milestone v1.0.0)
-1. Embed official application icon (to be provided in next prompt).
+1. Embed official application icon.
 2. Automated performance verification using `scripts/benchmark.ps1`.
 3. Standalone release package (`auri.exe`).
+
+### Phase 11: Limusic-Inspired UI Overhaul & Human-Crafted Modern Experience (Milestone v1.10.0)
+1. **Integrated Borderless Top Window Layer**:
+   - Replaced OS default white titlebar with custom 38px frameless top bar (`.with_decorations(false)`).
+   - Preserved native Windows edge-resizing (`WS_THICKFRAME`).
+   - Left navigation controls (`<`, `>`, `⟳`), center title (`AURI`) with drag and double-click maximize/restore.
+   - Right tool suite: Account sign-in avatar pill, Listen Together GitHub sync, Discord presence indicator, `⚡ Perf`, Equalizer shortcut, Update checker, Settings gear, Mini Mode button, and native window control buttons (`_`, `□`, `✕` with red hover).
+2. **Left Navigation Sidebar**:
+   - Brand header with `AURI` logo + Light/Dark mode toggle (`☀` / `🌙`) + sidebar collapse button.
+   - 5 core navigation tabs: `Home`, `Search`, `Library`, `Stats`, `Settings`.
+   - Elevated `+ New Playlist` action card with creation dialog.
+   - `On Repeat / Liked` playlist item with dynamic track count.
+   - User custom playlists with item counts and right-click deletion.
+   - Bottom storage directory indicator and account status.
+3. **Dynamic Home Page & Guaranteed Quick Picks Box**:
+   - Time-of-day greeting header: `"Good morning"` (5:00-11:59), `"Good afternoon"` (12:00-16:59), `"Good evening"` (17:00-4:59).
+   - 11 Category filter chips row: `[All]`, `[Podcasts]`, `[Workout]`, `[Feel good]`, `[Energize]`, `[Relax]`, `[Romance]`, `[Sad]`, `[Party]`, `[Commute]`, `[Sleep]`.
+   - Dynamic home section filtering based on active filter.
+   - `+ Add a shortcut` box linking to library.
+   - `Familiar Artists` shelf featuring top 3 rotation artists with `#1`, `#2`, `#3` rank badges, circular avatars, and play counts.
+   - Elevated **Quick Picks Container Box**: 14px rounded corners, subtle translucent tint, glowing music note icon, compact track grid with guaranteed elevation.
+4. **Search Page Discovery Grid with 60 FPS Hover Animations**:
+   - Hero search bar with placeholder and `Ctrl+K` shortcut.
+   - **Moods & Moments Grid**: 12 cards with vinyl records that **smoothly rotate at 60 FPS on hover**.
+   - **Genres Grid**: 30 capsule cards with artwork thumbnails that **smoothly pop up (`translateY(-5px)`) on hover**.
+5. **2-Column Settings Modal Layout**:
+   - Left sub-navigation column (width 210px) with 10 categorized tabs and version footer.
+   - Right content column with tab title, subtitle description, and `✕` close button returning to Home.
+   - `General`: Keyboard shortcuts helper, Language selector, History toggle, System options (close to tray, song notifications, launch on startup, retractable panels), storage directory selector, Listen Together sync.
+   - `Appearance`: Mode switch (`Light`, `Dark`, `System`), 7 theme presets (`Default`, `Catppuccin`, `Tokyo Night`, `Caffeine`, `Neon`, `Breeze`, `AMOLED`), 8 primary color swatches with active checkmarks, Dynamic Ambient Cover Glow switch, Selection Glow switch, and Live Interactive Mini Mode Preview.
+   - `Playback`: Loudness Normalization (-14 LUFS standard), Bottom Player Bar deck customization, and Synced Lyrics controls.
+   - `Equalizer`, `Performance`, `Mini Mode`, `Global Hotkeys`, `Discord`, `Data & storage`, `About`.
+6. **Redesigned Multi-Card Stats & Diagnostics Dashboard**:
+   - Musical persona pill: `🎧 Sonic Explorer`, `🔥 On-Repeat Fanatic`, `🎵 Fresh Listener`, or `✨ Audiophile Veteran`.
+   - 5 animated dancing equalizer visualizer bars reacting smoothly to active playback.
+   - 4 Key Metric tiles: Total Listening, Songs Played, Physical RAM, and Audio Cache.
+   - 2-Column Analytics:
+     - Left: Top Replayed Songs leaderboard with `#1 Gold`, `#2 Silver`, `#3 Bronze` rank badges, proportional playback bars, play counts, and instant play buttons.
+     - Right: Familiar & Top Artists rotation with circular avatars, play counts, and search jump links.
+   - Bottom System Diagnostics tray: Purge Audio Cache and Trim RAM Working Set.
+
+### Phase 11.5: Desktop Overlay HUD, Account Avatar Dropdown, Crossfade & In-App Update Modal (Milestone v1.9.1)
+1. **Metrix-Style Pure Desktop Overlay HUD in Mini Mode**:
+   - Hides completely from Windows Taskbar and Alt+Tab via COM `ITaskbarList3::DeleteTab(hwnd)`, `SW_HIDE`, `WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE`, and `SW_SHOWNOACTIVATE`.
+   - `WS_EX_NOACTIVATE` guarantees clicking and dragging the floating mini HUD does not defocus or minimize active fullscreen DirectX/Vulkan games.
+   - Fluent restoration on exiting mini mode via `ITaskbarList3::AddTab(hwnd)` and `WS_EX_APPWINDOW`.
+2. **Account Avatar Photo & Interactive Dropdown**:
+   - Circular account avatar photo dynamically loaded from `account.photo` in top window bar.
+   - Dropdown menu featuring user profile, "YouTube Music Connected" badge, multi-channel switcher, Re-login/Switch Account, and dedicated 1-click **Log Out** button (`Action::SignOut`).
+3. **Seamless Track Crossfade with Automatic Gaming Bypass**:
+   - Configurable 1–10 second crossfade transition duration slider in Settings -> Playback.
+   - Strictly bypassed and disabled in Performance & Gaming Mode to save CPU cycles and eliminate background decoder overhead.
+4. **Audio Stream Quality Preferences**:
+   - High Quality (160 kbps Opus - ITAG 251) vs Data Saver (70 kbps Opus - ITAG 250) in Settings -> Playback with backend `audio_with_quality` and `Client::set_low_quality`.
+5. **Blocked Artists Filter & Offline Cache Manager**:
+   - Blocked artists filter auto-skipping disliked artists during playback and radio generation.
+   - Chip list with 1-click `✕` unblock in Settings -> General and "Block Artist" option in song context menu.
+   - Offline audio cache telemetry (MB cached, ready song count) and 1-click cache purge button.
+6. **In-App Software Update Modal Popup**:
+   - Modern modal dialog popup triggered upon update detection or clicking update icons in titlebar, dock, or settings.
+   - Version comparison badges (`Current: v1.9.0` -> `Latest: v1.9.1`), feature highlights summary, "Later", "Release Notes", and prominent "Update Now" button.
+   - Live progress feedback spinner while downloading and applying update packages.

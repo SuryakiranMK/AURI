@@ -48,9 +48,166 @@ pub struct CustomPlaylist {
 pub enum SettingsTab {
     #[default]
     General,
+    Appearance,
+    Playback,
     Equalizer,
     Performance,
     MiniMode,
+    GlobalHotkeys,
+    Discord,
+    DataStorage,
+    About,
+}
+
+#[allow(dead_code)]
+impl SettingsTab {
+    pub const ALL: [SettingsTab; 10] = [
+        SettingsTab::General,
+        SettingsTab::Appearance,
+        SettingsTab::Playback,
+        SettingsTab::Equalizer,
+        SettingsTab::Performance,
+        SettingsTab::MiniMode,
+        SettingsTab::GlobalHotkeys,
+        SettingsTab::Discord,
+        SettingsTab::DataStorage,
+        SettingsTab::About,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            SettingsTab::General => "General",
+            SettingsTab::Appearance => "Appearance",
+            SettingsTab::Playback => "Playback",
+            SettingsTab::Equalizer => "Equalizer",
+            SettingsTab::Performance => "Performance",
+            SettingsTab::MiniMode => "Mini Mode",
+            SettingsTab::GlobalHotkeys => "Global Hotkeys",
+            SettingsTab::Discord => "Discord",
+            SettingsTab::DataStorage => "Data & storage",
+            SettingsTab::About => "About",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum ThemeMode {
+    #[default]
+    Dark,
+    Light,
+    System,
+}
+
+#[allow(dead_code)]
+impl ThemeMode {
+    pub const ALL: [ThemeMode; 3] = [
+        ThemeMode::Dark,
+        ThemeMode::Light,
+        ThemeMode::System,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            ThemeMode::Dark => "Dark",
+            ThemeMode::Light => "Light",
+            ThemeMode::System => "System",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum ThemePreset {
+    #[default]
+    Default,
+    Catppuccin,
+    TokyoNight,
+    Caffeine,
+    Neon,
+    Breeze,
+    Amoled,
+}
+
+#[allow(dead_code)]
+impl ThemePreset {
+    pub const ALL: [ThemePreset; 7] = [
+        ThemePreset::Default,
+        ThemePreset::Catppuccin,
+        ThemePreset::TokyoNight,
+        ThemePreset::Caffeine,
+        ThemePreset::Neon,
+        ThemePreset::Breeze,
+        ThemePreset::Amoled,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            ThemePreset::Default => "Default",
+            ThemePreset::Catppuccin => "Catppuccin",
+            ThemePreset::TokyoNight => "Tokyo Night",
+            ThemePreset::Caffeine => "Caffeine",
+            ThemePreset::Neon => "Neon",
+            ThemePreset::Breeze => "Breeze",
+            ThemePreset::Amoled => "AMOLED",
+        }
+    }
+
+    pub fn base_color(&self) -> eframe::egui::Color32 {
+        match self {
+            ThemePreset::Default => eframe::egui::Color32::from_rgb(10, 11, 14),
+            ThemePreset::Catppuccin => eframe::egui::Color32::from_rgb(30, 30, 46),
+            ThemePreset::TokyoNight => eframe::egui::Color32::from_rgb(26, 27, 38),
+            ThemePreset::Caffeine => eframe::egui::Color32::from_rgb(30, 24, 21),
+            ThemePreset::Neon => eframe::egui::Color32::from_rgb(8, 8, 15),
+            ThemePreset::Breeze => eframe::egui::Color32::from_rgb(15, 23, 29),
+            ThemePreset::Amoled => eframe::egui::Color32::from_rgb(0, 0, 0),
+        }
+    }
+
+    pub fn panel_color(&self) -> eframe::egui::Color32 {
+        match self {
+            ThemePreset::Default => eframe::egui::Color32::from_rgb(7, 8, 10),
+            ThemePreset::Catppuccin => eframe::egui::Color32::from_rgb(24, 24, 37),
+            ThemePreset::TokyoNight => eframe::egui::Color32::from_rgb(22, 22, 30),
+            ThemePreset::Caffeine => eframe::egui::Color32::from_rgb(23, 18, 16),
+            ThemePreset::Neon => eframe::egui::Color32::from_rgb(12, 12, 22),
+            ThemePreset::Breeze => eframe::egui::Color32::from_rgb(11, 18, 23),
+            ThemePreset::Amoled => eframe::egui::Color32::from_rgb(8, 8, 8),
+        }
+    }
+
+    pub fn default_accent(&self) -> MiniPalette {
+        match self {
+            ThemePreset::Default => MiniPalette::CyberViolet,
+            ThemePreset::Catppuccin => MiniPalette::CyberViolet,
+            ThemePreset::TokyoNight => MiniPalette::CobaltBlue,
+            ThemePreset::Caffeine => MiniPalette::AmberGold,
+            ThemePreset::Neon => MiniPalette::ElectricCyan,
+            ThemePreset::Breeze => MiniPalette::ElectricCyan,
+            ThemePreset::Amoled => MiniPalette::SunsetCrimson,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum StreamQuality {
+    #[default]
+    High,
+    Low,
+}
+
+#[allow(dead_code)]
+impl StreamQuality {
+    pub const ALL: [StreamQuality; 2] = [
+        StreamQuality::High,
+        StreamQuality::Low,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            StreamQuality::High => "High Quality (160 kbps Opus)",
+            StreamQuality::Low => "Data Saver (70 kbps Opus)",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Default)]
@@ -276,10 +433,67 @@ pub enum Route {
     Search(String),
     Browse(String),
     Liked,
+    #[allow(dead_code)]
     Recent,
     Stats,
     Settings(SettingsTab),
     CustomPlaylist(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum StatsPeriod {
+    SevenDays,
+    #[default]
+    ThirtyDays,
+    TwelveMonths,
+    AllTime,
+}
+
+#[allow(dead_code)]
+impl StatsPeriod {
+    pub const ALL: [StatsPeriod; 4] = [
+        StatsPeriod::SevenDays,
+        StatsPeriod::ThirtyDays,
+        StatsPeriod::TwelveMonths,
+        StatsPeriod::AllTime,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            StatsPeriod::SevenDays => "7 days",
+            StatsPeriod::ThirtyDays => "30 days",
+            StatsPeriod::TwelveMonths => "12 months",
+            StatsPeriod::AllTime => "All time",
+        }
+    }
+
+    pub fn subtitle_period(&self) -> &'static str {
+        match self {
+            StatsPeriod::SevenDays => "in the last 7 days",
+            StatsPeriod::ThirtyDays => "in the last 30 days",
+            StatsPeriod::TwelveMonths => "in the last 12 months",
+            StatsPeriod::AllTime => "all time",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct DailyActivity {
+    pub day_key: u32,
+    pub listen_ms: u64,
+    pub plays: u32,
+    pub hourly_ms: [u32; 24],
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, Default)]
+pub struct AlbumStat {
+    pub title: String,
+    pub artist: String,
+    #[serde(default)]
+    pub thumb: String,
+    pub plays: u32,
+    #[serde(default)]
+    pub listen_ms: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -287,14 +501,24 @@ pub struct TrackStat {
     pub video_id: String,
     pub title: String,
     pub artist: String,
+    #[serde(default)]
+    pub thumb: String,
+    #[serde(default)]
+    pub duration: String,
     pub plays: u32,
+    #[serde(default)]
+    pub listen_ms: u64,
     pub last_played: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ArtistStat {
     pub artist: String,
+    #[serde(default)]
+    pub thumb: String,
     pub plays: u32,
+    #[serde(default)]
+    pub listen_ms: u64,
 }
 
 pub enum Load {
@@ -347,6 +571,8 @@ pub struct Saved {
     pub perf_disable_blurs: bool,
     #[serde(default = "default_true")]
     pub perf_compact_buffers: bool,
+    #[serde(default)]
+    pub perf_placeholder_mood_art: bool,
     #[serde(default = "default_false")]
     pub eq_enabled: bool,
     #[serde(default = "default_eq_preset")]
@@ -381,6 +607,20 @@ pub struct Saved {
     pub theme_base: ThemeBase,
     #[serde(default = "default_true")]
     pub ambient_glow: bool,
+    #[serde(default)]
+    pub theme_mode: ThemeMode,
+    #[serde(default)]
+    pub theme_preset: ThemePreset,
+    #[serde(default = "default_false")]
+    pub close_to_tray: bool,
+    #[serde(default = "default_false")]
+    pub song_notifications: bool,
+    #[serde(default = "default_false")]
+    pub launch_on_startup: bool,
+    #[serde(default = "default_true")]
+    pub history_enabled: bool,
+    #[serde(default = "default_home_filter")]
+    pub home_filter: String,
 
     #[serde(default = "default_storage_dir")]
     pub storage_dir: String,
@@ -428,6 +668,10 @@ pub struct Saved {
     pub sync_room_code: String,
 
     #[serde(default)]
+    pub stats_filter: StatsPeriod,
+    #[serde(default)]
+    pub stats_daily: Vec<DailyActivity>,
+    #[serde(default)]
     pub stats_total_listen_ms: u64,
     #[serde(default)]
     pub stats_total_plays: u32,
@@ -435,6 +679,8 @@ pub struct Saved {
     pub stats_top_tracks: Vec<TrackStat>,
     #[serde(default)]
     pub stats_top_artists: Vec<ArtistStat>,
+    #[serde(default)]
+    pub stats_top_albums: Vec<AlbumStat>,
 
     #[serde(default = "default_true")]
     pub lyrics_synced_mode: bool,
@@ -444,6 +690,19 @@ pub struct Saved {
     pub lyrics_align_center: bool,
     #[serde(default = "default_lyrics_dim_unsung")]
     pub lyrics_dim_unsung: f32,
+
+    #[serde(default)]
+    pub stream_quality: StreamQuality,
+    #[serde(default = "default_false")]
+    pub crossfade_enabled: bool,
+    #[serde(default = "default_crossfade_secs")]
+    pub crossfade_secs: u8,
+    #[serde(default)]
+    pub blocked_artists: Vec<String>,
+}
+
+fn default_crossfade_secs() -> u8 {
+    3
 }
 
 fn default_lyrics_font_size() -> f32 {
@@ -492,6 +751,10 @@ fn default_storage_dir() -> String {
         return p.to_string_lossy().to_string();
     }
     "Music/AURI".to_string()
+}
+
+fn default_home_filter() -> String {
+    "All".to_string()
 }
 
 fn default_perf_audio_buffer() -> f32 {
@@ -581,6 +844,7 @@ impl Default for Saved {
             perf_suspend_animations: true,
             perf_disable_blurs: true,
             perf_compact_buffers: true,
+            perf_placeholder_mood_art: false,
             eq_enabled: false,
             eq_preset: crate::dsp::EqPreset::Flat,
             eq_gains: [0.0; 10],
@@ -597,6 +861,13 @@ impl Default for Saved {
             theme_palette: MiniPalette::CyberViolet,
             theme_base: ThemeBase::DarkObsidian,
             ambient_glow: true,
+            theme_mode: ThemeMode::Dark,
+            theme_preset: ThemePreset::Default,
+            close_to_tray: false,
+            song_notifications: false,
+            launch_on_startup: false,
+            history_enabled: true,
+            home_filter: default_home_filter(),
             storage_dir: default_storage_dir(),
             playlists: Vec::new(),
             selection_glow: true,
@@ -617,14 +888,21 @@ impl Default for Saved {
             sync_github_token: String::new(),
             sync_gist_id: String::new(),
             sync_room_code: String::new(),
+            stats_filter: StatsPeriod::ThirtyDays,
+            stats_daily: Vec::new(),
             stats_total_listen_ms: 0,
             stats_total_plays: 0,
             stats_top_tracks: Vec::new(),
             stats_top_artists: Vec::new(),
+            stats_top_albums: Vec::new(),
             lyrics_synced_mode: true,
             lyrics_font_size: 24.0,
             lyrics_align_center: true,
             lyrics_dim_unsung: 0.35,
+            stream_quality: StreamQuality::High,
+            crossfade_enabled: false,
+            crossfade_secs: 3,
+            blocked_artists: Vec::new(),
         }
     }
 }
@@ -713,6 +991,7 @@ pub enum Action {
     SetPerfSuspendAnimations(bool),
     SetPerfDisableBlurs(bool),
     SetPerfCompactBuffers(bool),
+    SetPerfPlaceholderMoodArt(bool),
     ToggleEq(bool),
     SetEqPreset(crate::dsp::EqPreset),
     SetEqGain(usize, f32),
@@ -769,6 +1048,27 @@ pub enum Action {
     SetLyricsAlignCenter(bool),
     SetLyricsDimUnsung(f32),
     ClearStats,
+    SetStatsPeriod(StatsPeriod),
+    #[allow(dead_code)]
+    SetThemeMode(ThemeMode),
+    #[allow(dead_code)]
+    SetThemePreset(ThemePreset),
+    #[allow(dead_code)]
+    SetCloseToTray(bool),
+    #[allow(dead_code)]
+    SetSongNotifications(bool),
+    #[allow(dead_code)]
+    SetLaunchOnStartup(bool),
+    #[allow(dead_code)]
+    SetHistoryEnabled(bool),
+    SetHomeFilter(String),
+    SetStreamQuality(StreamQuality),
+    SetCrossfadeEnabled(bool),
+    SetCrossfadeSecs(u8),
+    BlockArtist(String),
+    UnblockArtist(String),
+    OpenUpdateDialog,
+    CloseUpdateDialog,
 }
 
 enum Event {
@@ -839,6 +1139,7 @@ pub struct App {
     pub notice: Option<Notice>,
     pub update: Option<String>,
     pub updating: bool,
+    pub update_dialog_open: bool,
     pub discord_linked: Option<bool>,
     pub hotkey_taken: Vec<Command>,
     pub recording: Option<Command>,
@@ -863,6 +1164,7 @@ impl App {
             .storage
             .and_then(|storage| eframe::get_value(storage, eframe::APP_KEY))
             .unwrap_or_default();
+        saved.theme_mode = ThemeMode::Dark;
         saved.queue_open = true;
         let yt = Arc::new(Client::new(saved.visitor.clone()));
         yt.set_session(auth::load());
@@ -928,6 +1230,7 @@ impl App {
             notice: None,
             update: None,
             updating: false,
+            update_dialog_open: false,
             discord_linked: None,
             hotkey_taken: Vec::new(),
             recording: None,
@@ -951,12 +1254,14 @@ impl App {
             restart: None,
         };
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
+        app.yt.set_low_quality(app.saved.stream_quality == StreamQuality::Low);
         if app.saved.mini_mode {
             app.title_bar.enable_transparency();
             app.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
             app.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
             app.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
-            app.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(384.0, 108.0)));
+            let (w, h) = app.saved.mini_variant.size(app.mini_queue_open);
+            app.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
             let level = if app.saved.mini_always_on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
             app.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
         }
@@ -1160,8 +1465,19 @@ impl App {
 
     fn home_page(&self, partial: bool) -> Page {
         let mut sections: Vec<Section> = self.home_parts.iter().flat_map(|(_, sections)| sections.iter().cloned()).collect();
-        if let Some(at) = sections.iter().position(|section| section.title == QUICK_PICKS) {
+        if let Some(at) = sections.iter().position(|section| section.title.eq_ignore_ascii_case("quick picks") || section.title == QUICK_PICKS) {
             sections[..=at].rotate_right(1);
+        } else if let Some(at) = sections.iter().position(|section| section.items.iter().any(Item::is_song)) {
+            sections[..=at].rotate_right(1);
+            sections[0].title = QUICK_PICKS.to_owned();
+        }
+        let filter = self.saved.home_filter.trim();
+        if !filter.is_empty() && !filter.eq_ignore_ascii_case("all") {
+            let filter_lower = filter.to_lowercase();
+            sections.retain(|section| {
+                section.title.to_lowercase().contains(&filter_lower)
+                    || section.items.iter().any(|item| item.title.to_lowercase().contains(&filter_lower) || item.subtitle.to_lowercase().contains(&filter_lower))
+            });
         }
         Page {
             header: None,
@@ -1345,15 +1661,41 @@ impl App {
             Ok(d) => d.as_secs(),
             Err(_) => 0,
         };
+        let day_key = (now / 86400) as u32;
+        let hour = ((now / 3600) % 24) as usize;
+        if let Some(day) = self.saved.stats_daily.iter_mut().find(|d| d.day_key == day_key) {
+            day.plays += 1;
+            day.hourly_ms[hour] = day.hourly_ms[hour].saturating_add(1000);
+        } else {
+            let mut hourly_ms = [0u32; 24];
+            hourly_ms[hour] = 1000;
+            self.saved.stats_daily.push(DailyActivity {
+                day_key,
+                listen_ms: 0,
+                plays: 1,
+                hourly_ms,
+            });
+        }
+        let cover_str = self.saved.covers.of(item).to_owned();
+
         if let Some(pos) = self.saved.stats_top_tracks.iter().position(|t| t.video_id == item.video_id) {
             self.saved.stats_top_tracks[pos].plays += 1;
             self.saved.stats_top_tracks[pos].last_played = now;
+            if self.saved.stats_top_tracks[pos].thumb.is_empty() {
+                self.saved.stats_top_tracks[pos].thumb = cover_str.clone();
+            }
+            if self.saved.stats_top_tracks[pos].duration.is_empty() {
+                self.saved.stats_top_tracks[pos].duration = item.duration.clone();
+            }
         } else {
             self.saved.stats_top_tracks.push(TrackStat {
                 video_id: item.video_id.clone(),
                 title: item.title.clone(),
                 artist: item.subtitle.clone(),
+                thumb: cover_str.clone(),
+                duration: item.duration.clone(),
                 plays: 1,
+                listen_ms: 0,
                 last_played: now,
             });
         }
@@ -1363,23 +1705,67 @@ impl App {
         if !item.subtitle.is_empty() {
             if let Some(pos) = self.saved.stats_top_artists.iter().position(|a| a.artist == item.subtitle) {
                 self.saved.stats_top_artists[pos].plays += 1;
+                if self.saved.stats_top_artists[pos].thumb.is_empty() {
+                    self.saved.stats_top_artists[pos].thumb = cover_str.clone();
+                }
             } else {
                 self.saved.stats_top_artists.push(ArtistStat {
                     artist: item.subtitle.clone(),
+                    thumb: cover_str.clone(),
                     plays: 1,
+                    listen_ms: 0,
                 });
             }
             self.saved.stats_top_artists.sort_by(|a, b| b.plays.cmp(&a.plays));
             self.saved.stats_top_artists.truncate(30);
         }
+
+        if !item.extra.is_empty() {
+            let album_name = item.extra.clone();
+            if let Some(pos) = self.saved.stats_top_albums.iter().position(|a| a.title == album_name) {
+                self.saved.stats_top_albums[pos].plays += 1;
+                if self.saved.stats_top_albums[pos].thumb.is_empty() {
+                    self.saved.stats_top_albums[pos].thumb = cover_str;
+                }
+            } else {
+                self.saved.stats_top_albums.push(AlbumStat {
+                    title: album_name,
+                    artist: item.subtitle.clone(),
+                    thumb: cover_str,
+                    plays: 1,
+                    listen_ms: 0,
+                });
+            }
+            self.saved.stats_top_albums.sort_by(|a, b| b.plays.cmp(&a.plays));
+            self.saved.stats_top_albums.truncate(20);
+        }
     }
 
     fn next(&mut self, automatic: bool) {
         let Some(current) = self.saved.current else { return };
-        if current + 1 < self.saved.queue.len() {
-            self.play_index(current + 1);
-        } else if self.saved.repeat == Repeat::All {
-            self.play_index(0);
+        let mut idx = current + 1;
+        while idx < self.saved.queue.len() {
+            let item = &self.saved.queue[idx];
+            let is_blocked = self.saved.blocked_artists.iter().any(|b| {
+                item.subtitle.to_lowercase().contains(&b.to_lowercase())
+            });
+            if !is_blocked {
+                self.play_index(idx);
+                return;
+            }
+            idx += 1;
+        }
+        if self.saved.repeat == Repeat::All {
+            for i in 0..self.saved.queue.len() {
+                let item = &self.saved.queue[i];
+                let is_blocked = self.saved.blocked_artists.iter().any(|b| {
+                    item.subtitle.to_lowercase().contains(&b.to_lowercase())
+                });
+                if !is_blocked {
+                    self.play_index(i);
+                    return;
+                }
+            }
         } else if automatic {
             self.player.seek(0);
             self.player.set_paused(true);
@@ -1426,7 +1812,10 @@ impl App {
                     let upcoming = self.saved.current.map_or(0, |current| current + 1);
                     let had_next = upcoming < self.saved.queue.len();
                     for item in items {
-                        if !self.saved.queue.iter().any(|queued| queued.video_id == item.video_id) {
+                        let is_blocked = self.saved.blocked_artists.iter().any(|b| {
+                            item.subtitle.to_lowercase().contains(&b.to_lowercase())
+                        });
+                        if !is_blocked && !self.saved.queue.iter().any(|queued| queued.video_id == item.video_id) {
                             self.saved.queue.push(item);
                         }
                     }
@@ -1487,10 +1876,11 @@ impl App {
                 Event::Release(version) => {
                     self.offer(
                         format!("{APP_NAME} {version} is out"),
-                        Some(("Update", Action::GetUpdate)),
+                        Some(("Update", Action::OpenUpdateDialog)),
                         UPDATE_NOTICE_TIME,
                     );
                     self.update = Some(version);
+                    self.update_dialog_open = true;
                 }
                 Event::Updated(Ok(program)) => {
                     self.restart = Some(program);
@@ -1917,7 +2307,7 @@ impl App {
                     }
                 } else {
                     self.title_bar.restore_decorations();
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
@@ -1969,6 +2359,7 @@ impl App {
             Action::SetPerfSuspendAnimations(enabled) => self.saved.perf_suspend_animations = enabled,
             Action::SetPerfDisableBlurs(enabled) => self.saved.perf_disable_blurs = enabled,
             Action::SetPerfCompactBuffers(enabled) => self.saved.perf_compact_buffers = enabled,
+            Action::SetPerfPlaceholderMoodArt(enabled) => self.saved.perf_placeholder_mood_art = enabled,
             Action::ToggleEq(enabled) => {
                 self.saved.eq_enabled = enabled;
                 self.player.set_eq_enabled(enabled);
@@ -2276,7 +2667,64 @@ impl App {
                 self.saved.stats_total_plays = 0;
                 self.saved.stats_top_tracks.clear();
                 self.saved.stats_top_artists.clear();
+                self.saved.stats_top_albums.clear();
+                self.saved.stats_daily.clear();
                 self.notify("Listening statistics reset");
+            }
+            Action::SetStatsPeriod(period) => {
+                self.saved.stats_filter = period;
+            }
+            Action::SetThemeMode(_mode) => {
+                // Light mode is frozen/locked to Dark mode
+                self.saved.theme_mode = ThemeMode::Dark;
+            }
+            Action::SetThemePreset(preset) => {
+                self.saved.theme_preset = preset;
+                self.saved.theme_palette = preset.default_accent();
+            }
+            Action::SetCloseToTray(val) => {
+                self.saved.close_to_tray = val;
+            }
+            Action::SetSongNotifications(val) => {
+                self.saved.song_notifications = val;
+            }
+            Action::SetLaunchOnStartup(val) => {
+                self.saved.launch_on_startup = val;
+            }
+            Action::SetHistoryEnabled(val) => {
+                self.saved.history_enabled = val;
+            }
+            Action::SetHomeFilter(filter) => {
+                self.saved.home_filter = filter;
+                self.refresh();
+            }
+            Action::SetStreamQuality(quality) => {
+                self.saved.stream_quality = quality;
+                self.yt.set_low_quality(quality == StreamQuality::Low);
+                self.notify(format!("Stream Quality: {}", quality.name()));
+            }
+            Action::SetCrossfadeEnabled(enabled) => {
+                self.saved.crossfade_enabled = enabled;
+            }
+            Action::SetCrossfadeSecs(secs) => {
+                self.saved.crossfade_secs = secs.clamp(1, 10);
+            }
+            Action::BlockArtist(artist) => {
+                let trimmed = artist.trim().to_string();
+                if !trimmed.is_empty() && !self.saved.blocked_artists.iter().any(|a| a.eq_ignore_ascii_case(&trimmed)) {
+                    self.saved.blocked_artists.push(trimmed.clone());
+                    self.notify(format!("Blocked artist: {trimmed}"));
+                }
+            }
+            Action::UnblockArtist(artist) => {
+                self.saved.blocked_artists.retain(|a| !a.eq_ignore_ascii_case(&artist));
+                self.notify(format!("Unblocked artist: {artist}"));
+            }
+            Action::OpenUpdateDialog => {
+                self.update_dialog_open = true;
+            }
+            Action::CloseUpdateDialog => {
+                self.update_dialog_open = false;
             }
         }
     }
@@ -2341,8 +2789,8 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
-                let height = if self.mini_queue_open { 260.0 } else { 108.0 };
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(384.0, height)));
+                let (w, h) = self.saved.mini_variant.size(self.mini_queue_open);
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
             }
             actions.extend(ui::draw_mini(self, ctx));
         } else {
@@ -2362,6 +2810,20 @@ impl eframe::App for App {
             };
             ctx.request_repaint_after(tick);
         }
+
+        // Seamless crossfade transition (bypassed / disabled in Performance & Gaming Mode)
+        if self.saved.crossfade_enabled && !self.saved.performance_mode && self.playing() && self.saved.repeat != Repeat::One {
+            let pos_ms = self.player.position_ms();
+            let dur_ms = self.player.duration_ms();
+            let fade_ms = (self.saved.crossfade_secs as u64) * 1000;
+            if dur_ms > fade_ms + 2000 && pos_ms >= dur_ms.saturating_sub(fade_ms) {
+                let remaining = dur_ms.saturating_sub(pos_ms);
+                if remaining <= 250 {
+                    self.next(true);
+                }
+            }
+        }
+
         let item = self.saved.current.and_then(|current| self.saved.queue.get(current));
         let playing = item.is_some() && !self.player.paused();
         if playing {
@@ -2370,6 +2832,40 @@ impl eframe::App for App {
                 let delta = now.duration_since(prev).as_millis() as u64;
                 if delta < 2000 {
                     self.saved.stats_total_listen_ms += delta;
+
+                    let secs = match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+                        Ok(d) => d.as_secs(),
+                        Err(_) => 0,
+                    };
+                    let day_key = (secs / 86400) as u32;
+                    let hour = ((secs / 3600) % 24) as usize;
+                    if let Some(day) = self.saved.stats_daily.iter_mut().find(|d| d.day_key == day_key) {
+                        day.listen_ms += delta;
+                        day.hourly_ms[hour] = day.hourly_ms[hour].saturating_add(delta as u32);
+                    } else {
+                        let mut hourly_ms = [0u32; 24];
+                        hourly_ms[hour] = delta as u32;
+                        self.saved.stats_daily.push(DailyActivity {
+                            day_key,
+                            listen_ms: delta,
+                            plays: 0,
+                            hourly_ms,
+                        });
+                    }
+
+                    if let Some(it) = item {
+                        if let Some(track) = self.saved.stats_top_tracks.iter_mut().find(|t| t.video_id == it.video_id) {
+                            track.listen_ms += delta;
+                        }
+                        if let Some(art) = self.saved.stats_top_artists.iter_mut().find(|a| a.artist == it.subtitle) {
+                            art.listen_ms += delta;
+                        }
+                        if !it.extra.is_empty() {
+                            if let Some(alb) = self.saved.stats_top_albums.iter_mut().find(|a| a.title == it.extra) {
+                                alb.listen_ms += delta;
+                            }
+                        }
+                    }
                 }
             }
             self.last_listen_tick = Some(now);
@@ -2570,10 +3066,50 @@ mod tests {
             video_id: "test123".into(),
             title: "Test Song".into(),
             artist: "Test Artist".into(),
+            thumb: String::new(),
+            duration: "3:30".into(),
             plays: 5,
+            listen_ms: 60000,
             last_played: 1000,
         });
         assert_eq!(saved.stats_top_tracks.len(), 1);
         assert_eq!(saved.stats_top_tracks[0].plays, 5);
+    }
+
+    #[test]
+    fn test_stream_quality_crossfade_and_blocked_artists() {
+        let mut saved = Saved::default();
+        assert_eq!(saved.stream_quality, StreamQuality::High);
+        assert!(!saved.crossfade_enabled);
+        assert_eq!(saved.crossfade_secs, 3);
+        assert!(saved.blocked_artists.is_empty());
+
+        // Test stream quality names
+        assert_eq!(StreamQuality::High.name(), "High Quality (160 kbps Opus)");
+        assert_eq!(StreamQuality::Low.name(), "Data Saver (70 kbps Opus)");
+
+        // Test blocked artists filter
+        saved.blocked_artists.push("Disliked Band".into());
+        let track1 = Item {
+            video_id: "t1".into(),
+            title: "Great Song".into(),
+            subtitle: "Favorite Artist".into(),
+            ..Item::default()
+        };
+        let track2 = Item {
+            video_id: "t2".into(),
+            title: "Bad Song".into(),
+            subtitle: "Disliked Band ft. Someone".into(),
+            ..Item::default()
+        };
+
+        let is_t1_blocked = saved.blocked_artists.iter().any(|b| track1.subtitle.to_lowercase().contains(&b.to_lowercase()));
+        let is_t2_blocked = saved.blocked_artists.iter().any(|b| track2.subtitle.to_lowercase().contains(&b.to_lowercase()));
+        assert!(!is_t1_blocked);
+        assert!(is_t2_blocked);
+
+        // Test unblock
+        saved.blocked_artists.retain(|b| !b.eq_ignore_ascii_case("disliked band"));
+        assert!(saved.blocked_artists.is_empty());
     }
 }

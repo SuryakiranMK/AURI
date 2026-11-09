@@ -184,6 +184,7 @@ pub struct Client {
     expired: AtomicBool,
     clients: Mutex<Clients>,
     clients_checked: Mutex<Option<Instant>>,
+    low_quality: AtomicBool,
 }
 
 impl Client {
@@ -201,7 +202,12 @@ impl Client {
             expired: AtomicBool::new(false),
             clients: Mutex::new(Clients::parse(BUNDLED_CLIENTS).expect("the bundled clients.json should be complete")),
             clients_checked: Mutex::new(None),
+            low_quality: AtomicBool::new(false),
         }
+    }
+
+    pub fn set_low_quality(&self, low: bool) {
+        self.low_quality.store(low, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn refresh_clients(&self) -> bool {
@@ -517,15 +523,16 @@ impl Client {
     }
 
     pub fn stream(&self, video_id: &str) -> Result<Stream, String> {
+        let low = self.low_quality.load(std::sync::atomic::Ordering::Relaxed);
         let mut response = self.player(video_id)?;
-        if audio(&response).is_none() {
+        if audio_with_quality(&response, low).is_none() {
             self.visitor.lock().unwrap().clear();
             response = self.player(video_id)?;
         }
-        if audio(&response).is_none() && self.refresh_clients() {
+        if audio_with_quality(&response, low).is_none() && self.refresh_clients() {
             response = self.player(video_id)?;
         }
-        audio(&response).ok_or_else(|| {
+        audio_with_quality(&response, low).ok_or_else(|| {
             let status = &response["playabilityStatus"];
             let reason = if playable(&response) {
                 None
@@ -831,7 +838,12 @@ fn playable(response: &Value) -> bool {
     response["playabilityStatus"]["status"] == "OK"
 }
 
+#[allow(dead_code)]
 fn audio(response: &Value) -> Option<Stream> {
+    audio_with_quality(response, false)
+}
+
+fn audio_with_quality(response: &Value, low_quality: bool) -> Option<Stream> {
     let formats = response["streamingData"]["adaptiveFormats"]
         .as_array()
         .filter(|_| playable(response))?;
@@ -843,13 +855,18 @@ fn audio(response: &Value) -> Option<Stream> {
             url: format["url"].as_str()?.to_owned(),
             len: number("contentLength"),
             duration_ms: number("approxDurationMs"),
-            opus: itag == OPUS_ITAG,
+            opus: itag == OPUS_ITAG || itag == 250,
             loudness_db,
             fallback: None,
         })
     };
     let aac = find(AAC_ITAG);
-    match find(OPUS_ITAG) {
+    let preferred = if low_quality {
+        find(250).or_else(|| find(OPUS_ITAG))
+    } else {
+        find(OPUS_ITAG).or_else(|| find(250))
+    };
+    match preferred {
         Some(opus) => Some(Stream {
             fallback: aac.map(Box::new),
             ..opus
