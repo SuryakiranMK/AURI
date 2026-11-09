@@ -535,6 +535,41 @@ pub enum Repeat {
     One,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DiscordLineContent {
+    #[default]
+    Title,
+    Artist,
+    Album,
+    ArtistAlbum,
+    Off,
+}
+
+impl DiscordLineContent {
+    #[allow(dead_code)]
+    pub const ALL: [DiscordLineContent; 5] = [
+        DiscordLineContent::Title,
+        DiscordLineContent::Artist,
+        DiscordLineContent::Album,
+        DiscordLineContent::ArtistAlbum,
+        DiscordLineContent::Off,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            DiscordLineContent::Title => "Song Title",
+            DiscordLineContent::Artist => "Artist",
+            DiscordLineContent::Album => "Album",
+            DiscordLineContent::ArtistAlbum => "Artist · Album",
+            DiscordLineContent::Off => "Off",
+        }
+    }
+}
+
+fn default_discord_line1() -> DiscordLineContent { DiscordLineContent::Title }
+fn default_discord_line2() -> DiscordLineContent { DiscordLineContent::Artist }
+fn default_discord_line3() -> DiscordLineContent { DiscordLineContent::Album }
+
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct Saved {
@@ -579,6 +614,20 @@ pub struct Saved {
     pub eq_preset: crate::dsp::EqPreset,
     #[serde(default = "default_eq_gains")]
     pub eq_gains: [f32; 10],
+    #[serde(default)]
+    pub eq_preamp_db: f32,
+    #[serde(default)]
+    pub autoeq_headphone: crate::dsp::AutoEqHeadphone,
+    #[serde(default = "default_discord_line1")]
+    pub discord_line1: DiscordLineContent,
+    #[serde(default = "default_discord_line2")]
+    pub discord_line2: DiscordLineContent,
+    #[serde(default = "default_discord_line3")]
+    pub discord_line3: DiscordLineContent,
+    #[serde(default = "default_true")]
+    pub discord_button_listen: bool,
+    #[serde(default = "default_true")]
+    pub discord_button_app: bool,
 
     #[serde(default)]
     pub mini_palette: MiniPalette,
@@ -848,6 +897,13 @@ impl Default for Saved {
             eq_enabled: false,
             eq_preset: crate::dsp::EqPreset::Flat,
             eq_gains: [0.0; 10],
+            eq_preamp_db: 0.0,
+            autoeq_headphone: crate::dsp::AutoEqHeadphone::None,
+            discord_line1: DiscordLineContent::Title,
+            discord_line2: DiscordLineContent::Artist,
+            discord_line3: DiscordLineContent::Album,
+            discord_button_listen: true,
+            discord_button_app: true,
             mini_palette: MiniPalette::CyberViolet,
             mini_opacity: 0.92,
             mini_show_shuffle_repeat: true,
@@ -995,6 +1051,14 @@ pub enum Action {
     ToggleEq(bool),
     SetEqPreset(crate::dsp::EqPreset),
     SetEqGain(usize, f32),
+    SetEqPreamp(f32),
+    SetAutoEq(crate::dsp::AutoEqHeadphone),
+    ResetEq,
+    SetDiscordLine1(DiscordLineContent),
+    SetDiscordLine2(DiscordLineContent),
+    SetDiscordLine3(DiscordLineContent),
+    SetDiscordButtonListen(bool),
+    SetDiscordButtonApp(bool),
     #[allow(dead_code)]
     SetSettingsTab(SettingsTab),
     SetMiniPalette(MiniPalette),
@@ -1182,6 +1246,7 @@ impl App {
         player.set_loudness_normalizer(saved.loudness_normalizer);
         player.set_eq_enabled(saved.eq_enabled);
         player.set_eq_gains(saved.eq_gains);
+        player.set_eq_preamp(saved.eq_preamp_db);
         let (sender, events) = mpsc::channel();
         let media = Media::new(cc, {
             let (sender, ctx) = (sender.clone(), ctx.clone());
@@ -2378,6 +2443,31 @@ impl App {
                     self.player.set_eq_gains(self.saved.eq_gains);
                 }
             }
+            Action::SetEqPreamp(preamp) => {
+                self.saved.eq_preamp_db = preamp.clamp(-12.0, 12.0);
+                self.player.set_eq_preamp(self.saved.eq_preamp_db);
+            }
+            Action::SetAutoEq(hp) => {
+                self.saved.autoeq_headphone = hp;
+                if let Some(gains) = hp.gains() {
+                    self.saved.eq_preset = crate::dsp::EqPreset::Custom;
+                    self.saved.eq_gains = gains;
+                    self.player.set_eq_gains(self.saved.eq_gains);
+                }
+            }
+            Action::ResetEq => {
+                self.saved.eq_preset = crate::dsp::EqPreset::Flat;
+                self.saved.autoeq_headphone = crate::dsp::AutoEqHeadphone::None;
+                self.saved.eq_gains = [0.0; 10];
+                self.saved.eq_preamp_db = 0.0;
+                self.player.set_eq_gains([0.0; 10]);
+                self.player.set_eq_preamp(0.0);
+            }
+            Action::SetDiscordLine1(c) => self.saved.discord_line1 = c,
+            Action::SetDiscordLine2(c) => self.saved.discord_line2 = c,
+            Action::SetDiscordLine3(c) => self.saved.discord_line3 = c,
+            Action::SetDiscordButtonListen(b) => self.saved.discord_button_listen = b,
+            Action::SetDiscordButtonApp(b) => self.saved.discord_button_app = b,
             Action::SetSettingsTab(tab) => {
                 self.expanded = false;
                 self.go(Route::Settings(tab));
@@ -2879,7 +2969,14 @@ impl eframe::App for App {
         if let Some(discord) = self.discord.as_mut().filter(|_| !self.player.loading()) {
             let track = item.filter(|_| playing).map(|item| (item, self.saved.covers.of(item)));
             let (headline, name) = (self.saved.discord_headline, &self.saved.discord_name);
-            discord.show(track, headline, name, position_ms, duration_ms);
+            let fmt = crate::discord::DiscordFormat {
+                line1: self.saved.discord_line1,
+                line2: self.saved.discord_line2,
+                line3: self.saved.discord_line3,
+                button_listen: self.saved.discord_button_listen,
+                button_app: self.saved.discord_button_app,
+            };
+            discord.show(track, headline, name, position_ms, duration_ms, fmt);
         }
     }
 

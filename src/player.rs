@@ -51,6 +51,7 @@ struct Shared {
     loudness_gain: AtomicU32,
     eq_enabled: AtomicBool,
     eq_gains: Mutex<[f32; 10]>,
+    eq_preamp: AtomicU32,
 }
 
 struct Chunk {
@@ -516,6 +517,8 @@ impl PcmSource {
                 if let Ok(gains) = self.shared.eq_gains.try_lock() {
                     self.eq.set_gains(*gains);
                 }
+                let preamp = f32::from_bits(self.shared.eq_preamp.load(Relaxed));
+                self.eq.set_preamp(preamp);
                 self.eq.process_interleaved(&mut self.samples, self.channels as usize, self.rate);
             }
             if self.shared.loudness_normalizer.load(Relaxed) {
@@ -850,6 +853,10 @@ impl Player {
         if let Ok(mut g) = self.shared.eq_gains.lock() {
             *g = gains;
         }
+    }
+
+    pub fn set_eq_preamp(&self, preamp_db: f32) {
+        self.shared.eq_preamp.store(preamp_db.to_bits(), Relaxed);
     }
 
     #[allow(dead_code)]

@@ -27,9 +27,30 @@ pub enum Headline {
     Custom,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DiscordFormat {
+    pub line1: crate::app::DiscordLineContent,
+    pub line2: crate::app::DiscordLineContent,
+    pub line3: crate::app::DiscordLineContent,
+    pub button_listen: bool,
+    pub button_app: bool,
+}
+
+impl Default for DiscordFormat {
+    fn default() -> Self {
+        Self {
+            line1: crate::app::DiscordLineContent::Title,
+            line2: crate::app::DiscordLineContent::Artist,
+            line3: crate::app::DiscordLineContent::Off,
+            button_listen: false,
+            button_app: false,
+        }
+    }
+}
+
 pub struct Discord {
     updates: Sender<Option<Value>>,
-    shown: Option<(String, String, Headline, String, u64)>,
+    shown: Option<(String, String, Headline, String, u64, DiscordFormat)>,
 }
 
 impl Discord {
@@ -39,7 +60,15 @@ impl Discord {
         Self { updates, shown: None }
     }
 
-    pub fn show(&mut self, track: Option<(&Item, &str)>, headline: Headline, name: &str, position_ms: u64, duration_ms: u64) {
+    pub fn show(
+        &mut self,
+        track: Option<(&Item, &str)>,
+        headline: Headline,
+        name: &str,
+        position_ms: u64,
+        duration_ms: u64,
+        fmt: DiscordFormat,
+    ) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_millis() as u64);
@@ -47,11 +76,12 @@ impl Discord {
         let track = track.filter(|_| duration_ms > 0);
         let name = if headline == Headline::Custom { name } else { "" };
         let unchanged = match (&self.shown, track) {
-            (Some((video_id, art, lead, named, shown)), Some((item, cover))) => {
+            (Some((video_id, art, lead, named, shown, old_fmt)), Some((item, cover))) => {
                 *video_id == item.video_id
                     && art == cover
                     && *lead == headline
                     && named == name
+                    && *old_fmt == fmt
                     && shown.abs_diff(started) < SEEK_TOLERANCE_MS
             }
             (None, None) => true,
@@ -60,10 +90,10 @@ impl Discord {
         if unchanged {
             return;
         }
-        self.shown = track.map(|(item, cover)| (item.video_id.clone(), cover.to_owned(), headline, name.to_owned(), started));
+        self.shown = track.map(|(item, cover)| (item.video_id.clone(), cover.to_owned(), headline, name.to_owned(), started, fmt));
         let _ = self
             .updates
-            .send(track.map(|(item, cover)| activity(item, cover, headline, name, started, duration_ms)));
+            .send(track.map(|(item, cover)| activity(item, cover, headline, name, started, duration_ms, fmt)));
     }
 }
 
@@ -160,26 +190,81 @@ fn exchange(pipe: &mut (impl Read + Write), opcode: u32, payload: &Value) -> io:
     Ok(())
 }
 
-fn activity(item: &Item, cover: &str, headline: Headline, name: &str, started: u64, duration_ms: u64) -> Value {
+fn format_content(content: crate::app::DiscordLineContent, title: &str, artist: &str, album: &str) -> Option<String> {
+    match content {
+        crate::app::DiscordLineContent::Title => line(title),
+        crate::app::DiscordLineContent::Artist => line(artist),
+        crate::app::DiscordLineContent::Album => line(album),
+        crate::app::DiscordLineContent::ArtistAlbum => {
+            if !artist.is_empty() && !album.is_empty() {
+                line(&format!("{artist} • {album}"))
+            } else if !artist.is_empty() {
+                line(artist)
+            } else {
+                line(album)
+            }
+        }
+        crate::app::DiscordLineContent::Off => None,
+    }
+}
+
+fn album_of(item: &Item) -> &str {
+    if !item.extra.is_empty() {
+        &item.extra
+    } else {
+        let parts: Vec<&str> = item.subtitle.split(" • ").collect();
+        if parts.len() >= 2 {
+            parts[1].trim()
+        } else {
+            ""
+        }
+    }
+}
+
+fn activity(item: &Item, cover: &str, headline: Headline, name: &str, started: u64, duration_ms: u64, fmt: DiscordFormat) -> Value {
     let field = match headline {
         Headline::App | Headline::Custom => 0,
         Headline::Artist => 1,
         Headline::Song => 2,
     };
+    let art_name = artist(item);
+    let alb_name = album_of(item);
+    let details_str = format_content(fmt.line1, &item.title, art_name, alb_name);
+    let state_str = format_content(fmt.line2, &item.title, art_name, alb_name);
+    let large_txt = format_content(fmt.line3, &item.title, art_name, alb_name).unwrap_or_else(|| "AURI".to_string());
+
     let mut activity = json!({
         "type": LISTENING,
         "status_display_type": field,
-        "details": line(&item.title),
-        "state": line(artist(item)),
+        "details": details_str,
+        "state": state_str,
         "timestamps": { "start": started, "end": started + duration_ms },
     });
     let app_name = if name.is_empty() { "AURI" } else { name };
     activity["name"] = json!(app_name);
     if cover.starts_with("https://") {
-        activity["assets"] = json!({ "large_image": ytm::sized(cover, COVER_SIDE), "large_text": "AURI" });
+        activity["assets"] = json!({ "large_image": ytm::sized(cover, COVER_SIDE), "large_text": large_txt });
     } else {
-        activity["assets"] = json!({ "large_text": "AURI" });
+        activity["assets"] = json!({ "large_text": large_txt });
     }
+
+    let mut buttons = Vec::new();
+    if fmt.button_listen && !item.video_id.is_empty() {
+        buttons.push(json!({
+            "label": "Play on YouTube Music",
+            "url": format!("https://music.youtube.com/watch?v={}", item.video_id)
+        }));
+    }
+    if fmt.button_app {
+        buttons.push(json!({
+            "label": "Get AURI Player",
+            "url": "https://github.com/SuryakiranMK/AURI"
+        }));
+    }
+    if !buttons.is_empty() {
+        activity["buttons"] = json!(buttons);
+    }
+
     activity
 }
 
@@ -260,12 +345,13 @@ mod tests {
         };
         let cover = "https://lh3.googleusercontent.com/abc=w120-h120-l90-rj";
         let lucky = song("Get Lucky", "Daft Punk • Random Access Memories", &[]);
-        let shown = activity(&lucky, cover, Headline::App, "", 1000, 248_000);
+        let fmt = DiscordFormat::default();
+        let shown = activity(&lucky, cover, Headline::App, "", 1000, 248_000, fmt);
         assert_eq!(shown["type"], 2);
         assert_eq!(shown["status_display_type"], 0);
         assert_eq!(shown["name"], "AURI");
-        assert_eq!(activity(&lucky, cover, Headline::Artist, "", 0, 1)["status_display_type"], 1);
-        assert_eq!(activity(&lucky, cover, Headline::Song, "", 0, 1)["status_display_type"], 2);
+        assert_eq!(activity(&lucky, cover, Headline::Artist, "", 0, 1, fmt)["status_display_type"], 1);
+        assert_eq!(activity(&lucky, cover, Headline::Song, "", 0, 1, fmt)["status_display_type"], 2);
         assert_eq!(shown["details"], "Get Lucky");
         assert_eq!(shown["state"], "Daft Punk");
         assert_eq!(shown["timestamps"], json!({ "start": 1000, "end": 249_000 }));
@@ -275,22 +361,22 @@ mod tests {
         );
         assert_eq!(shown["assets"]["large_text"], "AURI");
 
-        let video = activity(&song("7", "Video • Prince • 12M views", &["Prince"]), "", Headline::App, "", 0, 1);
+        let video = activity(&song("7", "Video • Prince • 12M views", &["Prince"]), "", Headline::App, "", 0, 1, fmt);
         assert_eq!(video["details"], "7 ");
         assert_eq!(video["state"], "Prince");
         assert_eq!(video["assets"]["large_text"], "AURI");
 
-        let unnamed = activity(&song(&"é😀".repeat(100), "", &[]), "", Headline::App, "", 0, 1);
+        let unnamed = activity(&song(&"é😀".repeat(100), "", &[]), "", Headline::App, "", 0, 1, fmt);
         assert_eq!(unnamed["details"].as_str().unwrap().encode_utf16().count(), 127);
         assert!(unnamed["state"].is_null());
 
         let (updates, inbox) = mpsc::channel();
         let mut discord = Discord { updates, shown: None };
-        discord.show(Some((&lucky, cover)), Headline::App, "", 0, 248_000);
-        discord.show(Some((&lucky, cover)), Headline::App, "", 0, 248_000);
-        discord.show(Some((&lucky, cover)), Headline::Artist, "mine", 0, 248_000);
-        discord.show(Some((&lucky, cover)), Headline::Custom, "mine", 0, 248_000);
-        discord.show(Some((&lucky, cover)), Headline::Custom, "m", 0, 248_000);
+        discord.show(Some((&lucky, cover)), Headline::App, "", 0, 248_000, fmt);
+        discord.show(Some((&lucky, cover)), Headline::App, "", 0, 248_000, fmt);
+        discord.show(Some((&lucky, cover)), Headline::Artist, "mine", 0, 248_000, fmt);
+        discord.show(Some((&lucky, cover)), Headline::Custom, "mine", 0, 248_000, fmt);
+        discord.show(Some((&lucky, cover)), Headline::Custom, "m", 0, 248_000, fmt);
         let sent: Vec<_> = inbox
             .try_iter()
             .flatten()

@@ -851,9 +851,9 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let perf_resp = ui.interact(perf_rect, Id::new("win-tool-perf"), Sense::click());
     let perf_hov = hover_of(ui, &perf_resp);
     if perf_on {
-        ui.painter().rect_filled(perf_rect, 13.0, Color32::from_rgba_unmultiplied(139, 92, 246, 42));
-        ui.painter().rect_stroke(perf_rect, 13.0, Stroke::new(1.0_f32, ACCENT), StrokeKind::Inside);
-        ui.painter().text(perf_rect.center(), Align2::CENTER_CENTER, "⚡ Perf", bold(11.5), ACCENT);
+        ui.painter().rect_filled(perf_rect, 13.0, pal_color.gamma_multiply(0.20));
+        ui.painter().rect_stroke(perf_rect, 13.0, Stroke::new(1.0_f32, pal_color), StrokeKind::Inside);
+        ui.painter().text(perf_rect.center(), Align2::CENTER_CENTER, "⚡ Perf", bold(11.5), pal_color);
     } else {
         ui.painter().rect_filled(perf_rect, 13.0, veil(0.04 + 0.04 * perf_hov));
         ui.painter().rect_stroke(perf_rect, 13.0, Stroke::new(1.0_f32, veil(0.08)), StrokeKind::Inside);
@@ -1075,7 +1075,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
         }
     }
     app.title_bar.paint(frame);
-    paint_scrubber(ctx, &scrub);
+    paint_scrubber(ctx, &scrub, app.saved.theme_palette.color());
     sign_in_dialog(app, ctx, &mut out);
     update_dialog(app, ctx, &mut out);
     notice(app, ctx, &mut out);
@@ -2454,7 +2454,6 @@ fn search_discovery_view(query: &mut String, focus_search: &mut bool, saved: &cr
         let hover = hover_of(ui, &resp);
 
         // Soft horizontal gradient background tinted by mood cover
-        let mut mesh = egui::Mesh::default();
         let col_left = Color32::from_rgba_unmultiplied(
             (mood.color.r() as f32 * 0.12) as u8,
             (mood.color.g() as f32 * 0.12) as u8,
@@ -2462,37 +2461,50 @@ fn search_discovery_view(query: &mut String, focus_search: &mut bool, saved: &cr
             if is_light { 40 } else { 50 },
         );
         let col_right = mood.color.gamma_multiply(if hover > 0.0 { 0.35 } else { 0.22 });
-        mesh.vertices.push(egui::epaint::Vertex { pos: c_rect.left_top(), uv: Pos2::ZERO, color: col_left });
+
+        // Draw rounded background filled with tinted tone
+        ui.painter().rect_filled(c_rect, 16.0, col_left);
+
+        let mut mesh = egui::Mesh::default();
+        mesh.vertices.push(egui::epaint::Vertex { pos: c_rect.left_top(), uv: Pos2::ZERO, color: Color32::TRANSPARENT });
         mesh.vertices.push(egui::epaint::Vertex { pos: c_rect.right_top(), uv: Pos2::ZERO, color: col_right });
         mesh.vertices.push(egui::epaint::Vertex { pos: c_rect.right_bottom(), uv: Pos2::ZERO, color: col_right });
-        mesh.vertices.push(egui::epaint::Vertex { pos: c_rect.left_bottom(), uv: Pos2::ZERO, color: col_left });
+        mesh.vertices.push(egui::epaint::Vertex { pos: c_rect.left_bottom(), uv: Pos2::ZERO, color: Color32::TRANSPARENT });
         mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
-        ui.painter().add(Shape::mesh(mesh));
-
-        let stroke_col = if hover > 0.0 { mood.color } else { veil(0.12) };
-        ui.painter().rect_stroke(c_rect, 14.0, Stroke::new(if hover > 0.0 { 1.5_f32 } else { 1.0_f32 }, stroke_col), StrokeKind::Inside);
+        let clipped_painter = ui.painter().with_clip_rect(c_rect);
+        clipped_painter.add(Shape::mesh(mesh));
 
         label(ui, pos2(c_rect.left() + 16.0, c_rect.top() + 26.0), Align2::LEFT_CENTER, mood.name, bold(18.0), t_color, card_w - 95.0);
         let dash_rect = Rect::from_min_size(pos2(c_rect.left() + 16.0, c_rect.top() + 46.0), vec2(30.0, 3.5));
         ui.painter().rect_filled(dash_rect, 2.0, mood.color);
 
-        // Vinyl disk positioned at the right edge so only portion peeks in; rotates only when hovered
-        let vinyl_center = pos2(c_rect.right() - 20.0, c_rect.center().y);
-        let vinyl_radius = 54.0;
-        let angle = if hover > 0.0 {
-            ui.ctx().request_repaint_after(Duration::from_millis(33));
-            (ui.input(|inp| inp.time) * 0.75) as f32
-        } else {
-            0.0
-        };
+        // Vinyl disk positioned at the right edge
+        let vinyl_center = pos2(c_rect.right() - 26.0, c_rect.center().y);
+        let vinyl_radius = 52.0;
 
-        let clipped_painter = ui.painter().with_clip_rect(c_rect);
+        // Smooth rotation state starting at 0.0 (upright) and only advancing when hovered
+        let rot_id = Id::new(("mood-card-rot", i));
+        let mut angle: f32 = ui.ctx().data(|d| d.get_temp(rot_id).unwrap_or(0.0));
+        if hover > 0.0 {
+            ui.ctx().request_repaint_after(Duration::from_millis(16));
+            let dt = ui.input(|inp| inp.stable_dt).min(0.05);
+            angle += dt * 0.85;
+            if angle >= std::f32::consts::TAU {
+                angle -= std::f32::consts::TAU;
+            }
+            ui.ctx().data_mut(|d| d.insert_temp(rot_id, angle));
+        }
+
         if saved.perf_placeholder_mood_art {
             draw_rotating_vinyl(&clipped_painter, vinyl_center, vinyl_radius, angle, mood.color);
         } else {
             let img_url = format!("https://lh3.googleusercontent.com/{}={}", mood.thumb, "w120-h120-l75-rj");
             rotating_circular_artwork_clipped(&clipped_painter, ui.ctx(), cx.art, &img_url, vinyl_center, vinyl_radius, angle, mood.color);
         }
+
+        // Draw capsule stroke AFTER vinyl so the right edge is a complete, unbroken capsule!
+        let stroke_col = if hover > 0.0 { mood.color } else { veil(0.12) };
+        ui.painter().rect_stroke(c_rect, 16.0, Stroke::new(if hover > 0.0 { 1.5_f32 } else { 1.0_f32 }, stroke_col), StrokeKind::Inside);
 
         if resp.clicked() {
             cx.out.push(Action::Go(Route::Search(format!("{} music", mood.name))));
@@ -3050,10 +3062,11 @@ fn hotkey_row(ui: &mut Ui, app: &App, command: Command, enabled: bool, out: &mut
 }
 
 fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
+    let pal_color = app.saved.theme_palette.color();
     let open = ui.ctx().animate_bool_with_time(Id::new("discord-open"), app.saved.discord, 0.16);
-    let extra = STATUS_ROW + 4.0 * SETTING_ROW;
+    let extra = STATUS_ROW + 10.0 * SETTING_ROW + 210.0;
     let height = 2.0 * CARD_PAD + SETTING_ROW + extra * open;
-    section(ui, "Discord", height, |ui| {
+    section(ui, "Discord Rich Presence", height, |ui| {
         let size = vec2(ui.available_width(), SETTING_ROW);
         if switch_row(ui, size, icon::DISCORD_LOGO, "Show on Discord", app.saved.discord) {
             out.push(Action::ShowOnDiscord(!app.saved.discord));
@@ -3063,23 +3076,28 @@ fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         }
         ui.multiply_opacity(open);
         let status = match app.discord_linked {
-            Some(true) if app.playing() => "Connected to Discord",
-            Some(true) => "Shows while a song is playing",
-            Some(false) => "Discord is not running",
-            None => "",
+            Some(true) if app.playing() => "Connected · Showing active track",
+            Some(true) => "Connected · Shows while a track is playing",
+            Some(false) => "Discord is not running on this PC",
+            None => "Connecting to Discord RPC...",
         };
         let (line, response) = ui.allocate_exact_size(vec2(size.x, STATUS_ROW), Sense::hover());
         let at = pos2(line.left() + 46.0, line.center().y);
-        label(ui, at, Align2::LEFT_CENTER, status, sans(12.0), MUTED, size.x - 58.0);
+        let stat_col = if app.discord_linked == Some(true) { pal_color } else { MUTED };
+        ui.painter().circle_filled(pos2(line.left() + 34.0, line.center().y), 3.5, stat_col);
+        label(ui, at, Align2::LEFT_CENTER, status, sans(12.0), stat_col, size.x - 58.0);
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, status));
+
+        // Headline / Status display type
+        eyebrow(ui, "Activity Headline", 0.0);
         for (headline, text) in [
-            (Headline::App, "Listening to AURI"),
+            (Headline::App, "Listening to AURI (Application Name)"),
             (Headline::Artist, "Listening to the artist"),
             (Headline::Song, "Listening to the song"),
         ] {
             let chosen = app.saved.discord_headline == headline;
             let symbol = if chosen { icon::CHECK } else { "" };
-            let row = wide_row(ui, size, symbol, glyph(15.0), ACCENT, text);
+            let row = wide_row(ui, size, symbol, glyph(15.0), pal_color, text);
             row.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, true, chosen, text));
             if row.clicked() {
                 out.push(Action::DiscordHeadline(headline));
@@ -3088,7 +3106,7 @@ fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         let (row, _) = ui.allocate_exact_size(size, Sense::hover());
         if app.saved.discord_headline == Headline::Custom {
             let at = pos2(row.left() + 22.0, row.center().y);
-            ui.painter().text(at, Align2::CENTER_CENTER, icon::CHECK, glyph(15.0), ACCENT);
+            ui.painter().text(at, Align2::CENTER_CENTER, icon::CHECK, glyph(15.0), pal_color);
         }
         let field = Rect::from_min_max(
             pos2(row.left() + 38.0, row.top() + 5.0),
@@ -3103,11 +3121,175 @@ fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             .font(medium(13.5))
             .text_color(TEXT)
             .vertical_align(Align::Center)
-            .hint_text(RichText::new("Your own text").color(FAINT));
+            .hint_text(RichText::new("Your own custom headline...").color(FAINT));
         let typed = ui.put(field.shrink2(vec2(10.0, 0.0)), edit);
-        typed.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, true, "Your own text"));
         if typed.changed() || typed.gained_focus() {
             out.push(Action::DiscordName(name));
+        }
+
+        ui.add_space(8.0);
+
+        // Limusic Discord Features: Line 1, Line 2, Line 3, and Buttons
+        eyebrow(ui, "Presence Card Content Layout", 0.0);
+
+        // Line 1 Content Pills (Title, Artist, Album)
+        let (l1_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
+        label(ui, pos2(l1_row.left() + 46.0, l1_row.center().y), Align2::LEFT_CENTER, "Line 1 (Top Details):", medium(12.5), TEXT, 140.0);
+        let mut pill_x = l1_row.left() + 195.0;
+        for &opt in &[crate::app::DiscordLineContent::Title, crate::app::DiscordLineContent::Artist, crate::app::DiscordLineContent::Album] {
+            let active = app.saved.discord_line1 == opt;
+            let opt_name = opt.label();
+            let p_w = 16.0 + opt_name.len() as f32 * 7.0;
+            let p_rect = Rect::from_min_size(pos2(pill_x, l1_row.center().y - 12.0), vec2(p_w, 24.0));
+            let resp = ui.interact(p_rect, Id::new(("disc-l1", opt_name)), Sense::click());
+            let hov = hover_of(ui, &resp);
+            if active {
+                ui.painter().rect_filled(p_rect, 12.0, pal_color);
+                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, bold(11.0), Color32::WHITE);
+            } else {
+                ui.painter().rect_filled(p_rect, 12.0, veil(0.06 + 0.04 * hov));
+                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, sans(11.0), if hov > 0.1 { TEXT } else { MUTED });
+            }
+            if resp.clicked() {
+                out.push(Action::SetDiscordLine1(opt));
+            }
+            pill_x += p_w + 6.0;
+        }
+
+        // Line 2 Content Pills (Artist, Artist · Album, Album, Title, Off)
+        let (l2_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
+        label(ui, pos2(l2_row.left() + 46.0, l2_row.center().y), Align2::LEFT_CENTER, "Line 2 (State):", medium(12.5), TEXT, 140.0);
+        let mut pill_x2 = l2_row.left() + 195.0;
+        for &opt in &[
+            crate::app::DiscordLineContent::Artist,
+            crate::app::DiscordLineContent::ArtistAlbum,
+            crate::app::DiscordLineContent::Album,
+            crate::app::DiscordLineContent::Title,
+            crate::app::DiscordLineContent::Off,
+        ] {
+            let active = app.saved.discord_line2 == opt;
+            let opt_name = opt.label();
+            let p_w = 16.0 + opt_name.len() as f32 * 7.0;
+            let p_rect = Rect::from_min_size(pos2(pill_x2, l2_row.center().y - 12.0), vec2(p_w, 24.0));
+            let resp = ui.interact(p_rect, Id::new(("disc-l2", opt_name)), Sense::click());
+            let hov = hover_of(ui, &resp);
+            if active {
+                ui.painter().rect_filled(p_rect, 12.0, pal_color);
+                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, bold(11.0), Color32::WHITE);
+            } else {
+                ui.painter().rect_filled(p_rect, 12.0, veil(0.06 + 0.04 * hov));
+                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, sans(11.0), if hov > 0.1 { TEXT } else { MUTED });
+            }
+            if resp.clicked() {
+                out.push(Action::SetDiscordLine2(opt));
+            }
+            pill_x2 += p_w + 6.0;
+        }
+
+        // Line 3 Content Pills (Album, Artist, Title, Off)
+        let (l3_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
+        label(ui, pos2(l3_row.left() + 46.0, l3_row.center().y), Align2::LEFT_CENTER, "Line 3 (Cover Tooltip):", medium(12.5), TEXT, 140.0);
+        let mut pill_x3 = l3_row.left() + 195.0;
+        for &opt in &[
+            crate::app::DiscordLineContent::Album,
+            crate::app::DiscordLineContent::Artist,
+            crate::app::DiscordLineContent::Title,
+            crate::app::DiscordLineContent::Off,
+        ] {
+            let active = app.saved.discord_line3 == opt;
+            let opt_name = opt.label();
+            let p_w = 16.0 + opt_name.len() as f32 * 7.0;
+            let p_rect = Rect::from_min_size(pos2(pill_x3, l3_row.center().y - 12.0), vec2(p_w, 24.0));
+            let resp = ui.interact(p_rect, Id::new(("disc-l3", opt_name)), Sense::click());
+            let hov = hover_of(ui, &resp);
+            if active {
+                ui.painter().rect_filled(p_rect, 12.0, pal_color);
+                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, bold(11.0), Color32::WHITE);
+            } else {
+                ui.painter().rect_filled(p_rect, 12.0, veil(0.06 + 0.04 * hov));
+                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, sans(11.0), if hov > 0.1 { TEXT } else { MUTED });
+            }
+            if resp.clicked() {
+                out.push(Action::SetDiscordLine3(opt));
+            }
+            pill_x3 += p_w + 6.0;
+        }
+
+        ui.add_space(8.0);
+
+        // Buttons Configuration Row
+        if switch_row(ui, size, icon::LINK, "Include \"Play on YouTube Music\" button", app.saved.discord_button_listen) {
+            out.push(Action::SetDiscordButtonListen(!app.saved.discord_button_listen));
+        }
+        if switch_row(ui, size, icon::SHARE_NETWORK, "Include \"Get AURI Player\" button", app.saved.discord_button_app) {
+            out.push(Action::SetDiscordButtonApp(!app.saved.discord_button_app));
+        }
+
+        ui.add_space(12.0);
+
+        // Live Mock Discord Presence Card Preview (matching Limusic's DiscordCard)
+        eyebrow(ui, "Live Discord Profile Card Preview", 0.0);
+        let (prev_box, _) = ui.allocate_exact_size(vec2(size.x, 150.0), Sense::hover());
+        let card_rect = Rect::from_min_size(pos2(prev_box.left() + 40.0, prev_box.top()), vec2((size.x - 60.0).min(460.0), 146.0));
+        // Discord Dark Theme Card Background
+        ui.painter().rect_filled(card_rect, 10.0, Color32::from_rgb(43, 45, 49));
+        ui.painter().rect_stroke(card_rect, 10.0, Stroke::new(1.0_f32, Color32::from_rgb(30, 31, 35)), StrokeKind::Inside);
+
+        // Header: PLAYING A GAME / LISTENING TO AURI
+        let head_str = match app.saved.discord_headline {
+            Headline::App => "LISTENING TO AURI",
+            Headline::Artist => "LISTENING TO ARTIST",
+            Headline::Song => "LISTENING TO SONG",
+            Headline::Custom => if app.saved.discord_name.is_empty() { "LISTENING TO AURI" } else { &app.saved.discord_name.to_uppercase() },
+        };
+        label(ui, pos2(card_rect.left() + 16.0, card_rect.top() + 14.0), Align2::LEFT_CENTER, head_str, bold(10.5), Color32::from_rgb(181, 186, 193), card_rect.width() - 32.0);
+
+        // Album artwork square
+        let art_r = Rect::from_min_size(pos2(card_rect.left() + 16.0, card_rect.top() + 32.0), vec2(60.0, 60.0));
+        ui.painter().rect_filled(art_r, 8.0, Color32::from_rgb(30, 31, 35));
+        ui.painter().text(art_r.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(24.0), pal_color);
+        ui.painter().circle_filled(pos2(art_r.right() - 4.0, art_r.bottom() - 4.0), 7.0, Color32::from_rgb(43, 45, 49));
+        ui.painter().circle_filled(pos2(art_r.right() - 4.0, art_r.bottom() - 4.0), 5.0, Color32::from_rgb(88, 101, 242));
+
+        let tx = card_rect.left() + 86.0;
+        let tw = card_rect.width() - 96.0;
+
+        // Line 1 (Details)
+        let l1_text = match app.saved.discord_line1 {
+            crate::app::DiscordLineContent::Title => "Higher Ground",
+            crate::app::DiscordLineContent::Artist => "Nova Sky",
+            crate::app::DiscordLineContent::Album => "Night Signals",
+            _ => "Higher Ground",
+        };
+        label(ui, pos2(tx, card_rect.top() + 38.0), Align2::LEFT_CENTER, l1_text, bold(13.0), Color32::from_rgb(242, 243, 245), tw);
+
+        // Line 2 (State)
+        let l2_text = match app.saved.discord_line2 {
+            crate::app::DiscordLineContent::Artist => "Nova Sky",
+            crate::app::DiscordLineContent::ArtistAlbum => "Nova Sky · Night Signals",
+            crate::app::DiscordLineContent::Album => "Night Signals",
+            crate::app::DiscordLineContent::Title => "Higher Ground",
+            crate::app::DiscordLineContent::Off => "",
+        };
+        if !l2_text.is_empty() {
+            label(ui, pos2(tx, card_rect.top() + 54.0), Align2::LEFT_CENTER, l2_text, sans(12.0), Color32::from_rgb(219, 222, 225), tw);
+        }
+
+        // Time bar
+        label(ui, pos2(tx, card_rect.top() + 72.0), Align2::LEFT_CENTER, "01:23 elapsed · 03:45 left", sans(11.0), Color32::from_rgb(148, 155, 164), tw);
+
+        // Action Buttons Mock
+        let mut btn_x = tx;
+        if app.saved.discord_button_listen {
+            let b_rect = Rect::from_min_size(pos2(btn_x, card_rect.top() + 94.0), vec2(150.0, 26.0));
+            ui.painter().rect_filled(b_rect, 4.0, Color32::from_rgb(78, 80, 88));
+            ui.painter().text(b_rect.center(), Align2::CENTER_CENTER, "Play on YouTube Music", medium(11.0), Color32::WHITE);
+            btn_x += 156.0;
+        }
+        if app.saved.discord_button_app {
+            let b_rect = Rect::from_min_size(pos2(btn_x, card_rect.top() + 94.0), vec2(90.0, 26.0));
+            ui.painter().rect_filled(b_rect, 4.0, Color32::from_rgb(78, 80, 88));
+            ui.painter().text(b_rect.center(), Align2::CENTER_CENTER, "Get AURI", medium(11.0), Color32::WHITE);
         }
     });
 }
@@ -3154,7 +3336,8 @@ fn hotkey_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let eq_height = if app.saved.eq_enabled { 260.0 } else { 0.0 };
+    let pal_color = app.saved.theme_palette.color();
+    let eq_height = if app.saved.eq_enabled { 410.0 } else { 0.0 };
     let height = 2.0 * CARD_PAD + 3.0 * SETTING_ROW + 44.0 + eq_height;
     section(ui, "Audio & DSP Engine", height, |ui| {
         let size = vec2(ui.available_width(), SETTING_ROW);
@@ -3167,7 +3350,7 @@ fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 
         let (limiter_row, _) = ui.allocate_exact_size(size, Sense::hover());
         let middle = limiter_row.center().y;
-        ui.painter().text(pos2(limiter_row.left() + 22.0, middle), Align2::CENTER_CENTER, icon::FADERS, glyph(17.0), ACCENT);
+        ui.painter().text(pos2(limiter_row.left() + 22.0, middle), Align2::CENTER_CENTER, icon::FADERS, glyph(17.0), pal_color);
         label(ui, pos2(limiter_row.left() + 46.0, middle - 8.0), Align2::LEFT_CENTER, "Soft-Knee Peak Limiter (Active)", medium(13.5), TEXT, size.x - 58.0);
         let sub = "Prevents clipping and harsh distortion on loud transients with studio-grade brickwall limiting.";
         label(ui, pos2(limiter_row.left() + 46.0, middle + 10.0), Align2::LEFT_CENTER, sub, sans(12.0), MUTED, size.x - 58.0);
@@ -3180,25 +3363,18 @@ fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         label(ui, pos2(row2.left() + 46.0, row2.center().y), Align2::LEFT_CENTER, eq_desc, sans(12.0), MUTED, size.x - 58.0);
 
         if app.saved.eq_enabled {
-            ui.add_space(8.0);
-            // EQ Presets Row
+            ui.add_space(10.0);
+
+            // 1. Presets & AutoEq Header Row (Image 1)
+            let (top_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
+            let mut top_x = top_row.left() + 10.0;
+
+            // Presets label & pills
+            label(ui, pos2(top_x, top_row.center().y), Align2::LEFT_CENTER, "Presets", medium(12.0), MUTED, 60.0);
+            top_x += 54.0;
             let presets = crate::dsp::EqPreset::ALL;
-            let (preset_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
-            let pill_width = ((preset_row.width() - 5.0 * 8.0) / presets.len() as f32).max(70.0);
-            for (idx, preset) in presets.iter().enumerate() {
-                let pill_rect = Rect::from_min_size(
-                    pos2(preset_row.left() + idx as f32 * (pill_width + 8.0), preset_row.top()),
-                    vec2(pill_width, 30.0),
-                );
-                let selected = app.saved.eq_preset == *preset;
-                let resp = ui.interact(pill_rect, Id::new(("eq-preset", idx)), Sense::click());
-                let hover = hover_of(ui, &resp);
-                let fill = if selected { ACCENT } else { veil(0.06 + 0.04 * hover) };
-                let text_color = if selected { Color32::WHITE } else { TEXT };
-                ui.painter().rect_filled(pill_rect, 15.0, fill);
-                if selected {
-                    ui.painter().rect_stroke(pill_rect, 15.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 80)), StrokeKind::Inside);
-                }
+            for &preset in &presets {
+                let active = app.saved.eq_preset == preset;
                 let short_name = match preset {
                     crate::dsp::EqPreset::Flat => "Flat",
                     crate::dsp::EqPreset::FpsFootsteps => "FPS Footsteps",
@@ -3207,73 +3383,205 @@ fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
                     crate::dsp::EqPreset::Cinematic => "Cinematic",
                     crate::dsp::EqPreset::Custom => "Custom",
                 };
-                ui.painter().text(pill_rect.center(), Align2::CENTER_CENTER, short_name, medium(11.5), text_color);
-                if resp.clicked() {
-                    out.push(Action::SetEqPreset(*preset));
+                let p_w = 16.0 + short_name.len() as f32 * 7.0;
+                let p_rect = Rect::from_min_size(pos2(top_x, top_row.center().y - 13.0), vec2(p_w, 26.0));
+                let resp = ui.interact(p_rect, Id::new(("eq-preset-pill", short_name)), Sense::click());
+                let hov = hover_of(ui, &resp);
+                if active {
+                    ui.painter().rect_filled(p_rect, 13.0, pal_color);
+                    ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, short_name, bold(11.5), Color32::WHITE);
+                } else {
+                    ui.painter().rect_filled(p_rect, 13.0, veil(0.06 + 0.04 * hov));
+                    ui.painter().rect_stroke(p_rect, 13.0, Stroke::new(1.0_f32, veil(0.10)), StrokeKind::Inside);
+                    ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, short_name, medium(11.5), if hov > 0.1 { TEXT } else { MUTED });
                 }
+                if resp.clicked() {
+                    out.push(Action::SetEqPreset(preset));
+                }
+                top_x += p_w + 6.0;
             }
 
+            ui.add_space(8.0);
+
+            // AutoEq Row (Image 1)
+            let (autoeq_row, _) = ui.allocate_exact_size(vec2(size.x, 30.0), Sense::hover());
+            let mut a_x = autoeq_row.left() + 10.0;
+            label(ui, pos2(a_x, autoeq_row.center().y), Align2::LEFT_CENTER, "AutoEq", medium(12.0), MUTED, 60.0);
+            a_x += 54.0;
+            for &hp in &crate::dsp::AutoEqHeadphone::ALL {
+                let active = app.saved.autoeq_headphone == hp;
+                let hp_label = hp.label();
+                let p_w = 14.0 + hp_label.len() as f32 * 6.8;
+                let p_rect = Rect::from_min_size(pos2(a_x, autoeq_row.center().y - 12.0), vec2(p_w, 24.0));
+                let resp = ui.interact(p_rect, Id::new(("autoeq-hp", hp_label)), Sense::click());
+                let hov = hover_of(ui, &resp);
+                if active {
+                    ui.painter().rect_filled(p_rect, 12.0, pal_color.gamma_multiply(0.25));
+                    ui.painter().rect_stroke(p_rect, 12.0, Stroke::new(1.0_f32, pal_color), StrokeKind::Inside);
+                    ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, hp_label, bold(11.0), pal_color);
+                } else {
+                    ui.painter().rect_filled(p_rect, 12.0, veil(0.04 + 0.04 * hov));
+                    ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, hp_label, sans(11.0), if hov > 0.1 { TEXT } else { MUTED });
+                }
+                if resp.clicked() {
+                    out.push(Action::SetAutoEq(hp));
+                }
+                a_x += p_w + 6.0;
+                if a_x > autoeq_row.right() - 80.0 { break; }
+            }
+
+            ui.add_space(10.0);
+
+            // 2. Preamp Horizontal Slider Bar (Image 1)
+            let (pre_row, _) = ui.allocate_exact_size(vec2(size.x, 28.0), Sense::hover());
+            label(ui, pos2(pre_row.left() + 10.0, pre_row.center().y), Align2::LEFT_CENTER, "Preamp", medium(12.0), MUTED, 60.0);
+
+            let pre_track = Rect::from_min_max(pos2(pre_row.left() + 70.0, pre_row.center().y - 3.5), pos2(pre_row.right() - 65.0, pre_row.center().y + 3.5));
+            let pre_resp = ui.interact(pre_track.expand2(vec2(0.0, 8.0)), Id::new("eq-preamp-slider"), Sense::click_and_drag());
+            let pre_hov = hover_of(ui, &pre_resp);
+            ui.painter().rect_filled(pre_track, 3.5, veil(0.14));
+
+            let pre_gain = app.saved.eq_preamp_db;
+            let pre_frac = ((pre_gain + 12.0) / 24.0).clamp(0.0, 1.0);
+            let pre_fill_w = pre_track.width() * pre_frac;
+            ui.painter().rect_filled(Rect::from_min_size(pre_track.min, vec2(pre_fill_w, 7.0)), 3.5, pal_color);
+
+            let pre_thumb_x = pre_track.left() + pre_fill_w;
+            let pre_thumb_y = pre_track.center().y;
+            ui.painter().circle_filled(pos2(pre_thumb_x, pre_thumb_y), 6.0 + 1.0 * pre_hov, Color32::WHITE);
+            ui.painter().circle_filled(pos2(pre_thumb_x, pre_thumb_y), 4.0, pal_color);
+
+            if let (true, Some(pos)) = (pre_resp.clicked() || pre_resp.dragged(), pre_resp.interact_pointer_pos()) {
+                let frac = ((pos.x - pre_track.left()) / pre_track.width()).clamp(0.0, 1.0);
+                let gain = (frac * 24.0 - 12.0 * 2.0).round() / 2.0;
+                out.push(Action::SetEqPreamp(gain));
+            }
+
+            let pre_sign = if pre_gain > 0.0 { "+" } else { "" };
+            let pre_str = format!("{pre_sign}{:.1} dB", pre_gain);
+            ui.painter().text(pos2(pre_row.right() - 8.0, pre_row.center().y), Align2::RIGHT_CENTER, pre_str, medium(12.0), if pre_gain.abs() > 0.05 { pal_color } else { MUTED });
+
             ui.add_space(12.0);
-            // 10-Band Slider Rack
-            let (rack_rect, _) = ui.allocate_exact_size(vec2(size.x, 150.0), Sense::hover());
-            ui.painter().rect_filled(rack_rect, 10.0, veil(0.03));
-            ui.painter().rect_stroke(rack_rect, 10.0, Stroke::new(1.0_f32, veil(0.06)), StrokeKind::Inside);
 
-            let band_width = (rack_rect.width() - 20.0) / 10.0;
-            let slider_height = 84.0;
-            let slider_top = rack_rect.top() + 32.0;
+            // 3. Connected Graph Model (Image 1)
+            let graph_h = 220.0;
+            let (graph_rect, _) = ui.allocate_exact_size(vec2(size.x, graph_h), Sense::hover());
+            ui.painter().rect_filled(graph_rect, 14.0, veil(0.03));
+            ui.painter().rect_stroke(graph_rect, 14.0, Stroke::new(1.0_f32, veil(0.08)), StrokeKind::Inside);
 
+            let g_left = graph_rect.left() + 52.0;
+            let g_right = graph_rect.right() - 24.0;
+            let g_width = g_right - g_left;
+            let y_center = graph_rect.top() + (graph_h - 32.0) / 2.0 + 12.0;
+            let y_range = 65.0_f32;
+
+            // Y-Axis labels (+12dB, 0dB, -12dB)
+            ui.painter().text(pos2(graph_rect.left() + 14.0, y_center - y_range), Align2::LEFT_CENTER, "+12dB", sans(10.5), MUTED);
+            ui.painter().text(pos2(graph_rect.left() + 14.0, y_center), Align2::LEFT_CENTER, "0dB", sans(10.5), MUTED);
+            ui.painter().text(pos2(graph_rect.left() + 14.0, y_center + y_range), Align2::LEFT_CENTER, "-12dB", sans(10.5), MUTED);
+
+            // 0 dB centerline
+            ui.painter().hline(g_left - 10.0..=g_right + 10.0, y_center, Stroke::new(1.0_f32, veil(0.12)));
+
+            // 10 Frequency positions and data points
+            let mut pts = [Pos2::ZERO; 10];
             for b in 0..10 {
-                let bx = rack_rect.left() + 10.0 + b as f32 * band_width + band_width / 2.0;
+                let bx = g_left + b as f32 * (g_width / 9.0);
                 let gain = app.saved.eq_gains[b];
+                let by = y_center - (gain / 12.0) * y_range;
+                pts[b] = pos2(bx, by);
 
-                // Value dB readout on top
-                let sign = if gain > 0.0 { "+" } else { "" };
-                let val_str = format!("{}{:.1}", sign, gain);
-                let val_color = if gain.abs() > 0.05 { ACCENT } else { FAINT };
-                ui.painter().text(pos2(bx, rack_rect.top() + 16.0), Align2::CENTER_CENTER, val_str, sans(10.5), val_color);
+                // Vertical grid lines
+                ui.painter().vline(bx, (y_center - y_range - 4.0)..=(graph_rect.bottom() - 32.0), Stroke::new(1.0_f32, veil(0.06)));
 
-                // Slider track
-                let track_rect = Rect::from_center_size(pos2(bx, slider_top + slider_height / 2.0), vec2(4.0, slider_height));
-                ui.painter().rect_filled(track_rect, 2.0, veil(0.12));
+                // Frequency label at bottom
+                let freq_label = crate::dsp::EQ_BAND_LABELS[b];
+                ui.painter().text(pos2(bx, graph_rect.bottom() - 16.0), Align2::CENTER_CENTER, freq_label, sans(10.5), MUTED);
+            }
 
-                // Center 0 dB notch mark
-                let center_y = slider_top + slider_height / 2.0;
-                ui.painter().line_segment(
-                    [pos2(bx - 6.0, center_y), pos2(bx + 6.0, center_y)],
-                    Stroke::new(1.0_f32, veil(0.2)),
-                );
+            // Catmull-Rom spline curve points
+            let mut curve_pts = Vec::with_capacity(120);
+            for i in 0..9 {
+                let p0 = if i == 0 { pts[0] - (pts[1] - pts[0]) } else { pts[i - 1] };
+                let p1 = pts[i];
+                let p2 = pts[i + 1];
+                let p3 = if i + 2 < 10 { pts[i + 2] } else { pts[9] + (pts[9] - pts[8]) };
 
-                // Thumb position: gain ranges from -12.0 (bottom) to +12.0 (top)
-                let frac = ((gain + 12.0) / 24.0).clamp(0.0, 1.0);
-                let thumb_y = slider_top + slider_height * (1.0 - frac);
+                let steps = 14;
+                for s in 0..steps {
+                    let t = s as f32 / steps as f32;
+                    let t2 = t * t;
+                    let t3 = t2 * t;
+                    let f0 = -0.5 * t3 + t2 - 0.5 * t;
+                    let f1 = 1.5 * t3 - 2.5 * t2 + 1.0;
+                    let f2 = -1.5 * t3 + 2.0 * t2 + 0.5 * t;
+                    let f3 = 0.5 * t3 - 0.5 * t2;
+                    let px = p0.x * f0 + p1.x * f1 + p2.x * f2 + p3.x * f3;
+                    let py = p0.y * f0 + p1.y * f1 + p2.y * f2 + p3.y * f3;
+                    curve_pts.push(pos2(px, py));
+                }
+            }
+            curve_pts.push(pts[9]);
 
-                // Active fill from center 0dB to thumb
-                let fill_top = thumb_y.min(center_y);
-                let fill_bottom = thumb_y.max(center_y);
-                let active_track = Rect::from_min_max(pos2(bx - 2.0, fill_top), pos2(bx + 2.0, fill_bottom));
-                ui.painter().rect_filled(active_track, 2.0, ACCENT);
+            // Area fill under curve down to baseline (or bottom of graph)
+            if curve_pts.len() >= 2 {
+                let mut mesh = egui::Mesh::default();
+                let col_top = pal_color.gamma_multiply(0.25);
+                let col_bot = Color32::from_rgba_unmultiplied(pal_color.r(), pal_color.g(), pal_color.b(), 12);
+                let base_y = graph_rect.bottom() - 32.0;
 
-                // Draggable interaction area
-                let hit_rect = Rect::from_center_size(pos2(bx, slider_top + slider_height / 2.0), vec2(band_width.min(32.0), slider_height + 12.0));
-                let resp = ui.interact(hit_rect, Id::new(("eq-slider", b)), Sense::click_and_drag());
+                for w in 0..curve_pts.len() - 1 {
+                    let p_a = curve_pts[w];
+                    let p_b = curve_pts[w + 1];
+                    let v_idx = mesh.vertices.len() as u32;
+
+                    mesh.vertices.push(egui::epaint::Vertex { pos: p_a, uv: Pos2::ZERO, color: col_top });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: p_b, uv: Pos2::ZERO, color: col_top });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: pos2(p_b.x, base_y), uv: Pos2::ZERO, color: col_bot });
+                    mesh.vertices.push(egui::epaint::Vertex { pos: pos2(p_a.x, base_y), uv: Pos2::ZERO, color: col_bot });
+
+                    mesh.indices.extend_from_slice(&[v_idx, v_idx + 1, v_idx + 2, v_idx, v_idx + 2, v_idx + 3]);
+                }
+                ui.painter().add(Shape::mesh(mesh));
+            }
+
+            // Draw smooth curve line
+            ui.painter().add(Shape::line(curve_pts, Stroke::new(2.5_f32, pal_color.lerp_to_gamma(Color32::WHITE, 0.35))));
+
+            // Interactive draggable circle nodes
+            for b in 0..10 {
+                let pt = pts[b];
+                let hit_rect = Rect::from_center_size(pos2(pt.x, y_center), vec2((g_width / 9.0).min(38.0), y_range * 2.2));
+                let resp = ui.interact(hit_rect, Id::new(("eq-graph-node", b)), Sense::click_and_drag());
+                let hov = hover_of(ui, &resp);
+
                 if let (true, Some(pos)) = (resp.clicked() || resp.dragged(), resp.interact_pointer_pos()) {
-                    let new_frac = (1.0 - ((pos.y - slider_top) / slider_height)).clamp(0.0, 1.0);
-                    let mut new_gain = new_frac * 24.0 - 12.0;
-                    // Snap to 0.5 dB
+                    let frac = ((y_center - pos.y) / y_range).clamp(-1.0, 1.0);
+                    let mut new_gain = frac * 12.0;
                     new_gain = (new_gain * 2.0).round() / 2.0;
                     out.push(Action::SetEqGain(b, new_gain));
                 }
 
-                // Thumb circle
-                let thumb_hover = hover_of(ui, &resp);
-                let thumb_rad = 6.0 + 1.0 * thumb_hover;
-                ui.painter().circle_filled(pos2(bx, thumb_y), thumb_rad, TEXT);
-                ui.painter().circle_filled(pos2(bx, thumb_y), thumb_rad - 2.0, ACCENT);
+                let radius = 6.0 + 2.0 * hov;
+                ui.painter().circle_filled(pt, radius + 2.0, veil(0.20 * hov));
+                ui.painter().circle_filled(pt, radius, pal_color.lerp_to_gamma(Color32::WHITE, 0.40));
+                ui.painter().circle_stroke(pt, radius, Stroke::new(1.0_f32, Color32::WHITE));
 
-                // Frequency label at bottom
-                let label_text = crate::dsp::EQ_BAND_LABELS[b];
-                ui.painter().text(pos2(bx, rack_rect.bottom() - 14.0), Align2::CENTER_CENTER, label_text, sans(10.5), MUTED);
+                if hov > 0.05 {
+                    let sign = if app.saved.eq_gains[b] > 0.0 { "+" } else { "" };
+                    describe(&resp, &format!("{}: {}{:.1} dB", crate::dsp::EQ_BAND_LABELS[b], sign, app.saved.eq_gains[b]));
+                }
+            }
+
+            // Reset Button in bottom right corner (Image 1)
+            let reset_rect = Rect::from_min_size(pos2(graph_rect.right() - 86.0, graph_rect.bottom() - 36.0), vec2(72.0, 26.0));
+            let reset_resp = ui.interact(reset_rect, Id::new("eq-reset-btn"), Sense::click());
+            let r_hov = hover_of(ui, &reset_resp);
+            ui.painter().rect_filled(reset_rect, 13.0, veil(0.12 + 0.08 * r_hov));
+            ui.painter().rect_stroke(reset_rect, 13.0, Stroke::new(1.0_f32, veil(0.18 + 0.12 * r_hov)), StrokeKind::Inside);
+            ui.painter().text(reset_rect.center(), Align2::CENTER_CENTER, "Reset", bold(12.0), if r_hov > 0.1 { Color32::WHITE } else { TEXT });
+            if reset_resp.clicked() {
+                out.push(Action::ResetEq);
             }
         }
     });
@@ -4513,19 +4821,19 @@ fn settings_body(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<
     ui.add_space(32.0);
 }
 
-fn nav_item(ui: &mut Ui, symbol: &str, text: &str, active: bool, trailing: &str, glow: bool) -> Response {
+fn nav_item(ui: &mut Ui, symbol: &str, text: &str, active: bool, trailing: &str, glow: bool, accent: Color32) -> Response {
     let (slot, response) = ui.allocate_exact_size(vec2(ui.available_width(), 42.0), Sense::click());
     let rect = slot.shrink2(vec2(12.0, 1.0));
     let hover = hover_of(ui, &response);
     ui.painter()
         .rect_filled(rect, ROW_RADIUS, veil(if active { 0.08 } else { 0.05 * hover }));
     if active && glow {
-        ui.painter().rect_stroke(rect.expand(1.0), ROW_RADIUS + 1.0, Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.35)), StrokeKind::Outside);
-        ui.painter().rect_stroke(rect, ROW_RADIUS, Stroke::new(1.5_f32, ACCENT.lerp_to_gamma(Color32::WHITE, 0.40)), StrokeKind::Inside);
+        ui.painter().rect_stroke(rect.expand(1.0), ROW_RADIUS + 1.0, Stroke::new(1.0_f32, accent.gamma_multiply(0.35)), StrokeKind::Outside);
+        ui.painter().rect_stroke(rect, ROW_RADIUS, Stroke::new(1.5_f32, accent.lerp_to_gamma(Color32::WHITE, 0.40)), StrokeKind::Inside);
     }
     let tone = if active { TEXT } else { MUTED.lerp_to_gamma(TEXT, hover) };
     let icon_color = if active {
-        if glow { ACCENT.lerp_to_gamma(Color32::WHITE, 0.35) } else { ACCENT }
+        if glow { accent.lerp_to_gamma(Color32::WHITE, 0.35) } else { accent }
     } else {
         tone
     };
@@ -4602,8 +4910,8 @@ fn get_live_ram_mb() -> f32 {
 
 fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
     let full = ui.available_width();
-    let width = (full - 48.0).clamp(680.0, 1360.0);
-    let pad = (full - width).max(0.0) / 2.0;
+    let pad = 24.0;
+    let width = (full - 2.0 * pad).max(640.0);
     let is_light = saved.theme_mode == ThemeMode::Light;
     let t_color = if is_light { Color32::from_rgb(24, 28, 36) } else { TEXT };
     let m_color = if is_light { Color32::from_rgb(100, 110, 125) } else { MUTED };
@@ -4798,9 +5106,9 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
     }
     ui.add_space(28.0);
 
-    // 5. Two Column: Left Top Artists, Right Top Songs (Image 3)
+    // 5. Two Column: Left Top Artists, Right Top Songs (Image 2)
     let col_w = (width - 24.0) / 2.0;
-    let (col_row, _) = ui.allocate_exact_size(vec2(full, 290.0), Sense::hover());
+    let (col_row, _) = ui.allocate_exact_size(vec2(full, 390.0), Sense::hover());
     let left_x = col_row.left() + pad;
     let right_x = left_x + col_w + 24.0;
 
@@ -4809,61 +5117,61 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
     label(ui, pos2(left_x + 24.0, col_row.top() + 12.0), Align2::LEFT_CENTER, "Top artists", bold(18.0), t_color, col_w - 30.0);
 
     if saved.stats_top_artists.is_empty() {
-        let empty_rect = Rect::from_min_size(pos2(left_x, col_row.top() + 32.0), vec2(col_w, 140.0));
+        let empty_rect = Rect::from_min_size(pos2(left_x, col_row.top() + 32.0), vec2(col_w, 160.0));
         ui.painter().rect_filled(empty_rect, 12.0, veil(0.03));
         label(ui, empty_rect.center(), Align2::CENTER_CENTER, "No artist history yet. Start playing songs!", sans(12.0), m_color, col_w - 20.0);
     } else {
         let top_art = &saved.stats_top_artists[0];
-        let hero_rect = Rect::from_min_size(pos2(left_x, col_row.top() + 32.0), vec2(col_w, 136.0));
+        let hero_rect = Rect::from_min_size(pos2(left_x, col_row.top() + 32.0), vec2(col_w, 172.0));
         ui.painter().rect_filled(hero_rect, 14.0, veil(0.04));
         ui.painter().rect_stroke(hero_rect, 14.0, Stroke::new(1.0_f32, veil(0.08)), StrokeKind::Inside);
 
-        let disc_center = pos2(hero_rect.left() + 65.0, hero_rect.center().y);
+        let disc_center = pos2(hero_rect.left() + 78.0, hero_rect.center().y);
         let cover_str = &top_art.thumb;
         if !cover_str.is_empty() {
-            rotating_circular_artwork(ui, cx.art, cover_str, disc_center, 42.0, 0.0, pal_color);
+            rotating_circular_artwork(ui, cx.art, cover_str, disc_center, 50.0, 0.0, pal_color);
         } else {
-            ui.painter().circle_filled(disc_center, 42.0, veil(0.08));
-            ui.painter().text(disc_center, Align2::CENTER_CENTER, icon::USER, glyph(36.0), pal_color);
+            ui.painter().circle_filled(disc_center, 50.0, veil(0.08));
+            ui.painter().text(disc_center, Align2::CENTER_CENTER, icon::USER, glyph(42.0), pal_color);
         }
 
-        let info_x = hero_rect.left() + 124.0;
-        let info_w = col_w - 134.0;
-        ui.painter().text(pos2(info_x, hero_rect.top() + 32.0), Align2::LEFT_CENTER, "01", bold(13.0), pal_color);
-        label(ui, pos2(info_x, hero_rect.top() + 52.0), Align2::LEFT_CENTER, &top_art.artist, bold(16.5), t_color, info_w);
+        let info_x = hero_rect.left() + 144.0;
+        let info_w = col_w - 156.0;
+        ui.painter().text(pos2(info_x, hero_rect.top() + 40.0), Align2::LEFT_CENTER, "01", bold(14.0), pal_color);
+        label(ui, pos2(info_x, hero_rect.top() + 64.0), Align2::LEFT_CENTER, &top_art.artist, bold(18.0), t_color, info_w);
         let mins = (top_art.listen_ms / 60000).max(1);
         let sub_art = format!("{mins} min · {} plays", top_art.plays);
-        label(ui, pos2(info_x, hero_rect.top() + 74.0), Align2::LEFT_CENTER, &sub_art, sans(12.0), m_color, info_w);
+        label(ui, pos2(info_x, hero_rect.top() + 90.0), Align2::LEFT_CENTER, &sub_art, sans(13.0), m_color, info_w);
         let share_pct = if total_ms > 0 { ((top_art.listen_ms * 100) / total_ms).min(100) } else { 100 };
-        label(ui, pos2(info_x, hero_rect.top() + 94.0), Align2::LEFT_CENTER, &format!("{share_pct}% of your listening"), sans(11.5), m_color, info_w);
+        label(ui, pos2(info_x, hero_rect.top() + 114.0), Align2::LEFT_CENTER, &format!("{share_pct}% of your listening"), sans(12.0), m_color, info_w);
 
-        let mut row_y = hero_rect.bottom() + 12.0;
+        let mut row_y = hero_rect.bottom() + 14.0;
         for (idx, art) in saved.stats_top_artists.iter().enumerate().skip(1).take(2) {
-            let a_row = Rect::from_min_size(pos2(left_x, row_y), vec2(col_w, 42.0));
+            let a_row = Rect::from_min_size(pos2(left_x, row_y), vec2(col_w, 54.0));
             let rank_str = format!("{:02}", idx + 1);
-            ui.painter().text(pos2(a_row.left() + 10.0, a_row.center().y), Align2::LEFT_CENTER, rank_str, sans(12.0), m_color);
+            ui.painter().text(pos2(a_row.left() + 10.0, a_row.center().y), Align2::LEFT_CENTER, rank_str, medium(13.0), m_color);
 
-            let a_disc = pos2(a_row.left() + 42.0, a_row.center().y);
+            let a_disc = pos2(a_row.left() + 44.0, a_row.center().y);
             if !art.thumb.is_empty() {
-                rotating_circular_artwork(ui, cx.art, &art.thumb, a_disc, 15.0, 0.0, pal_color);
+                rotating_circular_artwork(ui, cx.art, &art.thumb, a_disc, 18.0, 0.0, pal_color);
             } else {
-                ui.painter().circle_filled(a_disc, 15.0, veil(0.08));
-                ui.painter().text(a_disc, Align2::CENTER_CENTER, icon::USER, glyph(13.0), pal_color);
+                ui.painter().circle_filled(a_disc, 18.0, veil(0.08));
+                ui.painter().text(a_disc, Align2::CENTER_CENTER, icon::USER, glyph(16.0), pal_color);
             }
 
-            let name_x = a_row.left() + 68.0;
-            label(ui, pos2(name_x, a_row.center().y - 8.0), Align2::LEFT_CENTER, &art.artist, medium(13.0), t_color, col_w - 140.0);
+            let name_x = a_row.left() + 74.0;
+            label(ui, pos2(name_x, a_row.center().y - 10.0), Align2::LEFT_CENTER, &art.artist, medium(13.5), t_color, col_w - 150.0);
 
-            let p_track = Rect::from_min_size(pos2(name_x, a_row.center().y + 8.0), vec2(col_w - 150.0, 3.0));
-            ui.painter().rect_filled(p_track, 1.5, veil(0.10));
+            let p_track = Rect::from_min_size(pos2(name_x, a_row.center().y + 10.0), vec2(col_w - 160.0, 4.0));
+            ui.painter().rect_filled(p_track, 2.0, veil(0.10));
             let top_ms = top_art.listen_ms.max(1);
             let p_frac = (art.listen_ms as f32 / top_ms as f32).clamp(0.05, 1.0);
-            ui.painter().rect_filled(Rect::from_min_size(p_track.min, vec2(p_track.width() * p_frac, 3.0)), 1.5, pal_color);
+            ui.painter().rect_filled(Rect::from_min_size(p_track.min, vec2(p_track.width() * p_frac, 4.0)), 2.0, pal_color);
 
             let art_mins = (art.listen_ms / 60000).max(1);
-            ui.painter().text(pos2(a_row.right() - 8.0, a_row.center().y), Align2::RIGHT_CENTER, format!("{art_mins} min"), sans(11.5), m_color);
+            ui.painter().text(pos2(a_row.right() - 8.0, a_row.center().y), Align2::RIGHT_CENTER, format!("{art_mins} min"), sans(12.0), m_color);
 
-            row_y += 46.0;
+            row_y += 60.0;
         }
     }
 
@@ -4872,13 +5180,13 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
     label(ui, pos2(right_x + 24.0, col_row.top() + 12.0), Align2::LEFT_CENTER, "Top songs", bold(18.0), t_color, col_w - 30.0);
 
     if saved.stats_top_tracks.is_empty() {
-        let empty_rect = Rect::from_min_size(pos2(right_x, col_row.top() + 32.0), vec2(col_w, 140.0));
+        let empty_rect = Rect::from_min_size(pos2(right_x, col_row.top() + 32.0), vec2(col_w, 160.0));
         ui.painter().rect_filled(empty_rect, 12.0, veil(0.03));
         label(ui, empty_rect.center(), Align2::CENTER_CENTER, "No songs played yet. Tracks will rank here!", sans(12.0), m_color, col_w - 20.0);
     } else {
         let mut s_row_y = col_row.top() + 32.0;
         for (idx, song) in saved.stats_top_tracks.iter().take(5).enumerate() {
-            let s_rect = Rect::from_min_size(pos2(right_x, s_row_y), vec2(col_w, 46.0));
+            let s_rect = Rect::from_min_size(pos2(right_x, s_row_y), vec2(col_w, 58.0));
             let resp = ui.interact(s_rect, Id::new(("top-song-row", idx)), Sense::click());
             let hov = hover_of(ui, &resp);
 
@@ -4886,24 +5194,24 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
                 ui.painter().rect_filled(s_rect, 8.0, veil(0.05 * hov));
             }
 
-            ui.painter().text(pos2(s_rect.left() + 10.0, s_rect.center().y), Align2::LEFT_CENTER, format!("{}", idx + 1), medium(13.0), m_color);
+            ui.painter().text(pos2(s_rect.left() + 10.0, s_rect.center().y), Align2::LEFT_CENTER, format!("{}", idx + 1), bold(13.5), m_color);
 
-            let thumb_rect = Rect::from_center_size(pos2(s_rect.left() + 36.0, s_rect.center().y), vec2(32.0, 32.0));
-            artwork(ui, cx.art, &song.thumb, thumb_rect, 5.0);
+            let thumb_rect = Rect::from_center_size(pos2(s_rect.left() + 42.0, s_rect.center().y), vec2(42.0, 42.0));
+            artwork(ui, cx.art, &song.thumb, thumb_rect, 6.0);
 
             if hov > 0.1 {
-                ui.painter().rect_filled(thumb_rect, 5.0, shade(0.40));
-                ui.painter().text(thumb_rect.center(), Align2::CENTER_CENTER, icon::PLAY, glyph(14.0), Color32::WHITE);
+                ui.painter().rect_filled(thumb_rect, 6.0, shade(0.40));
+                ui.painter().text(thumb_rect.center(), Align2::CENTER_CENTER, icon::PLAY, glyph(16.0), Color32::WHITE);
             }
 
-            let text_x = s_rect.left() + 60.0;
-            label(ui, pos2(text_x, s_rect.center().y - 8.0), Align2::LEFT_CENTER, &song.title, medium(12.5), t_color, col_w - 170.0);
-            label(ui, pos2(text_x, s_rect.center().y + 8.0), Align2::LEFT_CENTER, &song.artist, sans(11.0), m_color, col_w - 170.0);
+            let text_x = s_rect.left() + 72.0;
+            label(ui, pos2(text_x, s_rect.center().y - 10.0), Align2::LEFT_CENTER, &song.title, medium(13.5), t_color, col_w - 180.0);
+            label(ui, pos2(text_x, s_rect.center().y + 10.0), Align2::LEFT_CENTER, &song.artist, sans(12.0), m_color, col_w - 180.0);
 
-            ui.painter().text(pos2(s_rect.right() - 56.0, s_rect.center().y), Align2::RIGHT_CENTER, format!("{} plays", song.plays), sans(11.0), m_color);
+            ui.painter().text(pos2(s_rect.right() - 60.0, s_rect.center().y), Align2::RIGHT_CENTER, format!("{} plays", song.plays), sans(11.5), m_color);
 
             let dur_str = if !song.duration.is_empty() { &song.duration } else { "3:20" };
-            ui.painter().text(pos2(s_rect.right() - 8.0, s_rect.center().y), Align2::RIGHT_CENTER, dur_str, sans(11.0), m_color);
+            ui.painter().text(pos2(s_rect.right() - 8.0, s_rect.center().y), Align2::RIGHT_CENTER, dur_str, sans(11.5), m_color);
 
             if resp.clicked() {
                 cx.out.push(Action::Play(
@@ -4997,21 +5305,21 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
         }
     };
 
-    let card_height = 280.0;
+    let card_height = 310.0;
     let (container, _) = ui.allocate_exact_size(vec2(full, card_height), Sense::hover());
-    let donut_w = 280.0;
+    let donut_w = (width * 0.38).clamp(340.0, 440.0);
     let heatmap_w = width - donut_w - 20.0;
 
     let donut_rect = Rect::from_min_size(pos2(container.left() + pad, container.top()), vec2(donut_w, card_height));
     let heat_rect = Rect::from_min_size(pos2(donut_rect.right() + 20.0, container.top()), vec2(heatmap_w, card_height));
 
-    // Left Card: Donut Chart Container (Image 4)
+    // Left Card: Donut Chart Container (Image 3)
     ui.painter().rect_filled(donut_rect, 14.0, veil(0.04));
     ui.painter().rect_stroke(donut_rect, 14.0, Stroke::new(1.0_f32, veil(0.08)), StrokeKind::Inside);
 
-    let donut_center = pos2(donut_rect.center().x, donut_rect.top() + 85.0);
-    let r_outer = 56.0_f32;
-    let stroke_w = 16.0_f32;
+    let donut_center = pos2(donut_rect.center().x, donut_rect.top() + 95.0);
+    let r_outer = 66.0_f32;
+    let stroke_w = 18.0_f32;
     let r_mid = r_outer - stroke_w / 2.0;
 
     ui.painter().circle_stroke(donut_center, r_mid, Stroke::new(stroke_w, veil(0.06)));
@@ -5053,22 +5361,23 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
     ui.painter().text(pos2(donut_center.x, donut_center.y - 7.0), Align2::CENTER_CENTER, format!("{top_pct}%"), bold(24.0), t_color);
     ui.painter().text(pos2(donut_center.x, donut_center.y + 12.0), Align2::CENTER_CENTER, top_label, sans(11.0), m_color);
 
-    let leg_y = donut_rect.top() + 162.0;
-    let col1_x = donut_rect.left() + 24.0;
-    let col2_x = donut_rect.left() + 144.0;
+    let leg_y = donut_rect.top() + 185.0;
+    let col1_x = donut_rect.left() + 28.0;
+    let col2_x = donut_rect.left() + donut_w * 0.52;
+    let leg_col_w = donut_w * 0.44;
 
     let draw_legend_item = |ui: &Ui, center_x: f32, y: f32, col: Color32, name: &str, pct: u32| {
-        ui.painter().circle_filled(pos2(center_x, y), 4.0, col);
-        ui.painter().text(pos2(center_x + 10.0, y), Align2::LEFT_CENTER, name, sans(11.5), m_color);
-        ui.painter().text(pos2(center_x + 95.0, y), Align2::RIGHT_CENTER, format!("{pct}%"), medium(11.5), t_color);
+        ui.painter().circle_filled(pos2(center_x, y), 4.5, col);
+        ui.painter().text(pos2(center_x + 12.0, y), Align2::LEFT_CENTER, name, sans(12.0), m_color);
+        ui.painter().text(pos2(center_x + leg_col_w - 10.0, y), Align2::RIGHT_CENTER, format!("{pct}%"), medium(12.0), t_color);
     };
 
     draw_legend_item(ui, col1_x, leg_y, col_m, "Morning", pct_m);
-    draw_legend_item(ui, col2_x, leg_y, col_a, "Aftern...", pct_a);
-    draw_legend_item(ui, col1_x, leg_y + 20.0, col_e, "Evening", pct_e);
-    draw_legend_item(ui, col2_x, leg_y + 20.0, col_n, "Night", pct_n);
+    draw_legend_item(ui, col2_x, leg_y, col_a, "Afternoon", pct_a);
+    draw_legend_item(ui, col1_x, leg_y + 24.0, col_e, "Evening", pct_e);
+    draw_legend_item(ui, col2_x, leg_y + 24.0, col_n, "Night", pct_n);
 
-    let badge_y = donut_rect.bottom() - 38.0;
+    let badge_y = donut_rect.bottom() - 36.0;
     ui.painter().text(pos2(col1_x, badge_y), Align2::LEFT_CENTER, icon::SUN, solid(13.0), pal_color);
     label(ui, pos2(col1_x + 18.0, badge_y), Align2::LEFT_CENTER, persona_title, bold(12.5), t_color, donut_w - 50.0);
     label(ui, pos2(col1_x, badge_y + 16.0), Align2::LEFT_CENTER, persona_desc, sans(10.5), m_color, donut_w - 40.0);
@@ -5290,7 +5599,7 @@ fn sidebar(app: &mut App, ui: &mut Ui, anim_w: f32, out: &mut Vec<Action>) {
     ];
 
     for (symbol, text, route, trailing, active) in links {
-        if nav_item(ui, symbol, text, active, &trailing, app.saved.selection_glow).clicked() {
+        if nav_item(ui, symbol, text, active, &trailing, app.saved.selection_glow, pal_color).clicked() {
             out.push(Action::Go(route));
         }
     }
@@ -5400,12 +5709,12 @@ fn sidebar(app: &mut App, ui: &mut Ui, anim_w: f32, out: &mut Vec<Action>) {
             ui.painter()
                 .rect_filled(rect, ROW_RADIUS, veil(if active { 0.08 } else { 0.05 * hover }));
             if active && app.saved.selection_glow {
-                ui.painter().rect_stroke(rect.expand(1.0), ROW_RADIUS + 1.0, Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.35)), StrokeKind::Outside);
-                ui.painter().rect_stroke(rect, ROW_RADIUS, Stroke::new(1.4_f32, ACCENT.lerp_to_gamma(Color32::WHITE, 0.40)), StrokeKind::Inside);
+                ui.painter().rect_stroke(rect.expand(1.0), ROW_RADIUS + 1.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.35)), StrokeKind::Outside);
+                ui.painter().rect_stroke(rect, ROW_RADIUS, Stroke::new(1.4_f32, pal_color.lerp_to_gamma(Color32::WHITE, 0.40)), StrokeKind::Inside);
             }
             let icon_rect = Rect::from_min_size(pos2(rect.left() + 8.0, rect.center().y - 20.0), Vec2::splat(40.0));
-            ui.painter().rect_filled(icon_rect, 6.0, ACCENT.gamma_multiply(0.14));
-            ui.painter().text(icon_rect.center(), Align2::CENTER_CENTER, icon::PLAYLIST, glyph(20.0), ACCENT);
+            ui.painter().rect_filled(icon_rect, 6.0, pal_color.gamma_multiply(0.14));
+            ui.painter().text(icon_rect.center(), Align2::CENTER_CENTER, icon::PLAYLIST, glyph(20.0), pal_color);
             let (left, width) = (icon_rect.right() + 12.0, rect.right() - icon_rect.right() - 22.0);
             label(
                 ui,
@@ -5447,8 +5756,8 @@ fn sidebar(app: &mut App, ui: &mut Ui, anim_w: f32, out: &mut Vec<Action>) {
             ui.painter()
                 .rect_filled(rect, ROW_RADIUS, veil(if active { 0.08 } else { 0.05 * hover }));
             if active && app.saved.selection_glow {
-                ui.painter().rect_stroke(rect.expand(1.0), ROW_RADIUS + 1.0, Stroke::new(1.0_f32, ACCENT.gamma_multiply(0.35)), StrokeKind::Outside);
-                ui.painter().rect_stroke(rect, ROW_RADIUS, Stroke::new(1.4_f32, ACCENT.lerp_to_gamma(Color32::WHITE, 0.40)), StrokeKind::Inside);
+                ui.painter().rect_stroke(rect.expand(1.0), ROW_RADIUS + 1.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.35)), StrokeKind::Outside);
+                ui.painter().rect_stroke(rect, ROW_RADIUS, Stroke::new(1.4_f32, pal_color.lerp_to_gamma(Color32::WHITE, 0.40)), StrokeKind::Inside);
             }
             let art = Rect::from_min_size(pos2(rect.left() + 8.0, rect.center().y - 20.0), Vec2::splat(40.0));
             artwork(ui, &app.art, &item.thumb, art, if item.is_artist { 20.0 } else { 5.0 });
@@ -5483,19 +5792,20 @@ fn sidebar(app: &mut App, ui: &mut Ui, anim_w: f32, out: &mut Vec<Action>) {
 
 fn update_offer(app: &App, ui: &Ui, slot: Rect, out: &mut Vec<Action>) {
     let Some(version) = &app.update else { return };
+    let pal_color = app.saved.theme_palette.color();
     let row = slot.shrink2(vec2(12.0, 4.0));
     let response = ui.interact(row, Id::new("update-offer"), Sense::click());
     let hover = hover_of(ui, &response);
     ui.painter()
-        .rect_filled(row, ROW_RADIUS, ACCENT.gamma_multiply(0.14 + 0.08 * hover));
+        .rect_filled(row, ROW_RADIUS, pal_color.gamma_multiply(0.14 + 0.08 * hover));
     let mark = pos2(row.left() + 24.0, row.center().y);
     if app.updating {
         egui::Spinner::new()
-            .color(ACCENT)
+            .color(pal_color)
             .paint_at(ui, Rect::from_center_size(mark, Vec2::splat(16.0)));
     } else {
         ui.painter()
-            .text(mark, Align2::CENTER_CENTER, icon::ARROW_CIRCLE_UP, solid(19.0), ACCENT);
+            .text(mark, Align2::CENTER_CENTER, icon::ARROW_CIRCLE_UP, solid(19.0), pal_color);
     }
     let text = if app.updating {
         "Updating".to_owned()
@@ -5565,7 +5875,8 @@ fn account(app: &App, ui: &Ui, foot: Rect, out: &mut Vec<Action>) {
     // 2. Equalizer Button
     let is_eq = matches!(app.route(), Route::Settings(SettingsTab::Equalizer));
     let eq_slot = Rect::from_center_size(pos2(b2_x, mid_y), btn_size);
-    let eq_tone = if is_eq { ACCENT } else { MUTED };
+    let pal_color = app.saved.theme_palette.color();
+    let eq_tone = if is_eq { pal_color } else { MUTED };
     if icon_button(ui, eq_slot, Id::new("sound-eq-btn"), icon::SLIDERS, glyph(18.0), eq_tone, "Equalizer").clicked() {
         out.push(Action::Go(Route::Settings(SettingsTab::Equalizer)));
     }
@@ -5574,7 +5885,7 @@ fn account(app: &App, ui: &Ui, foot: Rect, out: &mut Vec<Action>) {
     let upd_slot = Rect::from_center_size(pos2(b3_x, mid_y), btn_size);
     let has_upd = app.update.is_some();
     let upd_icon = if has_upd { icon::ARROW_CIRCLE_UP } else { icon::ARROW_CLOCKWISE };
-    let upd_tone = if has_upd { ACCENT } else { MUTED };
+    let upd_tone = if has_upd { pal_color } else { MUTED };
     let upd_hint = if has_upd { "Update Available (Click to Install)" } else { "Check for Updates" };
     if icon_button(ui, upd_slot, Id::new("dock-update-btn"), upd_icon, if has_upd { solid(18.0) } else { glyph(18.0) }, upd_tone, upd_hint).clicked() {
         if has_upd {
@@ -5587,7 +5898,7 @@ fn account(app: &App, ui: &Ui, foot: Rect, out: &mut Vec<Action>) {
     // 4. Settings Button
     let is_settings = matches!(app.route(), Route::Settings(tab) if *tab != SettingsTab::Equalizer);
     let set_slot = Rect::from_center_size(pos2(b4_x, mid_y), btn_size);
-    let set_tone = if is_settings { ACCENT } else { MUTED };
+    let set_tone = if is_settings { pal_color } else { MUTED };
     if icon_button(ui, set_slot, Id::new("settings-btn"), icon::GEAR_SIX, glyph(18.0), set_tone, "Settings").clicked() {
         out.push(Action::Go(Route::Settings(SettingsTab::General)));
     }
@@ -6590,7 +6901,8 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     {
         out.push(Action::Next);
     }
-    let shuffle = if app.saved.shuffle { ACCENT } else { MUTED };
+    let pal_color = app.saved.theme_palette.color();
+    let shuffle = if app.saved.shuffle { pal_color } else { MUTED };
     if icon_button(
         ui,
         around(-104.0, 34.0),
@@ -6606,8 +6918,8 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     }
     let (symbol, repeat, hint) = match app.saved.repeat {
         Repeat::Off => (icon::REPEAT, MUTED, "Repeat"),
-        Repeat::All => (icon::REPEAT, ACCENT, "Repeat one"),
-        Repeat::One => (icon::REPEAT_ONCE, ACCENT, "Stop repeating"),
+        Repeat::All => (icon::REPEAT, pal_color, "Repeat one"),
+        Repeat::One => (icon::REPEAT_ONCE, pal_color, "Stop repeating"),
     };
     if icon_button(ui, around(104.0, 34.0), Id::new("bar-repeat"), symbol, glyph(17.0), repeat, hint).clicked() {
         out.push(Action::CycleRepeat);
@@ -6634,7 +6946,7 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     let line = Rect::from_center_size(track.center(), vec2(track.width(), 4.0));
     let level = Rect::from_min_size(line.min, vec2(line.width() * volume, 4.0));
     ui.painter().rect_filled(line, 2.0, veil(0.14));
-    ui.painter().rect_filled(level, 2.0, TEXT.lerp_to_gamma(ACCENT, grip));
+    ui.painter().rect_filled(level, 2.0, TEXT.lerp_to_gamma(pal_color, grip));
     ui.painter().circle_filled(pos2(level.right(), mid), 6.0 * grip, TEXT);
     slider.widget_info(|| WidgetInfo::slider(true, volume as f64, "Volume"));
     right -= 96.0 + 22.0;
@@ -6663,7 +6975,7 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         out.push(Action::Volume(if volume > 0.0 { 0.0 } else { restored }));
     }
     right -= 38.0;
-    let queue = if app.saved.queue_open { ACCENT } else { MUTED };
+    let queue = if app.saved.queue_open { pal_color } else { MUTED };
     if icon_button(
         ui,
         Rect::from_center_size(pos2(right, mid), Vec2::splat(34.0)),
@@ -6685,7 +6997,7 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         Id::new("bar-lyrics"),
         icon::SUBTITLES,
         glyph(18.0),
-        if singing { ACCENT } else { MUTED },
+        if singing { pal_color } else { MUTED },
         "Lyrics",
     )
     .clicked()
@@ -6694,7 +7006,7 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         out.push(Action::Expand(!singing));
     }
     right -= 38.0;
-    let mini_color = if app.saved.mini_mode { ACCENT } else { MUTED };
+    let mini_color = if app.saved.mini_mode { pal_color } else { MUTED };
     if icon_button(
         ui,
         Rect::from_center_size(pos2(right, mid), Vec2::splat(34.0)),
@@ -6709,7 +7021,7 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         out.push(Action::ToggleMiniMode);
     }
     right -= 38.0;
-    let norm_color = if app.saved.loudness_normalizer { ACCENT } else { MUTED };
+    let norm_color = if app.saved.loudness_normalizer { pal_color } else { MUTED };
     if icon_button(
         ui,
         Rect::from_center_size(pos2(right, mid), Vec2::splat(34.0)),
@@ -6745,13 +7057,13 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     scrub
 }
 
-fn paint_scrubber(ctx: &egui::Context, scrub: &Scrub) {
+fn paint_scrubber(ctx: &egui::Context, scrub: &Scrub, accent_color: Color32) {
     let painter = ctx.layer_painter(egui::LayerId::background());
     let height = 2.0 + 2.0 * scrub.hover;
     let span = |fraction: f32| Rect::from_min_size(scrub.bar.min - vec2(0.0, height / 2.0), vec2(scrub.bar.width() * fraction, height));
     painter.rect_filled(span(1.0), 0.0, rgb(0x26272C));
     painter.rect_filled(span(scrub.buffered), 0.0, rgb(0x45474E));
-    painter.rect_filled(span(scrub.played), 0.0, ACCENT);
+    painter.rect_filled(span(scrub.played), 0.0, accent_color);
     painter.circle_filled(pos2(span(scrub.played).right(), scrub.bar.top()), 6.0 * scrub.hover, TEXT);
 
     let Some((fraction, ms)) = scrub.aim else { return };

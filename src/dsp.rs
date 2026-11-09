@@ -123,6 +123,55 @@ impl Default for EqPreset {
     }
 }
 
+/// AutoEQ headphone frequency response compensation profiles
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, Default)]
+pub enum AutoEqHeadphone {
+    #[default]
+    None,
+    SonyWh1000xm4,
+    LogitechGProX,
+    HyperXCloud2,
+    SennheiserHd600,
+    AirPodsMax,
+    BeyerDt770,
+}
+
+impl AutoEqHeadphone {
+    pub const ALL: [AutoEqHeadphone; 7] = [
+        AutoEqHeadphone::None,
+        AutoEqHeadphone::SonyWh1000xm4,
+        AutoEqHeadphone::LogitechGProX,
+        AutoEqHeadphone::HyperXCloud2,
+        AutoEqHeadphone::SennheiserHd600,
+        AutoEqHeadphone::AirPodsMax,
+        AutoEqHeadphone::BeyerDt770,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            AutoEqHeadphone::None => "Choose headphone",
+            AutoEqHeadphone::SonyWh1000xm4 => "Sony WH-1000XM4",
+            AutoEqHeadphone::LogitechGProX => "Logitech G Pro X",
+            AutoEqHeadphone::HyperXCloud2 => "HyperX Cloud II",
+            AutoEqHeadphone::SennheiserHd600 => "Sennheiser HD 600",
+            AutoEqHeadphone::AirPodsMax => "Apple AirPods Max",
+            AutoEqHeadphone::BeyerDt770 => "Beyerdynamic DT 770 Pro",
+        }
+    }
+
+    pub fn gains(&self) -> Option<[f32; 10]> {
+        match self {
+            AutoEqHeadphone::None => None,
+            AutoEqHeadphone::SonyWh1000xm4 => Some([-2.0, -1.5, -0.5, 0.0, 1.0, 2.0, 1.5, 3.0, 1.0, -1.0]),
+            AutoEqHeadphone::LogitechGProX => Some([1.0, 0.5, -0.5, -1.0, 0.0, 1.5, 2.5, 3.0, 1.5, 0.0]),
+            AutoEqHeadphone::HyperXCloud2 => Some([2.0, 1.5, 0.5, -0.5, -1.0, 1.0, 2.0, 3.5, 2.0, 0.5]),
+            AutoEqHeadphone::SennheiserHd600 => Some([4.0, 3.0, 1.5, 0.0, -0.5, 0.0, -1.0, 0.5, 1.0, 2.0]),
+            AutoEqHeadphone::AirPodsMax => Some([0.0, -0.5, -1.0, 0.0, 0.5, 1.0, 1.5, 2.0, 0.5, -0.5]),
+            AutoEqHeadphone::BeyerDt770 => Some([-1.5, -1.0, 0.0, 0.5, 1.0, 1.5, -2.5, -3.0, -2.0, 1.0]),
+        }
+    }
+}
+
 impl EqPreset {
     pub const ALL: [EqPreset; 6] = [
         EqPreset::Flat,
@@ -251,6 +300,7 @@ pub struct Equalizer {
     coeffs: [BiquadCoeffs; 10],
     states: [[BiquadState; 2]; 10], // [band][channel: 0=L, 1=R]
     gains: [f32; 10],
+    preamp_db: f32,
     sample_rate: u32,
     active: bool,
 }
@@ -267,6 +317,7 @@ impl Equalizer {
             coeffs: [BiquadCoeffs::default(); 10],
             states: [[BiquadState::default(); 2]; 10],
             gains: [0.0; 10],
+            preamp_db: 0.0,
             sample_rate,
             active: false,
         };
@@ -281,23 +332,31 @@ impl Equalizer {
         }
     }
 
+    pub fn set_preamp(&mut self, preamp_db: f32) {
+        let clamped = preamp_db.clamp(-12.0, 12.0);
+        if (self.preamp_db - clamped).abs() >= 0.05 {
+            self.preamp_db = clamped;
+        }
+        self.update_active();
+    }
+
     pub fn set_gains(&mut self, gains: [f32; 10]) {
         let mut changed = false;
-        let mut active = false;
         for (i, &g) in gains.iter().enumerate() {
             let clamped = g.clamp(-12.0, 12.0);
             if (self.gains[i] - clamped).abs() >= 0.05 {
                 self.gains[i] = clamped;
                 changed = true;
             }
-            if clamped.abs() >= 0.05 {
-                active = true;
-            }
         }
-        self.active = active;
+        self.update_active();
         if changed {
             self.recalculate();
         }
+    }
+
+    fn update_active(&mut self) {
+        self.active = self.preamp_db.abs() >= 0.05 || self.gains.iter().any(|g| g.abs() >= 0.05);
     }
 
     fn recalculate(&mut self) {
@@ -324,10 +383,16 @@ impl Equalizer {
             return;
         }
 
+        let preamp_mult = if self.preamp_db.abs() >= 0.05 {
+            db_to_linear(self.preamp_db as f64)
+        } else {
+            1.0
+        };
+
         if channels == 1 {
             // Mono
             for sample in buffer.iter_mut() {
-                let mut s = *sample;
+                let mut s = *sample * preamp_mult;
                 for b in 0..10 {
                     s = self.states[b][0].process(&self.coeffs[b], s);
                 }
@@ -336,14 +401,14 @@ impl Equalizer {
         } else {
             // Stereo or multi-channel (processes first 2 channels)
             for frame in buffer.chunks_mut(channels) {
-                let mut left = frame[0];
+                let mut left = frame[0] * preamp_mult;
                 for b in 0..10 {
                     left = self.states[b][0].process(&self.coeffs[b], left);
                 }
                 frame[0] = left;
 
                 if frame.len() > 1 {
-                    let mut right = frame[1];
+                    let mut right = frame[1] * preamp_mult;
                     for b in 0..10 {
                         right = self.states[b][1].process(&self.coeffs[b], right);
                     }
