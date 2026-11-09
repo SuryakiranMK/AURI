@@ -542,6 +542,18 @@ impl TitleBar {
                 let border_color: u32 = 0xFFFFFFFE;
                 DwmSetWindowAttribute(self.window as _, 34, (&raw const border_color).cast(), 4);
 
+                // Disable non-client rendering and drop shadow (DWMWA_NCRENDERING_POLICY = 2, DWMNCRP_DISABLED = 1)
+                let nc_policy: u32 = 1;
+                DwmSetWindowAttribute(self.window as _, 2, (&raw const nc_policy).cast(), 4);
+
+                // Disable Windows 11 rounded window frame (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_DONOTROUND = 1)
+                let corner_pref: u32 = 1;
+                DwmSetWindowAttribute(self.window as _, 33, (&raw const corner_pref).cast(), 4);
+
+                // Disable Windows 11 compositor backdrop (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_NONE = 1)
+                let backdrop_type: u32 = 1;
+                DwmSetWindowAttribute(self.window as _, 38, (&raw const backdrop_type).cast(), 4);
+
                 let margins = Margins {
                     cx_left_width: -1,
                     cx_right_width: -1,
@@ -597,6 +609,15 @@ impl TitleBar {
                 let border_color: u32 = 0xFFFFFFFF;
                 DwmSetWindowAttribute(self.window as _, 34, (&raw const border_color).cast(), 4);
 
+                let nc_policy: u32 = 0;
+                DwmSetWindowAttribute(self.window as _, 2, (&raw const nc_policy).cast(), 4);
+
+                let corner_pref: u32 = 0;
+                DwmSetWindowAttribute(self.window as _, 33, (&raw const corner_pref).cast(), 4);
+
+                let backdrop_type: u32 = 0;
+                DwmSetWindowAttribute(self.window as _, 38, (&raw const backdrop_type).cast(), 4);
+
                 let margins = Margins {
                     cx_left_width: 0,
                     cx_right_width: 0,
@@ -639,6 +660,47 @@ fn paint_glass_grain(painter: &egui::Painter, rect: Rect, strength: f32) {
         }
         y += step;
     }
+}
+
+fn paint_rounded_gradient(painter: &Painter, rect: Rect, rounding: f32, col_left: Color32, col_right: Color32) {
+    let r = rounding.min(rect.width() * 0.5).min(rect.height() * 0.5);
+    let mut mesh = egui::Mesh::default();
+    let center = rect.center();
+    let col_center = col_left.lerp_to_gamma(col_right, 0.5);
+    mesh.vertices.push(egui::epaint::Vertex { pos: center, uv: Pos2::ZERO, color: col_center });
+
+    let mut perimeter = Vec::with_capacity(36);
+    let steps = 6;
+    let add_arc = |pts: &mut Vec<Pos2>, arc_center: Pos2, start_ang: f32, end_ang: f32| {
+        for s in 0..=steps {
+            let t = s as f32 / steps as f32;
+            let ang = start_ang + t * (end_ang - start_ang);
+            pts.push(pos2(arc_center.x + r * ang.cos(), arc_center.y + r * ang.sin()));
+        }
+    };
+
+    // Top-right arc (-PI/2 to 0)
+    add_arc(&mut perimeter, pos2(rect.right() - r, rect.top() + r), -std::f32::consts::FRAC_PI_2, 0.0);
+    // Bottom-right arc (0 to PI/2)
+    add_arc(&mut perimeter, pos2(rect.right() - r, rect.bottom() - r), 0.0, std::f32::consts::FRAC_PI_2);
+    // Bottom-left arc (PI/2 to PI)
+    add_arc(&mut perimeter, pos2(rect.left() + r, rect.bottom() - r), std::f32::consts::FRAC_PI_2, std::f32::consts::PI);
+    // Top-left arc (PI to 3*PI/2)
+    add_arc(&mut perimeter, pos2(rect.left() + r, rect.top() + r), std::f32::consts::PI, std::f32::consts::PI * 1.5);
+
+    for pt in &perimeter {
+        let frac = ((pt.x - rect.left()) / rect.width()).clamp(0.0, 1.0);
+        let color = col_left.lerp_to_gamma(col_right, frac);
+        mesh.vertices.push(egui::epaint::Vertex { pos: *pt, uv: Pos2::ZERO, color });
+    }
+
+    let n = perimeter.len() as u32;
+    for i in 1..=n {
+        let next = if i == n { 1 } else { i + 1 };
+        mesh.indices.extend_from_slice(&[0, i, next]);
+    }
+
+    painter.add(Shape::mesh(mesh));
 }
 
 #[cfg(not(windows))]
@@ -1335,6 +1397,7 @@ fn rotating_circular_artwork(ui: &Ui, art: &Art, url: &str, center: Pos2, radius
     }
 }
 
+#[allow(dead_code)]
 fn rotating_circular_artwork_clipped(painter: &Painter, ctx: &egui::Context, art: &Art, url: &str, center: Pos2, radius: f32, angle: f32, pal_color: Color32) {
     if let Some(picture) = art.get(ctx, url, radius * 2.0) {
         let segments = 32;
@@ -2462,25 +2525,16 @@ fn search_discovery_view(query: &mut String, focus_search: &mut bool, saved: &cr
         );
         let col_right = mood.color.gamma_multiply(if hover > 0.0 { 0.35 } else { 0.22 });
 
-        // Draw rounded background filled with tinted tone
-        ui.painter().rect_filled(c_rect, 16.0, col_left);
+        // Draw rounded background filled with smoothly blended horizontal gradient
+        paint_rounded_gradient(ui.painter(), c_rect, 16.0, col_left, col_right);
 
-        let mut mesh = egui::Mesh::default();
-        mesh.vertices.push(egui::epaint::Vertex { pos: c_rect.left_top(), uv: Pos2::ZERO, color: Color32::TRANSPARENT });
-        mesh.vertices.push(egui::epaint::Vertex { pos: c_rect.right_top(), uv: Pos2::ZERO, color: col_right });
-        mesh.vertices.push(egui::epaint::Vertex { pos: c_rect.right_bottom(), uv: Pos2::ZERO, color: col_right });
-        mesh.vertices.push(egui::epaint::Vertex { pos: c_rect.left_bottom(), uv: Pos2::ZERO, color: Color32::TRANSPARENT });
-        mesh.indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
-        let clipped_painter = ui.painter().with_clip_rect(c_rect);
-        clipped_painter.add(Shape::mesh(mesh));
-
-        label(ui, pos2(c_rect.left() + 16.0, c_rect.top() + 26.0), Align2::LEFT_CENTER, mood.name, bold(18.0), t_color, card_w - 95.0);
+        label(ui, pos2(c_rect.left() + 16.0, c_rect.top() + 26.0), Align2::LEFT_CENTER, mood.name, bold(18.0), t_color, card_w - 110.0);
         let dash_rect = Rect::from_min_size(pos2(c_rect.left() + 16.0, c_rect.top() + 46.0), vec2(30.0, 3.5));
         ui.painter().rect_filled(dash_rect, 2.0, mood.color);
 
-        // Vinyl disk positioned at the right edge
-        let vinyl_center = pos2(c_rect.right() - 26.0, c_rect.center().y);
-        let vinyl_radius = 52.0;
+        // Vinyl disk positioned at the right side of the capsule
+        let vinyl_center = pos2(c_rect.right() - 52.0, c_rect.center().y);
+        let vinyl_radius = 46.0;
 
         // Smooth rotation state starting at 0.0 (upright) and only advancing when hovered
         let rot_id = Id::new(("mood-card-rot", i));
@@ -2496,13 +2550,13 @@ fn search_discovery_view(query: &mut String, focus_search: &mut bool, saved: &cr
         }
 
         if saved.perf_placeholder_mood_art {
-            draw_rotating_vinyl(&clipped_painter, vinyl_center, vinyl_radius, angle, mood.color);
+            draw_rotating_vinyl(ui.painter(), vinyl_center, vinyl_radius, angle, mood.color);
         } else {
             let img_url = format!("https://lh3.googleusercontent.com/{}={}", mood.thumb, "w120-h120-l75-rj");
-            rotating_circular_artwork_clipped(&clipped_painter, ui.ctx(), cx.art, &img_url, vinyl_center, vinyl_radius, angle, mood.color);
+            rotating_circular_artwork(ui, cx.art, &img_url, vinyl_center, vinyl_radius, angle, mood.color);
         }
 
-        // Draw capsule stroke AFTER vinyl so the right edge is a complete, unbroken capsule!
+        // Draw capsule stroke with matching 16px corner radius for a clean, unbroken capsule
         let stroke_col = if hover > 0.0 { mood.color } else { veil(0.12) };
         ui.painter().rect_stroke(c_rect, 16.0, Stroke::new(if hover > 0.0 { 1.5_f32 } else { 1.0_f32 }, stroke_col), StrokeKind::Inside);
 
@@ -3131,6 +3185,7 @@ fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 
         // Limusic Discord Features: Line 1, Line 2, Line 3, and Buttons
         eyebrow(ui, "Presence Card Content Layout", 0.0);
+        let active_text_col = contrast_text_for(pal_color);
 
         // Line 1 Content Pills (Title, Artist, Album)
         let (l1_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
@@ -3145,7 +3200,7 @@ fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             let hov = hover_of(ui, &resp);
             if active {
                 ui.painter().rect_filled(p_rect, 12.0, pal_color);
-                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, bold(11.0), Color32::WHITE);
+                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, bold(11.0), active_text_col);
             } else {
                 ui.painter().rect_filled(p_rect, 12.0, veil(0.06 + 0.04 * hov));
                 ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, sans(11.0), if hov > 0.1 { TEXT } else { MUTED });
@@ -3175,7 +3230,7 @@ fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             let hov = hover_of(ui, &resp);
             if active {
                 ui.painter().rect_filled(p_rect, 12.0, pal_color);
-                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, bold(11.0), Color32::WHITE);
+                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, bold(11.0), active_text_col);
             } else {
                 ui.painter().rect_filled(p_rect, 12.0, veil(0.06 + 0.04 * hov));
                 ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, sans(11.0), if hov > 0.1 { TEXT } else { MUTED });
@@ -3204,7 +3259,7 @@ fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             let hov = hover_of(ui, &resp);
             if active {
                 ui.painter().rect_filled(p_rect, 12.0, pal_color);
-                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, bold(11.0), Color32::WHITE);
+                ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, bold(11.0), active_text_col);
             } else {
                 ui.painter().rect_filled(p_rect, 12.0, veil(0.06 + 0.04 * hov));
                 ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, opt_name, sans(11.0), if hov > 0.1 { TEXT } else { MUTED });
@@ -3337,7 +3392,7 @@ fn hotkey_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 
 fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
     let pal_color = app.saved.theme_palette.color();
-    let eq_height = if app.saved.eq_enabled { 410.0 } else { 0.0 };
+    let eq_height = if app.saved.eq_enabled { 450.0 } else { 0.0 };
     let height = 2.0 * CARD_PAD + 3.0 * SETTING_ROW + 44.0 + eq_height;
     section(ui, "Audio & DSP Engine", height, |ui| {
         let size = vec2(ui.available_width(), SETTING_ROW);
@@ -3573,8 +3628,11 @@ fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
                 }
             }
 
-            // Reset Button in bottom right corner (Image 1)
-            let reset_rect = Rect::from_min_size(pos2(graph_rect.right() - 86.0, graph_rect.bottom() - 36.0), vec2(72.0, 26.0));
+            ui.add_space(8.0);
+
+            // Reset Button positioned cleanly below the equalizer graph
+            let (reset_row, _) = ui.allocate_exact_size(vec2(size.x, 30.0), Sense::hover());
+            let reset_rect = Rect::from_min_size(pos2(reset_row.right() - 86.0, reset_row.center().y - 13.0), vec2(76.0, 26.0));
             let reset_resp = ui.interact(reset_rect, Id::new("eq-reset-btn"), Sense::click());
             let r_hov = hover_of(ui, &reset_resp);
             ui.painter().rect_filled(reset_rect, 13.0, veil(0.12 + 0.08 * r_hov));
@@ -5151,7 +5209,7 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
             let rank_str = format!("{:02}", idx + 1);
             ui.painter().text(pos2(a_row.left() + 10.0, a_row.center().y), Align2::LEFT_CENTER, rank_str, medium(13.0), m_color);
 
-            let a_disc = pos2(a_row.left() + 44.0, a_row.center().y);
+            let a_disc = pos2(a_row.left() + 54.0, a_row.center().y);
             if !art.thumb.is_empty() {
                 rotating_circular_artwork(ui, cx.art, &art.thumb, a_disc, 18.0, 0.0, pal_color);
             } else {
@@ -5159,10 +5217,10 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
                 ui.painter().text(a_disc, Align2::CENTER_CENTER, icon::USER, glyph(16.0), pal_color);
             }
 
-            let name_x = a_row.left() + 74.0;
-            label(ui, pos2(name_x, a_row.center().y - 10.0), Align2::LEFT_CENTER, &art.artist, medium(13.5), t_color, col_w - 150.0);
+            let name_x = a_row.left() + 84.0;
+            label(ui, pos2(name_x, a_row.center().y - 10.0), Align2::LEFT_CENTER, &art.artist, medium(13.5), t_color, col_w - 160.0);
 
-            let p_track = Rect::from_min_size(pos2(name_x, a_row.center().y + 10.0), vec2(col_w - 160.0, 4.0));
+            let p_track = Rect::from_min_size(pos2(name_x, a_row.center().y + 10.0), vec2(col_w - 170.0, 4.0));
             ui.painter().rect_filled(p_track, 2.0, veil(0.10));
             let top_ms = top_art.listen_ms.max(1);
             let p_frac = (art.listen_ms as f32 / top_ms as f32).clamp(0.05, 1.0);
@@ -5171,7 +5229,7 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
             let art_mins = (art.listen_ms / 60000).max(1);
             ui.painter().text(pos2(a_row.right() - 8.0, a_row.center().y), Align2::RIGHT_CENTER, format!("{art_mins} min"), sans(12.0), m_color);
 
-            row_y += 60.0;
+            row_y += 66.0;
         }
     }
 
@@ -5186,7 +5244,7 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
     } else {
         let mut s_row_y = col_row.top() + 32.0;
         for (idx, song) in saved.stats_top_tracks.iter().take(5).enumerate() {
-            let s_rect = Rect::from_min_size(pos2(right_x, s_row_y), vec2(col_w, 58.0));
+            let s_rect = Rect::from_min_size(pos2(right_x, s_row_y), vec2(col_w, 56.0));
             let resp = ui.interact(s_rect, Id::new(("top-song-row", idx)), Sense::click());
             let hov = hover_of(ui, &resp);
 
@@ -5196,7 +5254,7 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
 
             ui.painter().text(pos2(s_rect.left() + 10.0, s_rect.center().y), Align2::LEFT_CENTER, format!("{}", idx + 1), bold(13.5), m_color);
 
-            let thumb_rect = Rect::from_center_size(pos2(s_rect.left() + 42.0, s_rect.center().y), vec2(42.0, 42.0));
+            let thumb_rect = Rect::from_center_size(pos2(s_rect.left() + 54.0, s_rect.center().y), vec2(42.0, 42.0));
             artwork(ui, cx.art, &song.thumb, thumb_rect, 6.0);
 
             if hov > 0.1 {
@@ -5204,9 +5262,9 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
                 ui.painter().text(thumb_rect.center(), Align2::CENTER_CENTER, icon::PLAY, glyph(16.0), Color32::WHITE);
             }
 
-            let text_x = s_rect.left() + 72.0;
-            label(ui, pos2(text_x, s_rect.center().y - 10.0), Align2::LEFT_CENTER, &song.title, medium(13.5), t_color, col_w - 180.0);
-            label(ui, pos2(text_x, s_rect.center().y + 10.0), Align2::LEFT_CENTER, &song.artist, sans(12.0), m_color, col_w - 180.0);
+            let text_x = s_rect.left() + 86.0;
+            label(ui, pos2(text_x, s_rect.center().y - 10.0), Align2::LEFT_CENTER, &song.title, medium(13.5), t_color, col_w - 190.0);
+            label(ui, pos2(text_x, s_rect.center().y + 10.0), Align2::LEFT_CENTER, &song.artist, sans(12.0), m_color, col_w - 190.0);
 
             ui.painter().text(pos2(s_rect.right() - 60.0, s_rect.center().y), Align2::RIGHT_CENTER, format!("{} plays", song.plays), sans(11.5), m_color);
 
@@ -5226,7 +5284,7 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
                     0,
                 ));
             }
-            s_row_y += 50.0;
+            s_row_y += 62.0;
         }
     }
     ui.add_space(28.0);
@@ -5441,7 +5499,7 @@ fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
         }
     }
 
-    let mark_y = grid_top + 7.0 * (cell_h + cell_gap) + 12.0;
+    let mark_y = grid_top + 7.0 * (cell_h + cell_gap) + 26.0;
     let mark_hours = [(0, "12 AM"), (6, "6 AM"), (12, "12 PM"), (18, "6 PM")];
     for &(h, label_str) in &mark_hours {
         let x = grid_left + h as f32 * (cell_w + cell_gap);
@@ -7146,8 +7204,14 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
         }
     }
 
+    ctx.style_mut(|s| {
+        s.visuals.panel_fill = Color32::TRANSPARENT;
+        s.visuals.window_fill = Color32::TRANSPARENT;
+        s.visuals.window_stroke = Stroke::NONE;
+    });
+
     egui::CentralPanel::default()
-        .frame(Frame::new().fill(Color32::TRANSPARENT).inner_margin(Margin::ZERO))
+        .frame(Frame::NONE.fill(Color32::TRANSPARENT).inner_margin(Margin::ZERO))
         .show(ctx, |ui| {
             let (mut w, h) = app.saved.mini_variant.size(app.mini_queue_open);
             let mut is_retracted = false;
