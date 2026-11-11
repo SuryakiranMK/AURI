@@ -2299,7 +2299,58 @@ fn top_result(ui: &mut Ui, cx: &mut Cx, items: &[Item], id: Id) {
     ui.add_space(8.0);
 }
 
-fn hero(ui: &mut Ui, cx: &mut Cx, item: &Item, symbol: Option<&str>, playable: bool, pinned: Option<bool>) -> bool {
+/// Paints a 2x2 cover mosaic from real track thumbnails, replacing the baked
+/// composite YouTube serves for playlists (which contains placeholder tiles
+/// for tracks whose artwork is unavailable).
+fn paint_hero_mosaic(ui: &Ui, art: &Art, cells: &[String], rect: Rect) {
+    fn tile(ui: &Ui, art: &Art, url: &str, cell: Rect, nw: u8, ne: u8, sw: u8, se: u8) {
+        match art.get(ui.ctx(), url, cell.width()) {
+            Some(picture) => egui::Image::from_texture((picture.id, cell.size()))
+                .corner_radius(egui::CornerRadius { nw, ne, sw, se })
+                .paint_at(ui, cell),
+            None => paint_shimmer_wave(ui.painter(), ui.ctx(), cell, 0.0),
+        }
+    }
+    let r: u8 = 12;
+    let half_w = rect.width() / 2.0;
+    let half_h = rect.height() / 2.0;
+    match cells.len() {
+        2 => {
+            let left = Rect::from_min_max(rect.min, pos2(rect.left() + half_w, rect.bottom()));
+            let right = Rect::from_min_max(pos2(rect.left() + half_w, rect.top()), rect.max);
+            tile(ui, art, &cells[0], left, r, 0, r, 0);
+            tile(ui, art, &cells[1], right, 0, r, 0, r);
+        }
+        3 => {
+            let tl = Rect::from_min_max(rect.min, pos2(rect.left() + half_w, rect.top() + half_h));
+            let tr = Rect::from_min_max(pos2(rect.left() + half_w, rect.top()), pos2(rect.right(), rect.top() + half_h));
+            let bottom = Rect::from_min_max(pos2(rect.left(), rect.top() + half_h), rect.max);
+            tile(ui, art, &cells[0], tl, r, 0, 0, 0);
+            tile(ui, art, &cells[1], tr, 0, r, 0, 0);
+            tile(ui, art, &cells[2], bottom, 0, 0, r, r);
+        }
+        _ => {
+            let tl = Rect::from_min_max(rect.min, pos2(rect.left() + half_w, rect.top() + half_h));
+            let tr = Rect::from_min_max(pos2(rect.left() + half_w, rect.top()), pos2(rect.right(), rect.top() + half_h));
+            let bl = Rect::from_min_max(pos2(rect.left(), rect.top() + half_h), pos2(rect.left() + half_w, rect.bottom()));
+            let br = Rect::from_min_max(pos2(rect.left() + half_w, rect.top() + half_h), rect.max);
+            tile(ui, art, &cells[0], tl, r, 0, 0, 0);
+            tile(ui, art, &cells[1], tr, 0, r, 0, 0);
+            tile(ui, art, &cells[2], bl, 0, 0, r, 0);
+            tile(ui, art, &cells[3], br, 0, 0, 0, r);
+        }
+    }
+}
+
+fn hero(
+    ui: &mut Ui,
+    cx: &mut Cx,
+    item: &Item,
+    symbol: Option<&str>,
+    playable: bool,
+    pinned: Option<bool>,
+    mosaic: &[String],
+) -> bool {
     let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), HERO_ART), Sense::hover());
     let art = Rect::from_min_size(rect.min, Vec2::splat(HERO_ART));
@@ -2308,7 +2359,13 @@ fn hero(ui: &mut Ui, cx: &mut Cx, item: &Item, symbol: Option<&str>, playable: b
             ui.painter().rect_filled(art, 12.0, veil(0.06));
             ui.painter().text(art.center(), Align2::CENTER_CENTER, symbol, solid(84.0), accent);
         }
-        None => artwork(ui, cx.art, &item.thumb, art, if item.is_artist { HERO_ART / 2.0 } else { 12.0 }),
+        None => {
+            if !item.is_artist && mosaic.len() >= 2 {
+                paint_hero_mosaic(ui, cx.art, mosaic, art);
+            } else {
+                artwork(ui, cx.art, &item.thumb, art, if item.is_artist { HERO_ART / 2.0 } else { 12.0 });
+            }
+        }
     }
     let left = art.right() + 30.0;
     let width = (rect.right() - left).max(120.0);
@@ -2440,7 +2497,7 @@ fn local(ui: &mut Ui, cx: &mut Cx, title: &str, symbol: &str, items: &[Item], em
         ..Item::default()
     };
     let play_row_end = pos2(ui.max_rect().right(), ui.cursor().top() + HERO_ART - 21.0);
-    if hero(ui, cx, &header, Some(symbol), !items.is_empty(), None) {
+    if hero(ui, cx, &header, Some(symbol), !items.is_empty(), None, &[]) {
         cx.out.push(Action::Play(items.to_vec(), 0));
     }
     if clearable && !items.is_empty() && text_button(ui, play_row_end, ui.id().with("clear"), "Clear history").clicked() {
@@ -2467,7 +2524,7 @@ fn custom_playlist_page(ui: &mut Ui, cx: &mut Cx, pl: &CustomPlaylist) {
         ..Item::default()
     };
     let play_row_end = pos2(ui.max_rect().right(), ui.cursor().top() + HERO_ART - 21.0);
-    if hero(ui, cx, &header, Some(icon::PLAYLIST), !pl.songs.is_empty(), None) {
+    if hero(ui, cx, &header, Some(icon::PLAYLIST), !pl.songs.is_empty(), None, &[]) {
         cx.out.push(Action::Play(pl.songs.clone(), 0));
     }
     if text_button(ui, play_row_end, ui.id().with("delete_pl"), "Delete playlist").clicked() {
@@ -2493,7 +2550,27 @@ fn page(ui: &mut Ui, cx: &mut Cx, load: Option<&Load>, pinned: &[Item], query: O
             if let Some(header) = &page.header {
                 let saved = pinned.iter().any(|item| item.browse_id == header.browse_id);
                 let playable = page.sections.iter().flat_map(|section| &section.items).any(Item::is_song);
-                if hero(ui, cx, header, None, playable, Some(saved)) {
+                // Rebuild playlist covers locally from real track thumbnails;
+                // YouTube's served composite bakes in placeholder tiles for
+                // tracks whose artwork is unavailable. Cells that simply reuse
+                // the header art (albums, singles) are skipped so those pages
+                // keep their single cover.
+                let mut mosaic: Vec<String> = Vec::new();
+                if !header.is_artist {
+                    for item in page.sections.iter().flat_map(|section| &section.items) {
+                        let thumb = &item.thumb;
+                        if !thumb.is_empty() && thumb != &header.thumb && !mosaic.contains(thumb) {
+                            mosaic.push(thumb.clone());
+                            if mosaic.len() == 4 {
+                                break;
+                            }
+                        }
+                    }
+                    if mosaic.len() < 2 {
+                        mosaic.clear();
+                    }
+                }
+                if hero(ui, cx, header, None, playable, Some(saved), &mosaic) {
                     cx.out.push(Action::Play(page.songs(), 0));
                 }
                 ui.add_space(8.0);
@@ -4590,26 +4667,6 @@ fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
                     out.push(Action::SetEqPreset(preset));
                 }
 
-                if let Some(hp) = segmented_row(
-                    ui,
-                    "eq-autoeq-seg",
-                    icon::HEADPHONES,
-                    "AutoEq headphone compensation",
-                    "Applies a frequency-response correction profile for popular headphones.",
-                    app.saved.autoeq_headphone,
-                    &[
-                        (crate::dsp::AutoEqHeadphone::None, "None"),
-                        (crate::dsp::AutoEqHeadphone::SonyWh1000xm4, "Sony WH-1000XM4"),
-                        (crate::dsp::AutoEqHeadphone::LogitechGProX, "Logitech G Pro X"),
-                        (crate::dsp::AutoEqHeadphone::HyperXCloud2, "HyperX Cloud II"),
-                        (crate::dsp::AutoEqHeadphone::SennheiserHd600, "Sennheiser HD 600"),
-                        (crate::dsp::AutoEqHeadphone::AirPodsMax, "AirPods Max"),
-                        (crate::dsp::AutoEqHeadphone::BeyerDt770, "DT 770 Pro"),
-                    ],
-                ) {
-                    out.push(Action::SetAutoEq(hp));
-                }
-
                 if let Some(gain) = slider_row(
                     ui,
                     "eq-preamp",
@@ -4742,7 +4799,7 @@ fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
                 "eq-reset-btn",
                 icon::ARROWS_CLOCKWISE,
                 "Reset equalizer",
-                "Restore the Flat preset, clear AutoEq and zero the preamp.",
+                "Restore the Flat preset and zero the preamp and bands.",
                 "Reset",
                 false,
             ) {

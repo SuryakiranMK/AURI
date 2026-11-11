@@ -382,8 +382,8 @@ impl PerfProfile {
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Default)]
 pub enum ArtworkBgVariant {
-    #[default]
     CanvasTint,
+    #[default]
     BlurredBackdrop,
     AmbientRadialGlow,
     MinimalEdgeGlow,
@@ -1212,7 +1212,7 @@ impl Default for Saved {
             blocked_artists: Vec::new(),
             last_playlist_id: None,
             ambient_artwork_blur: true,
-            artwork_bg_variant: ArtworkBgVariant::CanvasTint,
+            artwork_bg_variant: ArtworkBgVariant::BlurredBackdrop,
             artwork_bg_opacity: 0.50,
             artwork_bg_blur: 0.60,
         }
@@ -1308,7 +1308,6 @@ pub enum Action {
     SetEqPreset(crate::dsp::EqPreset),
     SetEqGain(usize, f32),
     SetEqPreamp(f32),
-    SetAutoEq(crate::dsp::AutoEqHeadphone),
     ResetEq,
     SetDiscordLine1(DiscordLineContent),
     SetDiscordLine2(DiscordLineContent),
@@ -2824,14 +2823,6 @@ impl App {
                 self.saved.eq_preamp_db = preamp.clamp(-12.0, 12.0);
                 self.player.set_eq_preamp(self.saved.eq_preamp_db);
             }
-            Action::SetAutoEq(hp) => {
-                self.saved.autoeq_headphone = hp;
-                if let Some(gains) = hp.gains() {
-                    self.saved.eq_preset = crate::dsp::EqPreset::Custom;
-                    self.saved.eq_gains = gains;
-                    self.player.set_eq_gains(self.saved.eq_gains);
-                }
-            }
             Action::ResetEq => {
                 self.saved.eq_preset = crate::dsp::EqPreset::Flat;
                 self.saved.autoeq_headphone = crate::dsp::AutoEqHeadphone::None;
@@ -3395,7 +3386,7 @@ impl App {
                 self.saved.theme_base = ThemeBase::DarkObsidian;
                 self.saved.corner_roundness = 12.0;
                 self.saved.background_tint_shade = 0.0;
-                self.saved.artwork_bg_variant = ArtworkBgVariant::CanvasTint;
+                self.saved.artwork_bg_variant = ArtworkBgVariant::BlurredBackdrop;
                 self.saved.artwork_bg_opacity = 0.50;
                 self.saved.artwork_bg_blur = 0.60;
                 self.notify("Appearance reset to preset defaults");
@@ -3981,7 +3972,7 @@ mod tests {
         assert_eq!(ArtworkBgVariant::MinimalEdgeGlow.name(), "Edge Glow");
 
         let saved = Saved::default();
-        assert_eq!(saved.artwork_bg_variant, ArtworkBgVariant::CanvasTint);
+        assert_eq!(saved.artwork_bg_variant, ArtworkBgVariant::BlurredBackdrop);
         assert!((saved.artwork_bg_opacity - 0.50).abs() < 0.01);
         assert!((saved.artwork_bg_blur - 0.60).abs() < 0.01);
     }
