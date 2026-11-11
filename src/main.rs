@@ -113,6 +113,7 @@ fn main() -> eframe::Result {
         .with_app_id(app_id())
         .with_inner_size(app::WINDOW_SIZE)
         .with_min_inner_size(app::WINDOW_MIN)
+        .with_maximized(true)
         .with_transparent(true)
         .with_decorations(false)
         .with_icon(ui::app_icon());

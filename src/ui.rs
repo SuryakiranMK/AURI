@@ -449,7 +449,6 @@ impl Cx<'_> {
 }
 
 struct Scrub {
-    bar: Rect,
     played: f32,
     buffered: f32,
     hover: f32,
@@ -971,52 +970,24 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     }
     tool_right -= 34.0;
 
-    // Listen Together / Sync Button
-    let sync_on = app.sync_mode != crate::sync::SyncMode::Disconnected;
-    let sync_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
-    let sync_resp = ui.interact(sync_rect, Id::new("win-tool-sync"), Sense::click());
-    let sync_hov = hover_of(ui, &sync_resp);
-    if sync_on {
-        ui.painter().rect_filled(sync_rect, 6.0, Color32::from_rgba_unmultiplied(16, 185, 129, 45));
-        ui.painter().rect_stroke(sync_rect, 6.0, Stroke::new(1.0_f32, Color32::from_rgb(16, 185, 129)), StrokeKind::Inside);
-        ui.painter().text(sync_rect.center(), Align2::CENTER_CENTER, icon::HEADPHONES, solid(16.0), Color32::from_rgb(52, 211, 153));
-    } else {
-        ui.painter().rect_filled(sync_rect, 6.0, veil(0.04 * sync_hov));
-        ui.painter().text(sync_rect.center(), Align2::CENTER_CENTER, icon::HEADPHONES, glyph(16.0), m_color);
-    }
-    describe(&sync_resp, "Listen Together / GitHub Sync");
-    if sync_resp.clicked() {
-        if sync_on {
-            out.push(Action::StopSync);
-        } else {
-            out.push(Action::SetSettingsTab(SettingsTab::DataStorage));
-        }
-    }
-    tool_right -= 34.0;
-
-    // Account Avatar Pill (e.g. avatar circle with user photo + user name + caret down + popup menu)
-    let acc_name = app.saved.account.as_ref().map(|a| a.name.as_str()).unwrap_or("Sign in");
-    let acc_pill_w = (20.0 + 8.0 + (acc_name.len() as f32 * 6.5) + 20.0).clamp(96.0, 160.0);
-    let acc_rect = Rect::from_min_size(pos2(tool_right - acc_pill_w, mid - 13.0), vec2(acc_pill_w, 26.0));
+    // Account Avatar Button (icon-only; opens the account & profiles menu)
+    let acc_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
     let acc_resp = ui.interact(acc_rect, Id::new("win-tool-account"), Sense::click());
     let acc_hov = hover_of(ui, &acc_resp);
-    ui.painter().rect_filled(acc_rect, 13.0, veil(0.04 + 0.05 * acc_hov));
-    ui.painter().rect_stroke(acc_rect, 13.0, Stroke::new(1.0_f32, veil(0.08)), StrokeKind::Inside);
-    let av_center = pos2(acc_rect.left() + 13.0, mid);
+    ui.painter().rect_filled(acc_rect, 14.0, veil(0.04 + 0.05 * acc_hov));
+    let av_center = acc_rect.center();
     if let Some(ref account) = app.saved.account {
         if !account.photo.is_empty() {
-            let av_rect = Rect::from_center_size(av_center, Vec2::splat(18.0));
-            artwork(ui, &app.art, &account.photo, av_rect, 9.0);
+            let av_rect = Rect::from_center_size(av_center, Vec2::splat(20.0));
+            artwork(ui, &app.art, &account.photo, av_rect, 10.0);
         } else {
-            ui.painter().circle_filled(av_center, 9.0, pal_color.gamma_multiply(0.25));
-            ui.painter().text(av_center, Align2::CENTER_CENTER, icon::USER, glyph(11.0), pal_color);
+            ui.painter().circle_filled(av_center, 10.0, pal_color.gamma_multiply(0.25));
+            ui.painter().text(av_center, Align2::CENTER_CENTER, icon::USER, glyph(12.0), pal_color);
         }
     } else {
-        ui.painter().circle_filled(av_center, 9.0, pal_color.gamma_multiply(0.25));
-        ui.painter().text(av_center, Align2::CENTER_CENTER, icon::USER, glyph(11.0), pal_color);
+        ui.painter().circle_filled(av_center, 10.0, pal_color.gamma_multiply(0.25));
+        ui.painter().text(av_center, Align2::CENTER_CENTER, icon::USER, glyph(12.0), pal_color);
     }
-    label(ui, pos2(acc_rect.left() + 27.0, mid), Align2::LEFT_CENTER, acc_name, medium(11.5), t_color, acc_pill_w - 42.0);
-    ui.painter().text(pos2(acc_rect.right() - 10.0, mid), Align2::CENTER_CENTER, icon::CARET_DOWN, glyph(10.0), m_color);
     describe(&acc_resp, "YouTube Music Account & Profiles");
 
     egui::Popup::menu(&acc_resp).gap(6.0).show(|ui| {
@@ -1087,7 +1058,7 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
             }
         });
     });
-    tool_right -= acc_pill_w + 12.0;
+    tool_right -= 40.0;
 
     // Center draggable title area: spans from `left` to `tool_right`
     let center_rect = Rect::from_min_max(pos2(left, bar.top()), pos2(tool_right, bar.bottom()));
@@ -1379,7 +1350,10 @@ fn text_button(ui: &Ui, right_center: Pos2, id: Id, text: &str) -> Response {
 
 fn pill(ui: &Ui, at: Pos2, id: Id, symbol: &str, text: &str, primary: bool) -> Response {
     let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
-    let galley = fit(ui, text, bold(14.0), if primary { ON_ACCENT } else { TEXT }, 240.0, 1);
+    let ink = if primary { contrast_text_for(accent) } else { TEXT };
+    // The ink must be baked into the galley; a light accent (e.g. Monochrome)
+    // fills the pill near-white and white text would vanish on it.
+    let galley = fit(ui, text, bold(14.0), ink, 240.0, 1);
     let rect = Rect::from_min_size(at, vec2(galley.size().x + 62.0, 42.0));
     let response = ui.interact(rect, id, Sense::click());
     let hover = hover_of(ui, &response);
@@ -1393,7 +1367,6 @@ fn pill(ui: &Ui, at: Pos2, id: Id, symbol: &str, text: &str, primary: bool) -> R
     } else {
         veil(0.09 + 0.05 * hover)
     };
-    let ink = if primary { contrast_text_for(accent) } else { TEXT };
     ui.painter().rect_filled(body, 21.0, fill);
     ui.painter().text(
         pos2(rect.left() + 28.0, rect.center().y),
@@ -8328,7 +8301,6 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         ui.painter().circle_filled(pos2(thumb_x, scrub_track.center().y), 1.8, Color32::WHITE);
 
         return Scrub {
-            bar: scrub_track,
             played: frac,
             buffered: if item.is_some() { app.player.buffered() } else { 0.0 },
             hover: scrub_resp.hovered() as i32 as f32,
@@ -8371,7 +8343,6 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     }
     let played_frac = if duration > 0 { (position as f32 / duration as f32).clamp(0.0, 1.0) } else { 0.0 };
     let scrub = Scrub {
-        bar: track_rect,
         played: played_frac,
         buffered: if item.is_some() { app.player.buffered() } else { 0.0 },
         hover: ui
