@@ -713,6 +713,38 @@ pub enum GameOverlayHotkey {
     CtrlF1,
 }
 
+/// How much of the screen the in-game overlay covers when opened.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum GameOverlaySize {
+    #[default]
+    Full,
+    Half,
+    Compact,
+}
+
+#[allow(dead_code)]
+impl GameOverlaySize {
+    pub const ALL: [GameOverlaySize; 3] = [GameOverlaySize::Full, GameOverlaySize::Half, GameOverlaySize::Compact];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            GameOverlaySize::Full => "Full screen",
+            GameOverlaySize::Half => "Half screen",
+            GameOverlaySize::Compact => "Compact",
+        }
+    }
+}
+
+/// Window geometry (logical size + position) for the in-game overlay: full
+/// screen, the bottom half of the screen, or a compact bottom-centered card.
+fn overlay_geometry(size: GameOverlaySize, sw: f32, sh: f32, ppp: f32) -> (f32, f32, f32, f32) {
+    match size {
+        GameOverlaySize::Full => (sw / ppp, sh / ppp, 0.0, 0.0),
+        GameOverlaySize::Half => (sw / ppp, sh / (2.0 * ppp), 0.0, sh / (2.0 * ppp)),
+        GameOverlaySize::Compact => (sw / (2.0 * ppp), sh / (2.0 * ppp), sw / (4.0 * ppp), sh / (2.0 * ppp)),
+    }
+}
+
 #[allow(dead_code)]
 impl GameOverlayHotkey {
     pub const ALL: [GameOverlayHotkey; 5] = [
@@ -860,6 +892,8 @@ pub struct Saved {
 
     #[serde(default)]
     pub game_overlay_hotkey: GameOverlayHotkey,
+    #[serde(default)]
+    pub game_overlay_size: GameOverlaySize,
     #[serde(default = "default_game_overlay_opacity")]
     pub game_overlay_opacity: f32,
     #[serde(default = "default_true")]
@@ -1189,6 +1223,7 @@ impl Default for Saved {
             discord_button1: DiscordButtonOption::ListenOnYtm,
             discord_button2: DiscordButtonOption::GetApp,
             game_overlay_hotkey: GameOverlayHotkey::CtrlShiftG,
+            game_overlay_size: GameOverlaySize::Full,
             game_overlay_opacity: 0.55,
             game_show_music_widget: true,
             game_show_audio_widget: true,
@@ -1445,6 +1480,7 @@ pub enum Action {
     SetAutoGameMode(bool),
     SetGameOverlayHotkey(GameOverlayHotkey),
     SetGameOverlayOpacity(f32),
+    SetGameOverlaySize(GameOverlaySize),
     ToggleGameMusicWidget,
     ToggleGameAudioWidget,
     ToggleGameQueueWidget,
@@ -3290,8 +3326,12 @@ impl App {
                 self.game_overlay_open = false;
                 self.game_mode_start_time = None;
                 self.title_bar.restore_decorations();
+                // Reset the restore geometry first so un-maximizing later has
+                // something sane to come back to, then return maximized —
+                // matching how AURI launches.
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(100.0, 100.0)));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 self.notify("Restored Normal AURI Mode");
@@ -3313,13 +3353,19 @@ impl App {
             Action::ToggleGameOverlay => {
                 if self.in_game_mode {
                     self.game_overlay_open = !self.game_overlay_open;
+                    let (sw, sh) = screen_size();
+                    let ppp = self.ctx.pixels_per_point().max(0.5);
                     if self.game_overlay_open {
-                        // Position-only change: the window already sits at full
-                        // screen size while parked. No focus is stolen so the
-                        // game keeps its foreground (and its exclusive swapchain).
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
+                        // Size and place the overlay per the user's variant.
+                        // No focus is stolen so the game keeps its foreground.
+                        let (w, h, x, y) = overlay_geometry(self.saved.game_overlay_size, sw, sh, ppp);
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
                         self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
                     } else {
+                        // Re-park at full off-screen size so the next toggle
+                        // starts from a stable geometry.
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(sw / ppp, sh / ppp)));
                         self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-32000.0, -32000.0)));
                         self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
                     }
@@ -3336,6 +3382,17 @@ impl App {
             }
             Action::SetGameOverlayOpacity(op) => {
                 self.saved.game_overlay_opacity = op.clamp(0.15, 0.95);
+            }
+            Action::SetGameOverlaySize(size) => {
+                self.saved.game_overlay_size = size;
+                // Live-apply while the overlay is already open.
+                if self.in_game_mode && self.game_overlay_open {
+                    let (sw, sh) = screen_size();
+                    let ppp = self.ctx.pixels_per_point().max(0.5);
+                    let (w, h, x, y) = overlay_geometry(size, sw, sh, ppp);
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
+                }
             }
             Action::ToggleGameMusicWidget => {
                 self.saved.game_show_music_widget = !self.saved.game_show_music_widget;

@@ -4474,6 +4474,22 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
             ) {
                 out.push(Action::SetGameOverlayOpacity(op));
             }
+
+            if let Some(size) = segmented_row(
+                ui,
+                "game-overlay-size",
+                icon::ARROWS_OUT_SIMPLE,
+                "Overlay size",
+                "How much of the screen the overlay covers when opened: full, bottom half, or a compact card.",
+                app.saved.game_overlay_size,
+                &[
+                    (crate::app::GameOverlaySize::Full, "Full screen"),
+                    (crate::app::GameOverlaySize::Half, "Half screen"),
+                    (crate::app::GameOverlaySize::Compact, "Compact"),
+                ],
+            ) {
+                out.push(Action::SetGameOverlaySize(size));
+            }
         });
 
         // Card 2: AUTO GAME DETECTION, WHITELIST & BLACKLIST
