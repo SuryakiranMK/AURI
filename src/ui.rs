@@ -1098,10 +1098,11 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
         .show(ctx, |ui| top_window_bar(app, ui, &mut out));
 
     if app.saved.bar_layout == BarLayout::Docked {
-        let bar_frame = if app.saved.bar_backdrop != crate::app::PanelBackdrop::Solid {
-            Frame::new().fill(Color32::TRANSPARENT)
-        } else {
-            plain(p_col)
+        let bar_frame = match app.saved.bar_backdrop {
+            crate::app::PanelBackdrop::Solid => plain(p_col),
+            // Unified melts the deck into the page canvas: same base, no plate.
+            crate::app::PanelBackdrop::Unified => plain(b_col),
+            _ => Frame::new().fill(Color32::TRANSPARENT),
         };
         egui::TopBottomPanel::bottom("player")
             .exact_height(BAR_HEIGHT)
@@ -1129,17 +1130,23 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                 app.route(),
                 Route::Settings(SettingsTab::Discord | SettingsTab::Appearance | SettingsTab::GamingMode)
             );
-        if preview_route {
-            // Added first so it lands at the far right edge; the queue panel
-            // (added below) then docks to its left, so the preview spawns NEXT
-            // to the queue instead of replacing it. The top spacer keeps the
-            // preview aligned with the settings content, not the page title.
+        if app.saved.queue_open {
+            egui::SidePanel::right("queue")
+                .exact_width(QUEUE_WIDTH)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(plain(if app.saved.queue_backdrop == crate::app::PanelBackdrop::Unified { b_col } else { p_col }))
+                .show(ctx, |ui| queue_panel(app, ui, &mut out));
+        } else if preview_route {
+            // The live preview and the queue share the same rail slot, so
+            // opening one closes the other. The top spacer keeps the preview
+            // aligned with the settings content, not the page title.
             let preview_w = QUEUE_WIDTH - 24.0;
             egui::SidePanel::right("settings-preview")
                 .exact_width(QUEUE_WIDTH)
                 .resizable(false)
                 .show_separator_line(false)
-                .frame(plain(p_col))
+                .frame(plain(b_col))
                 .show(ctx, |ui| {
                     ui.add_space(156.0);
                     match app.route() {
@@ -1149,14 +1156,6 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                         _ => unreachable!(),
                     }
                 });
-        }
-        if app.saved.queue_open {
-            egui::SidePanel::right("queue")
-                .exact_width(QUEUE_WIDTH)
-                .resizable(false)
-                .show_separator_line(false)
-                .frame(plain(p_col))
-                .show(ctx, |ui| queue_panel(app, ui, &mut out));
         }
         egui::CentralPanel::default()
             .frame(plain(b_col))
@@ -1184,8 +1183,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
 
         if app.saved.bar_layout != BarLayout::Docked {
             let screen = ctx.content_rect();
-            let queue_w = if app.saved.queue_open { QUEUE_WIDTH } else { 0.0 }
-                + if preview_route { QUEUE_WIDTH } else { 0.0 };
+            let queue_w = if app.saved.queue_open || preview_route { QUEUE_WIDTH } else { 0.0 };
             let center_x = (anim_sidebar_w + (screen.right() - queue_w)) / 2.0;
 
             let (deck_w, deck_h) = if app.saved.bar_layout == BarLayout::MiniCapsule {
@@ -3380,9 +3378,28 @@ fn draw_ambient_backdrop(
     }
 }
 
-fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
-    let area = ui.max_rect();
+/// The ambient page canvas painted behind the content. Panels that opt into
+/// the `Unified` backdrop call this too, so the page, queue and player deck
+/// read as one continuous surface. Settings pages skip it: their content sits
+/// directly on the base color.
+fn paint_page_backdrop(ui: &Ui, app: &App, area: Rect) {
+    if matches!(app.route(), Route::Settings(_)) {
+        return;
+    }
+    let route = app.route().clone();
     let base_color = app.saved.theme_base.color();
+    let header_thumb = match app.pages.get(&route) {
+        Some(Load::Ready(page)) => page.header.as_ref().map(|header| header.thumb.clone()),
+        _ => None,
+    };
+    let playing_cover = app.now_playing().map(|item| app.saved.covers.of(item).to_owned());
+    let picture = |source: Option<&str>, size: f32| source.and_then(|thumb| app.art.get(ui.ctx(), thumb, size));
+    let tint = picture(header_thumb.as_deref(), HERO_ART).or_else(|| picture(playing_cover.as_deref(), BAR_ART)).map(|picture| picture.tint);
+    let glow = mood(ui, "ambient", tint, base_color, 0.36);
+    draw_ambient_backdrop(ui, app, area, base_color, glow, header_thumb.as_deref(), playing_cover.as_deref());
+}
+
+fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let route = app.route().clone();
     if let Route::Settings(active_tab) = route {
         settings_header_and_tabs(ui, app, active_tab, out);
@@ -3408,15 +3425,7 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
         return;
     }
 
-    let header_thumb = match app.pages.get(&route) {
-        Some(Load::Ready(page)) => page.header.as_ref().map(|header| header.thumb.clone()),
-        _ => None,
-    };
-    let playing_cover = app.now_playing().map(|item| app.saved.covers.of(item).to_owned());
-    let picture = |source: Option<&str>, size: f32| source.and_then(|thumb| app.art.get(ui.ctx(), thumb, size));
-    let tint = picture(header_thumb.as_deref(), HERO_ART).or_else(|| picture(playing_cover.as_deref(), BAR_ART)).map(|picture| picture.tint);
-    let glow = mood(ui, "ambient", tint, base_color, 0.36);
-    draw_ambient_backdrop(ui, app, area, base_color, glow, header_thumb.as_deref(), playing_cover.as_deref());
+    paint_page_backdrop(ui, app, ui.max_rect());
 
     let loading = matches!(app.pages.get(&route), Some(Load::Loading));
     let shown = entrance(ui, Id::new((&route, loading)));
@@ -5695,12 +5704,13 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
                 "bar-backdrop-seg",
                 icon::DROP,
                 "Player deck background",
-                "Glass is translucent, Solid is opaque, Artwork tints the deck with the playing cover.",
+                "Glass is translucent, Solid is opaque, Artwork tints the deck with the playing cover, Unified melts it into the page canvas.",
                 app.saved.bar_backdrop,
                 &[
                     (crate::app::PanelBackdrop::Glass, "Glass"),
                     (crate::app::PanelBackdrop::Solid, "Solid"),
                     (crate::app::PanelBackdrop::Artwork, "Artwork"),
+                    (crate::app::PanelBackdrop::Unified, "Unified"),
                 ],
             ) {
                 out.push(Action::SetBarBackdrop(backdrop));
@@ -5710,12 +5720,13 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
                 "queue-backdrop-seg",
                 icon::QUEUE,
                 "Queue panel background",
-                "Glass keeps the ambient cover glow, Solid is flat, Artwork washes the panel with the cover.",
+                "Glass keeps the ambient cover glow, Solid is flat, Artwork washes the panel with the cover, Unified shares the page background.",
                 app.saved.queue_backdrop,
                 &[
                     (crate::app::PanelBackdrop::Glass, "Glass"),
                     (crate::app::PanelBackdrop::Solid, "Solid"),
                     (crate::app::PanelBackdrop::Artwork, "Artwork"),
+                    (crate::app::PanelBackdrop::Unified, "Unified"),
                 ],
             ) {
                 out.push(Action::SetQueueBackdrop(backdrop));
@@ -7690,6 +7701,7 @@ fn queue_panel(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
             let haze = Rect::from_min_size(area.min, vec2(area.width(), AMBIENT_HEIGHT.min(area.height())));
             wash(ui.painter(), haze, glow, PANEL);
         }
+        crate::app::PanelBackdrop::Unified => paint_page_backdrop(ui, app, area),
     }
     ui.painter().vline(area.left() + 0.5, area.y_range(), Stroke::new(1.0_f32, veil(0.06)));
     egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
@@ -8195,8 +8207,12 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         .map(|picture| picture.tint);
     let pal_color = app.saved.theme_palette.color();
 
+    // Unified backdrop: the deck melts into the page canvas — no plate, no
+    // shadow, no grain; only the controls float above the shared background.
+    let unified = app.saved.bar_backdrop == crate::app::PanelBackdrop::Unified;
+
     // Floating bar drop shadow so it visibly pops above page content
-    if app.saved.bar_layout != BarLayout::Docked {
+    if app.saved.bar_layout != BarLayout::Docked && !unified {
         ui.painter().rect_filled(deck.translate(vec2(0.0, 4.0)), rounding, Color32::from_black_alpha(85));
         ui.painter().rect_filled(deck.translate(vec2(0.0, 10.0)).expand(2.0), rounding + 2.0, Color32::from_black_alpha(45));
         ui.painter().rect_filled(deck.translate(vec2(0.0, 18.0)).expand(5.0), rounding + 4.0, Color32::from_black_alpha(20));
@@ -8224,7 +8240,9 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         }
     }
     let bg_color = Color32::from_rgba_unmultiplied(deck_base.r(), deck_base.g(), deck_base.b(), (opacity * 255.0) as u8);
-    ui.painter().rect_filled(deck, rounding, bg_color);
+    if !unified {
+        ui.painter().rect_filled(deck, rounding, bg_color);
+    }
     // Light accents (e.g. Monochrome Glass) would wash the whole deck out and
     // hide the white transport controls, so dim light glow tints back down.
     let active_tint = tint
@@ -8233,21 +8251,23 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     let glow_left = mood(ui, "bar-glow-left", active_tint, PANEL, 0.42 * opacity);
     let glow_mid = mood(ui, "bar-glow-mid", active_tint, PANEL, 0.14 * opacity);
     let glow_right = mood(ui, "bar-glow-right", active_tint, PANEL, 0.03 * opacity);
-    if rounding > 0.0 {
-        paint_rounded_gradient(ui.painter(), deck, rounding, glow_left, glow_right);
-    } else {
-        horizontal_wash_3(ui.painter(), deck, glow_left, glow_mid, glow_right);
-    }
-    if app.saved.bar_layout == BarLayout::FloatingPill || app.saved.bar_layout == BarLayout::MiniCapsule {
-        ui.painter().rect_stroke(
-            deck,
-            rounding,
-            Stroke::new(1.0_f32, Color32::from_white_alpha(36)),
-            StrokeKind::Inside,
-        );
-    }
-    if app.saved.bar_grain {
-        paint_glass_grain(ui.painter(), deck, rounding, app.saved.bar_grain_strength);
+    if !unified {
+        if rounding > 0.0 {
+            paint_rounded_gradient(ui.painter(), deck, rounding, glow_left, glow_right);
+        } else {
+            horizontal_wash_3(ui.painter(), deck, glow_left, glow_mid, glow_right);
+        }
+        if app.saved.bar_layout == BarLayout::FloatingPill || app.saved.bar_layout == BarLayout::MiniCapsule {
+            ui.painter().rect_stroke(
+                deck,
+                rounding,
+                Stroke::new(1.0_f32, Color32::from_white_alpha(36)),
+                StrokeKind::Inside,
+            );
+        }
+        if app.saved.bar_grain {
+            paint_glass_grain(ui.painter(), deck, rounding, app.saved.bar_grain_strength);
+        }
     }
 
     if app.saved.bar_layout == BarLayout::MiniCapsule {

@@ -424,17 +424,25 @@ pub enum PanelBackdrop {
     Solid,
     /// Washed with the currently playing cover's tint.
     Artwork,
+    /// Shares the page's ambient canvas so everything reads as one surface.
+    Unified,
 }
 
 #[allow(dead_code)]
 impl PanelBackdrop {
-    pub const ALL: [PanelBackdrop; 3] = [PanelBackdrop::Glass, PanelBackdrop::Solid, PanelBackdrop::Artwork];
+    pub const ALL: [PanelBackdrop; 4] = [
+        PanelBackdrop::Glass,
+        PanelBackdrop::Solid,
+        PanelBackdrop::Artwork,
+        PanelBackdrop::Unified,
+    ];
 
     pub fn name(&self) -> &'static str {
         match self {
             PanelBackdrop::Glass => "Glass",
             PanelBackdrop::Solid => "Solid",
             PanelBackdrop::Artwork => "Artwork",
+            PanelBackdrop::Unified => "Unified",
         }
     }
 }
@@ -1568,6 +1576,9 @@ pub struct App {
     pub auto_game_detected: bool,
     pub original_queue: Option<Vec<Item>>,
     pub settings_preview_open: bool,
+    /// Queue dock state before the live preview took over the rail, restored
+    /// when the preview session ends.
+    pub queue_was_open: bool,
     restart: Option<PathBuf>,
 }
 
@@ -1678,6 +1689,7 @@ impl App {
             auto_game_detected: false,
             original_queue: None,
             settings_preview_open: false,
+            queue_was_open: false,
             restart: None,
         };
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
@@ -2221,8 +2233,8 @@ impl App {
 
     fn drain(&mut self, ctx: &egui::Context) {
         // Leaving a live-preview settings page (tab switch, back navigation,
-        // leaving Settings) ends the preview session. The queue dock is never
-        // touched by the preview; they render side by side.
+        // leaving Settings) ends the preview session and restores the queue
+        // dock if it was open before the preview took over the rail.
         if self.settings_preview_open
             && !matches!(
                 self.route(),
@@ -2230,6 +2242,10 @@ impl App {
             )
         {
             self.settings_preview_open = false;
+            if self.queue_was_open && !self.saved.queue_open {
+                self.saved.queue_open = true;
+            }
+            self.queue_was_open = false;
         }
         while let Ok(event) = self.events.try_recv() {
             match event {
@@ -2624,6 +2640,11 @@ impl App {
             Action::Pin(item) => toggle(&mut self.saved.pinned, item),
             Action::ToggleQueue => {
                 self.saved.queue_open ^= true;
+                if self.saved.queue_open {
+                    // Docking the queue replaces the live preview in the rail.
+                    self.settings_preview_open = false;
+                    self.queue_was_open = false;
+                }
             }
             Action::ToggleSidebar => self.saved.sidebar_open ^= true,
             Action::ToggleQueueRetractable => self.saved.queue_retractable ^= true,
@@ -3409,9 +3430,20 @@ impl App {
                 self.notify("Appearance reset to preset defaults");
             }
             Action::ToggleSettingsPreview => {
-                // The preview docks next to the queue (to its right) instead of
-                // replacing it, so neither panel state needs to be remembered.
-                self.settings_preview_open ^= true;
+                if !self.settings_preview_open {
+                    // Opening the live preview takes over the queue's rail
+                    // slot; remember the queue state so leaving the preview
+                    // can restore it.
+                    self.queue_was_open = self.saved.queue_open;
+                    self.settings_preview_open = true;
+                    self.saved.queue_open = false;
+                } else {
+                    self.settings_preview_open = false;
+                    if self.queue_was_open && !self.saved.queue_open {
+                        self.saved.queue_open = true;
+                    }
+                    self.queue_was_open = false;
+                }
             }
             Action::SetArtworkBgVariant(v) => self.saved.artwork_bg_variant = v,
             Action::SetArtworkBgOpacity(v) => self.saved.artwork_bg_opacity = v.clamp(0.05, 1.0),
