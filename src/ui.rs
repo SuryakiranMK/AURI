@@ -4233,11 +4233,6 @@ fn render_gaming_preview(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32) 
             label(ui, pos2(screen_rect.left() + 12.0, screen_rect.top() + 14.0), Align2::LEFT_CENTER, "14:25", bold(15.0), Color32::WHITE, 80.0);
             label(ui, pos2(screen_rect.left() + 12.0, screen_rect.top() + 28.0), Align2::LEFT_CENTER, "SESSION 00:42 · ZERO LAG", bold(8.0), pal_color, 140.0);
 
-            let status_r = Rect::from_min_size(pos2(screen_rect.right() - 100.0, screen_rect.top() + 10.0), vec2(88.0, 16.0));
-            ui.painter().rect_filled(status_r, 8.0, veil(0.15));
-            ui.painter().circle_filled(pos2(status_r.left() + 8.0, status_r.center().y), 2.5, Color32::from_rgb(34, 197, 94));
-            ui.painter().text(pos2(status_r.left() + 16.0, status_r.center().y), Align2::LEFT_CENTER, "AURI: 18.2 MB", bold(8.0), TEXT);
-
             let current_song = app.saved.current.and_then(|c| app.saved.queue.get(c));
             let live_title = current_song.map_or("Mangal Rang (From \"Ramayana\")", |s| s.title.as_str());
             let live_artist = current_song.map_or("A.R. Rahman, Arijit Singh", |s| s.subtitle.as_str());
@@ -4786,7 +4781,6 @@ fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn performance_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let live_ram = get_live_ram_mb();
     settings_card_panel(
         ui,
         "perf-engine",
@@ -4913,27 +4907,6 @@ fn performance_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             }
         },
     );
-
-    settings_card_panel(ui, "perf-live", "Live memory", "Physical RAM AURI is using right now.", |ui| {
-        let row = row_base(ui, icon::CPU, "Physical working set", &format!("{:.1} MB", live_ram));
-        let btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(104.0, 28.0));
-        let resp = ui.interact(btn, Id::new("perf-purge-now"), Sense::click());
-        let hover = hover_of(ui, &resp);
-        let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
-        ui.painter().rect_filled(btn, 14.0, accent.gamma_multiply(0.18 + 0.12 * hover));
-        ui.painter().rect_stroke(btn, 14.0, Stroke::new(1.0_f32, accent), StrokeKind::Inside);
-        ui.painter().text(
-            btn.center(),
-            Align2::CENTER_CENTER,
-            "Purge now",
-            bold(12.0),
-            if hover > 0.1 { TEXT } else { accent },
-        );
-        describe(&resp, "Purge working set memory now");
-        if resp.clicked() {
-            out.push(Action::PurgeMemory);
-        }
-    });
 }
 
 fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
@@ -6391,40 +6364,6 @@ fn mark(ui: &Ui, center: Pos2, radius: f32) {
     ui.painter().circle_filled(center, radius, accent);
     ui.painter().circle_stroke(center, radius * 0.55, Stroke::new(radius * 0.09, PANEL));
     ui.painter().circle_filled(center, radius * 0.18, PANEL);
-}
-
-#[allow(dead_code)]
-fn get_live_ram_mb() -> f32 {
-    #[cfg(windows)]
-    {
-        #[repr(C)]
-        struct PROCESS_MEMORY_COUNTERS {
-            cb: u32,
-            page_fault_count: u32,
-            peak_working_set_size: usize,
-            working_set_size: usize,
-            quota_peak_paged_pool_usage: usize,
-            quota_paged_pool_usage: usize,
-            quota_peak_non_paged_pool_usage: usize,
-            quota_non_paged_pool_usage: usize,
-            pagefile_usage: usize,
-            peak_pagefile_usage: usize,
-        }
-        #[link(name = "psapi")]
-        unsafe extern "system" {
-            fn GetProcessMemoryInfo(process: isize, ppsmemCounters: *mut PROCESS_MEMORY_COUNTERS, cb: u32) -> i32;
-            fn GetCurrentProcess() -> isize;
-        }
-        let mut pmc = std::mem::MaybeUninit::<PROCESS_MEMORY_COUNTERS>::zeroed();
-        unsafe {
-            let p = pmc.as_mut_ptr();
-            (*p).cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-            if GetProcessMemoryInfo(GetCurrentProcess(), p, (*p).cb) != 0 {
-                return (*p).working_set_size as f32 / (1024.0 * 1024.0);
-            }
-        }
-    }
-    0.0
 }
 
 fn stats_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
@@ -9242,71 +9181,9 @@ pub fn current_local_time_str() -> (String, String) {
     ("16:20".to_string(), "Today".to_string())
 }
 
-#[cfg(windows)]
-fn query_live_telemetry() -> (f32, u32) {
-    #[repr(C)]
-    struct PROCESS_MEMORY_COUNTERS {
-        cb: u32,
-        page_fault_count: u32,
-        peak_working_set_size: usize,
-        working_set_size: usize,
-        quota_peak_paged_pool_usage: usize,
-        quota_paged_pool_usage: usize,
-        quota_peak_non_paged_pool_usage: usize,
-        quota_non_paged_pool_usage: usize,
-        pagefile_usage: usize,
-        peak_pagefile_usage: usize,
-    }
-    #[repr(C)]
-    struct MEMORYSTATUSEX {
-        dw_length: u32,
-        dw_memory_load: u32,
-        ull_total_phys: u64,
-        ull_avail_phys: u64,
-        ull_total_page_file: u64,
-        ull_avail_page_file: u64,
-        ull_total_virtual: u64,
-        ull_avail_virtual: u64,
-        ull_avail_extended_virtual: u64,
-    }
-    #[link(name = "psapi")]
-    unsafe extern "system" {
-        fn GetProcessMemoryInfo(h_process: isize, counters: *mut PROCESS_MEMORY_COUNTERS, cb: u32) -> i32;
-        fn GetCurrentProcess() -> isize;
-    }
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        fn GlobalMemoryStatusEx(stat: *mut MEMORYSTATUSEX) -> i32;
-    }
-    unsafe {
-        let mut counters: PROCESS_MEMORY_COUNTERS = std::mem::zeroed();
-        counters.cb = std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
-        let proc_mb = if GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counters.cb) != 0 {
-            counters.working_set_size as f32 / (1024.0 * 1024.0)
-        } else {
-            18.5
-        };
-        let mut mem_stat: MEMORYSTATUSEX = std::mem::zeroed();
-        mem_stat.dw_length = std::mem::size_of::<MEMORYSTATUSEX>() as u32;
-        let sys_pct = if GlobalMemoryStatusEx(&mut mem_stat) != 0 {
-            mem_stat.dw_memory_load
-        } else {
-            40
-        };
-        (proc_mb, sys_pct)
-    }
-}
-
-#[cfg(not(windows))]
-fn query_live_telemetry() -> (f32, u32) {
-    (18.5, 40)
-}
-
 pub fn draw_game_overlay(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
     let mut actions = Vec::new();
     let pal_color = app.saved.theme_palette.color();
-    let (ram_mb, sys_ram_pct) = query_live_telemetry();
-    let fps = (1.0 / ctx.input(|i| i.predicted_dt).max(0.001)).round() as u32;
 
     egui::CentralPanel::default()
         .frame(Frame::NONE)
@@ -9343,20 +9220,7 @@ pub fn draw_game_overlay(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                 320.0,
             );
 
-            // Top Right Live Hardware Telemetry & Close button
-            let top_right_pill = Rect::from_min_size(pos2(rect.right() - 390.0, rect.top() + 34.0), vec2(320.0, 28.0));
-            ui.painter().rect_filled(top_right_pill, 14.0, veil(0.14));
-            ui.painter().rect_stroke(top_right_pill, 14.0, Stroke::new(1.0_f32, veil(0.10)), StrokeKind::Inside);
-            ui.painter().circle_filled(pos2(top_right_pill.left() + 14.0, top_right_pill.center().y), 3.5, Color32::from_rgb(34, 197, 94));
-            let tele_str = format!("AURI RAM: {:.1} MB · Host RAM: {}% · {} FPS", ram_mb, sys_ram_pct, fps);
-            ui.painter().text(
-                pos2(top_right_pill.left() + 24.0, top_right_pill.center().y),
-                Align2::LEFT_CENTER,
-                tele_str,
-                bold(10.5),
-                TEXT,
-            );
-
+            // Top Right Close button
             let top_close_rect = Rect::from_center_size(pos2(rect.right() - 45.0, rect.top() + 48.0), Vec2::splat(28.0));
             let top_close_resp = ui.interact(top_close_rect, Id::new("game-overlay-top-close"), Sense::click());
             let tc_hov = hover_of(ui, &top_close_resp);
@@ -9550,10 +9414,6 @@ pub fn draw_game_overlay(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                 if clean_resp.clicked() {
                     actions.push(Action::PurgeMemory);
                 }
-
-                let badge_r = Rect::from_min_size(pos2(aud_rect.left() + 126.0, aud_rect.top() + 76.0), vec2(240.0, 24.0));
-                ui.painter().rect_filled(badge_r, 6.0, pal_color.gamma_multiply(0.15));
-                ui.painter().text(badge_r.center(), Align2::CENTER_CENTER, format!("AURI: {:.1} MB · Host: {}% · {} FPS", ram_mb, sys_ram_pct, fps), bold(10.0), pal_color);
             }
 
             // 5. FLOATING WIDGET: QUEUE (Draggable)

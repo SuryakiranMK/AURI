@@ -3211,8 +3211,13 @@ impl App {
                     self.game_mode_start_time = Some(Instant::now());
                     self.apply(Action::PurgeMemory);
                     self.title_bar.enable_transparency();
+                    // Park the window at FULL off-screen size: toggling the
+                    // overlay later only moves the window, it never resizes it.
+                    // Resize-driven surface churn was making the overlay flicker.
+                    let (sw, sh) = screen_size();
+                    let ppp = self.ctx.pixels_per_point().max(0.5);
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(sw / ppp, sh / ppp)));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-32000.0, -32000.0)));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1.0, 1.0)));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
                     self.notify(format!("⚡ Gaming Mode Active ({})", self.saved.game_overlay_hotkey.label()));
                 }
@@ -3246,24 +3251,14 @@ impl App {
                 if self.in_game_mode {
                     self.game_overlay_open = !self.game_overlay_open;
                     if self.game_overlay_open {
-                        #[cfg(windows)]
-                        let (sw, sh) = {
-                            use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
-                            unsafe { (GetSystemMetrics(SM_CXSCREEN) as f32, GetSystemMetrics(SM_CYSCREEN) as f32) }
-                        };
-                        #[cfg(not(windows))]
-                        let (sw, sh) = (1920.0, 1080.0);
-                        let ppp = self.ctx.pixels_per_point().max(0.5);
+                        // Position-only change: the window already sits at full
+                        // screen size while parked. No focus is stolen so the
+                        // game keeps its foreground (and its exclusive swapchain).
                         self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(sw / ppp, sh / ppp)));
                         self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                        self.apply(Action::PurgeMemory);
                     } else {
                         self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-32000.0, -32000.0)));
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1.0, 1.0)));
                         self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
-                        self.apply(Action::PurgeMemory);
                     }
                 }
             }
@@ -3487,6 +3482,19 @@ pub fn is_overlay_hotkey_pressed(hotkey: GameOverlayHotkey) -> bool {
             GameOverlayHotkey::F12 => is_down(VK_F12 as i32),
             GameOverlayHotkey::CtrlF1 => is_down(VK_CONTROL as i32) && is_down(VK_F1 as i32),
         }
+    }
+}
+
+/// Primary monitor size in physical pixels.
+pub fn screen_size() -> (f32, f32) {
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+        unsafe { (GetSystemMetrics(SM_CXSCREEN) as f32, GetSystemMetrics(SM_CYSCREEN) as f32) }
+    }
+    #[cfg(not(windows))]
+    {
+        (1920.0, 1080.0)
     }
 }
 
