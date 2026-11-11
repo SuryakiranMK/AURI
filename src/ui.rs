@@ -4502,20 +4502,7 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
             });
             ui.add_space(6.0);
 
-            ui.horizontal(|ui| {
-                let mut wl_input = ui.data_mut(|d| d.get_temp::<String>(Id::new("temp-game-wl-input")).unwrap_or_default());
-                let edit = egui::TextEdit::singleline(&mut wl_input)
-                    .hint_text("Executable or title (e.g. cs2.exe)")
-                    .desired_width(ui.available_width() - 95.0)
-                    .font(sans(11.5));
-                let res = ui.add(edit);
-                let add_btn = ui.add_sized([85.0, 26.0], egui::Button::new(RichText::new("+ Add Game").font(medium(11.5)).color(pal_color)));
-                if (add_btn.clicked() || (res.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))) && !wl_input.trim().is_empty() {
-                    out.push(Action::AddGameWhitelist(wl_input.clone()));
-                    wl_input.clear();
-                }
-                ui.data_mut(|d| d.insert_temp(Id::new("temp-game-wl-input"), wl_input));
-            });
+            running_app_picker(ui, app, out, true, pal_color);
             ui.add_space(14.0);
 
             // Blacklist subsection
@@ -4540,20 +4527,7 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
             });
             ui.add_space(6.0);
 
-            ui.horizontal(|ui| {
-                let mut bl_input = ui.data_mut(|d| d.get_temp::<String>(Id::new("temp-game-bl-input")).unwrap_or_default());
-                let edit = egui::TextEdit::singleline(&mut bl_input)
-                    .hint_text("Executable (e.g. vlc.exe, msedge.exe)")
-                    .desired_width(ui.available_width() - 95.0)
-                    .font(sans(11.5));
-                let res = ui.add(edit);
-                let add_btn = ui.add_sized([85.0, 26.0], egui::Button::new(RichText::new("+ Add App").font(medium(11.5)).color(MUTED)));
-                if (add_btn.clicked() || (res.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))) && !bl_input.trim().is_empty() {
-                    out.push(Action::AddGameBlacklist(bl_input.clone()));
-                    bl_input.clear();
-                }
-                ui.data_mut(|d| d.insert_temp(Id::new("temp-game-bl-input"), bl_input));
-            });
+            running_app_picker(ui, app, out, false, MUTED);
         });
 
         // Card 3: FLOATING OVERLAY WIDGETS
@@ -4590,6 +4564,103 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
             }
         });
     });
+}
+
+/// "Pick a running app" menu for the gaming whitelist/blacklist: lists the
+/// executables behind all visible top-level windows instead of making the
+/// user type process names by hand.
+fn running_app_picker(ui: &mut Ui, app: &App, out: &mut Vec<Action>, whitelist: bool, tint: Color32) {
+    let label = if whitelist { "Pick a running game" } else { "Pick a running app" };
+    let add_btn = ui.add_sized(
+        [168.0, 26.0],
+        egui::Button::new(RichText::new(format!("⌄ {label}")).font(medium(11.5)).color(tint)),
+    );
+    egui::Popup::menu(&add_btn).gap(6.0).show(|ui| {
+        let apps = running_app_names();
+        if apps.is_empty() {
+            ui.label(RichText::new("No windowed apps detected right now.").font(sans(11.0)).color(MUTED));
+        }
+        egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
+            for name in apps {
+                let known = if whitelist {
+                    app.saved.game_whitelist.iter().any(|g| g.eq_ignore_ascii_case(&name))
+                } else {
+                    app.saved.game_blacklist.iter().any(|g| g.eq_ignore_ascii_case(&name))
+                };
+                let row = menu_row(ui, if known { icon::CHECK } else { "" }, sans(12.5), if known { FAINT } else { TEXT }, &name);
+                if known {
+                    // Already on the list: show the check, do nothing.
+                    continue;
+                }
+                if row.clicked() {
+                    if whitelist {
+                        out.push(Action::AddGameWhitelist(name.clone()));
+                    } else {
+                        out.push(Action::AddGameBlacklist(name.clone()));
+                    }
+                    ui.close();
+                }
+            }
+        });
+    });
+}
+
+/// Lowercase executable names of every running app that owns a visible
+/// top-level window, deduplicated and sorted.
+#[cfg(windows)]
+fn running_app_names() -> Vec<String> {
+    use std::collections::BTreeSet;
+    use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetWindowTextLengthW, GetWindowThreadProcessId, IsWindowVisible,
+    };
+
+    unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> i32 {
+        unsafe {
+            let pids = &mut *(lparam as *mut Vec<u32>);
+            if IsWindowVisible(hwnd) != 0 && GetWindowTextLengthW(hwnd) > 0 {
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(hwnd, &mut pid);
+                if pid != 0 {
+                    pids.push(pid);
+                }
+            }
+        }
+        1
+    }
+
+    unsafe {
+        let mut pids: Vec<u32> = Vec::new();
+        EnumWindows(Some(collect), &mut pids as *mut _ as LPARAM);
+        let mut names: BTreeSet<String> = BTreeSet::new();
+        for pid in pids {
+            let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if process.is_null() {
+                continue;
+            }
+            let mut buf = [0u16; 512];
+            let mut len = buf.len() as u32;
+            if QueryFullProcessImageNameW(process, PROCESS_NAME_WIN32, buf.as_mut_ptr(), &mut len) != 0 {
+                let path = String::from_utf16_lossy(&buf[..len as usize]);
+                if let Some(name) = path.rsplit('\\').next() {
+                    let lower = name.to_ascii_lowercase();
+                    if lower != "auri.exe" {
+                        names.insert(lower);
+                    }
+                }
+            }
+            CloseHandle(process);
+        }
+        names.into_iter().collect()
+    }
+}
+
+#[cfg(not(windows))]
+fn running_app_names() -> Vec<String> {
+    Vec::new()
 }
 
 fn gaming_mode_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
