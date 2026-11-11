@@ -35,7 +35,6 @@ const BAR_HEIGHT: f32 = 84.0;
 #[allow(dead_code)]
 const ACCOUNT_HEIGHT: f32 = 68.0;
 const UPDATE_HEIGHT: f32 = 50.0;
-const TOPBAR_HEIGHT: f32 = 68.0;
 const AMBIENT_HEIGHT: f32 = 380.0;
 const HERO_ART: f32 = 216.0;
 const BAR_ART: f32 = 52.0;
@@ -52,7 +51,6 @@ const HOVER_TIME: f32 = 0.1;
 const MENU_WIDTH: f32 = 248.0;
 const QUEUE_ROW: f32 = 52.0;
 const QUEUE_ART: f32 = 76.0;
-const STICKY_HEIGHT: f32 = 60.0;
 const STAGE_ART: f32 = 512.0;
 const STAGE_LUMINANCE: f32 = 0.14;
 const STAGE_BLUR: u8 = 84;
@@ -2619,36 +2617,6 @@ fn entrance(ui: &Ui, scene: Id) -> f32 {
     progress * (2.0 - progress)
 }
 
-fn sticky(ui: &Ui, strip: Rect, title: &str, playable: bool) -> bool {
-    ui.interact(strip, Id::new("sticky"), Sense::click());
-    let mid = strip.bottom() - STICKY_HEIGHT / 2.0;
-    let mut left = strip.left() + PAGE_MARGIN as f32;
-    let mut clicked = false;
-    if playable {
-        let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
-        let slot = Rect::from_center_size(pos2(left + 20.0, mid), Vec2::splat(40.0));
-        let play = ui.interact(slot, Id::new("sticky-play"), Sense::click());
-        let hover = hover_of(ui, &play);
-        let pressed = if play.is_pointer_button_down_on() { 1.0 } else { 0.0 };
-        ui.painter().circle_filled(
-            slot.center(),
-            19.0 + hover - pressed,
-            accent.lerp_to_gamma(Color32::WHITE, 0.12 * hover),
-        );
-        let icon_color = contrast_text_for(accent);
-        ui.painter()
-            .text(slot.center(), Align2::CENTER_CENTER, icon::PLAY, solid(17.0), icon_color);
-        describe(&play, "Play");
-        clicked = play.clicked();
-        left = slot.right() + 16.0;
-    }
-    let width = strip.right() - left - PAGE_MARGIN as f32;
-    label(ui, pos2(left, mid), Align2::LEFT_CENTER, title, bold(18.0), TEXT, width);
-    ui.painter()
-        .hline(strip.x_range(), strip.bottom() - 0.5, Stroke::new(1.0_f32, veil(0.07)));
-    clicked
-}
-
 #[allow(dead_code)]
 fn draw_rotating_vinyl(painter: &Painter, center: Pos2, radius: f32, angle: f32, mood_color: Color32) {
     painter.circle_filled(center, radius, Color32::from_rgb(14, 15, 18));
@@ -3335,18 +3303,6 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
 
     let loading = matches!(app.pages.get(&route), Some(Load::Loading));
     let shown = entrance(ui, Id::new((&route, loading)));
-    let headline: Option<(String, bool)> = match (&route, app.pages.get(&route)) {
-        (Route::Liked, _) => None,
-        (Route::Recent, _) => Some(("Recently played".to_owned(), !app.saved.recent.is_empty())),
-        (Route::CustomPlaylist(id), _) => {
-            app.saved.playlists.iter().find(|p| &p.id == id).map(|p| (p.name.clone(), !p.songs.is_empty()))
-        }
-        (Route::Browse(_), Some(Load::Ready(page))) => page.header.as_ref().map(|header| {
-            let playable = page.sections.iter().flat_map(|section| &section.items).any(Item::is_song);
-            (header.title.clone(), playable)
-        }),
-        _ => None,
-    };
     let playing_vid = app.now_playing().map(|item| item.video_id.clone()).unwrap_or_default();
     let is_single = matches!(route, Route::Search(_) | Route::Home);
     let paused = app.player.paused();
@@ -3386,7 +3342,7 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     if route_changed {
         scroll_area = scroll_area.vertical_scroll_offset(0.0);
     }
-    let scrolled = scroll_area.show(ui, |ui| {
+    scroll_area.show(ui, |ui| {
         Frame::new().inner_margin(margin).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.set_opacity(shown);
@@ -3427,36 +3383,6 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
             }
         });
     });
-
-    let past_hero = scrolled.state.offset.y > HERO_ART - 36.0;
-    let stuck = ui
-        .ctx()
-        .animate_bool_with_time(Id::new("sticky"), headline.is_some() && past_hero, 0.16);
-    let Some((title, playable)) = headline.as_ref().filter(|_| stuck > 0.0) else {
-        return;
-    };
-    let overlap = ui.visuals().clip_rect_margin;
-    let strip = Rect::from_min_size(
-        pos2(area.left(), area.top() + TOPBAR_HEIGHT - overlap),
-        vec2(area.width(), STICKY_HEIGHT + overlap),
-    );
-    let mut pane = ui.new_child(UiBuilder::new().id_salt("sticky").max_rect(strip));
-    pane.set_clip_rect(strip);
-    pane.set_opacity(stuck);
-    pane.painter().rect_filled(strip, 0.0, base_color);
-    let disable_blurs = app.saved.performance_mode && app.saved.perf_disable_blurs;
-    if !disable_blurs && app.saved.ambient_glow {
-        wash(pane.painter(), strip, glow, base_color);
-    }
-    if sticky(&pane, strip, title, *playable) {
-        let songs = match (&route, app.pages.get(&route)) {
-            (Route::Liked, _) => app.saved.liked.clone(),
-            (Route::Recent, _) => app.saved.recent.clone(),
-            (_, Some(Load::Ready(page))) => page.songs(),
-            _ => Vec::new(),
-        };
-        out.push(Action::Play(songs, 0));
-    }
 }
 
 fn section(ui: &mut Ui, title: &str, height: f32, body: impl FnOnce(&mut Ui)) -> Rect {
