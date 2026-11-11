@@ -3500,6 +3500,63 @@ fn combo_selector<T: Copy + PartialEq>(
     ui.add_space(8.0);
 }
 
+/// Slider row for settings cards: label left, always-visible track + value right.
+/// Returns the new value while it is being changed.
+fn card_slider_row(
+    ui: &mut Ui,
+    id_salt: &str,
+    label_text: &str,
+    desc_text: &str,
+    value: f32,
+    range: std::ops::RangeInclusive<f32>,
+    format: impl Fn(f32) -> String,
+) -> Option<f32> {
+    let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
+    let min = *range.start();
+    let max = *range.end();
+    let mut changed = None;
+    ui.push_id(id_salt, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(label_text).font(medium(13.0)).color(TEXT));
+            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                let (val_slot, _) = ui.allocate_exact_size(vec2(58.0, 18.0), Sense::hover());
+                let galley = ui.painter().layout_no_wrap(format(value), bold(12.5), accent);
+                ui.painter().galley(
+                    pos2(val_slot.right() - galley.size().x, val_slot.center().y - galley.size().y / 2.0),
+                    galley,
+                    accent,
+                );
+                ui.add_space(10.0);
+                let track_w = ui.available_width().min(220.0);
+                let (slot, resp) = ui.allocate_exact_size(vec2(track_w, 22.0), Sense::click_and_drag());
+                point_at(&resp);
+                let cy = slot.center().y;
+                let line = Rect::from_min_max(pos2(slot.left(), cy - 3.0), pos2(slot.right(), cy + 3.0));
+                ui.painter().rect_filled(line, 3.0, Color32::from_rgb(52, 54, 66));
+                let frac = if max > min { ((value - min) / (max - min)).clamp(0.0, 1.0) } else { 0.0 };
+                let fill = Rect::from_min_max(line.min, pos2(line.left() + line.width() * frac, line.max.y));
+                ui.painter().rect_filled(fill, 3.0, accent);
+                let thumb = pos2(line.left() + line.width() * frac, cy);
+                ui.painter().circle_filled(thumb, 7.0, Color32::WHITE);
+                ui.painter().circle_filled(thumb, 3.5, accent);
+                describe(&resp, label_text);
+                if let (true, Some(pointer)) = ((resp.clicked() || resp.dragged()), resp.interact_pointer_pos()) {
+                    let new_frac = ((pointer.x - line.left()) / line.width().max(1.0)).clamp(0.0, 1.0);
+                    let new_value = min + new_frac * (max - min);
+                    if (new_value - value).abs() > f32::EPSILON {
+                        changed = Some(new_value);
+                    }
+                }
+            });
+        });
+        if !desc_text.is_empty() {
+            ui.label(RichText::new(desc_text).font(sans(11.0)).color(MUTED));
+        }
+        ui.add_space(6.0);
+    });
+    changed
+}
+
 fn discord_toggle_row(ui: &mut Ui, label_text: &str, desc_text: &str, on: bool) -> bool {
     let size = vec2(ui.available_width(), 38.0);
     let clicked = switch_row(ui, size, "", label_text, on);
@@ -4113,19 +4170,17 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
                 |val| out.push(Action::SetGameOverlayHotkey(val)),
             );
 
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Backdrop Opacity").font(medium(13.0)).color(TEXT));
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    let mut op = app.saved.game_overlay_opacity;
-                    let slider = egui::Slider::new(&mut op, 0.15..=0.90)
-                        .custom_formatter(|n, _| format!("{:.0}%", n * 100.0))
-                        .show_value(true);
-                    if ui.add(slider).changed() {
-                        out.push(Action::SetGameOverlayOpacity(op));
-                    }
-                });
-            });
-            ui.label(RichText::new("Darkness of translucent game backdrop when overlay is active.").font(sans(10.5)).color(MUTED));
+            if let Some(op) = card_slider_row(
+                ui,
+                "game-overlay-opacity",
+                "Backdrop Opacity",
+                "Darkness of translucent game backdrop when overlay is active.",
+                app.saved.game_overlay_opacity,
+                0.15..=0.90,
+                |v| format!("{:.0}%", v * 100.0),
+            ) {
+                out.push(Action::SetGameOverlayOpacity(op));
+            }
         });
 
         // Card 2: AUTO GAME DETECTION, WHITELIST & BLACKLIST
@@ -5401,19 +5456,17 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
             ui.add_space(8.0);
 
             // Background tint slider
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Background tint").font(medium(12.5)).color(TEXT));
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    let mut tint = app.saved.background_tint_shade;
-                    let slider = egui::Slider::new(&mut tint, 0.0..=1.0)
-                        .custom_formatter(|n, _| format!("{:.0}%", n * 100.0))
-                        .show_value(true);
-                    if ui.add(slider).changed() {
-                        out.push(Action::SetBackgroundTintShade(tint));
-                    }
-                });
-            });
-            ui.label(RichText::new("Shades the greys across background panels.").font(sans(10.5)).color(MUTED));
+            if let Some(tint) = card_slider_row(
+                ui,
+                "background-tint",
+                "Background tint",
+                "Shades the greys across background panels.",
+                app.saved.background_tint_shade,
+                0.0..=1.0,
+                |v| format!("{:.0}%", v * 100.0),
+            ) {
+                out.push(Action::SetBackgroundTintShade(tint));
+            }
         });
 
         // Card 2: EFFECTS & AMBIENT
@@ -5451,32 +5504,30 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
                 ui.add_space(8.0);
 
                 // Backdrop Opacity slider
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Backdrop Opacity").font(sans(11.5)).color(MUTED));
-                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        let mut op = app.saved.artwork_bg_opacity;
-                        let slider = egui::Slider::new(&mut op, 0.05..=0.60)
-                            .custom_formatter(|n, _| format!("{:.0}%", n * 100.0))
-                            .show_value(true);
-                        if ui.add(slider).changed() {
-                            out.push(Action::SetArtworkBgOpacity(op));
-                        }
-                    });
-                });
+                if let Some(op) = card_slider_row(
+                    ui,
+                    "artwork-bg-opacity",
+                    "Backdrop Opacity",
+                    "",
+                    app.saved.artwork_bg_opacity,
+                    0.05..=0.60,
+                    |v| format!("{:.0}%", v * 100.0),
+                ) {
+                    out.push(Action::SetArtworkBgOpacity(op));
+                }
 
                 // Backdrop Blur Radius slider
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Backdrop Blur Radius").font(sans(11.5)).color(MUTED));
-                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        let mut blur = app.saved.artwork_bg_blur;
-                        let slider = egui::Slider::new(&mut blur, 0.1..=1.0)
-                            .custom_formatter(|n, _| format!("{:.0}%", n * 100.0))
-                            .show_value(true);
-                        if ui.add(slider).changed() {
-                            out.push(Action::SetArtworkBgBlur(blur));
-                        }
-                    });
-                });
+                if let Some(blur) = card_slider_row(
+                    ui,
+                    "artwork-bg-blur",
+                    "Backdrop Blur Radius",
+                    "",
+                    app.saved.artwork_bg_blur,
+                    0.1..=1.0,
+                    |v| format!("{:.0}%", v * 100.0),
+                ) {
+                    out.push(Action::SetArtworkBgBlur(blur));
+                }
                 ui.add_space(4.0);
             }
 
@@ -5499,19 +5550,17 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
             }
             ui.add_space(8.0);
 
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Corner radius").font(medium(12.5)).color(TEXT));
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    let mut cr = app.saved.corner_roundness;
-                    let slider = egui::Slider::new(&mut cr, 0.0..=24.0)
-                        .custom_formatter(|n, _| format!("{:.0} px", n))
-                        .show_value(true);
-                    if ui.add(slider).changed() {
-                        out.push(Action::SetCornerRoundness(cr));
-                    }
-                });
-            });
-            ui.label(RichText::new("Controls roundness of cards, buttons, and capsules throughout AURI.").font(sans(10.5)).color(MUTED));
+            if let Some(cr) = card_slider_row(
+                ui,
+                "corner-roundness",
+                "Corner radius",
+                "Controls roundness of cards, buttons, and capsules throughout AURI.",
+                app.saved.corner_roundness,
+                0.0..=24.0,
+                |v| format!("{:.0} px", v),
+            ) {
+                out.push(Action::SetCornerRoundness(cr));
+            }
         });
 
         // Card 3: PLAYER VIEW & NAVIGATION
