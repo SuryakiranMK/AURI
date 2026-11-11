@@ -446,6 +446,7 @@ pub enum BarLayout {
     MiniCapsule,
 }
 
+#[allow(dead_code)]
 impl BarLayout {
     pub const ALL: [BarLayout; 3] = [BarLayout::Docked, BarLayout::FloatingPill, BarLayout::MiniCapsule];
 

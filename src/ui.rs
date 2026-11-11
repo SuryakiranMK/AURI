@@ -4590,44 +4590,51 @@ fn gaming_mode_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn hotkey_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let rows = if hotkeys::SUPPORTED {
-        Command::ALL.len() as f32 * HOTKEY_ROW
-    } else {
-        0.0
-    };
-    let height = 2.0 * CARD_PAD + SETTING_ROW + rows;
-    let card = section(ui, "Global hotkeys", height, |ui| {
-        let size = vec2(ui.available_width(), SETTING_ROW);
-        if !hotkeys::SUPPORTED {
-            let (row, _) = ui.allocate_exact_size(size, Sense::hover());
-            let at = pos2(row.left() + 22.0, row.center().y);
-            ui.painter().text(at, Align2::CENTER_CENTER, icon::KEYBOARD, glyph(17.0), MUTED);
-            let text = "Global hotkeys are only available on Windows for now";
-            let at = pos2(row.left() + 46.0, row.center().y);
-            label(ui, at, Align2::LEFT_CENTER, text, medium(13.5), MUTED, size.x - 58.0);
-            return;
-        }
-        if switch_row(ui, size, icon::KEYBOARD, "Enable global hotkeys", app.saved.hotkeys) {
-            out.push(Action::GlobalHotkeys(!app.saved.hotkeys));
-        }
-        let on = ui.ctx().animate_bool_with_time(Id::new("hotkeys-on"), app.saved.hotkeys, 0.16);
-        ui.multiply_opacity(egui::lerp(0.4..=1.0, on));
-        for command in Command::ALL {
-            hotkey_row(ui, app, command, app.saved.hotkeys, out);
-        }
-    });
-    if !hotkeys::SUPPORTED {
-        return;
+    settings_card_panel(
+        ui,
+        "hotkeys-card",
+        "Global hotkeys",
+        "System-wide shortcuts that keep working while AURI is minimized or in-game.",
+        |ui| {
+            if !hotkeys::SUPPORTED {
+                ui.label(
+                    RichText::new("Global hotkeys are only available on Windows for now.")
+                        .font(sans(12.5))
+                        .color(MUTED),
+                );
+                return;
+            }
+            if toggle_row(ui, "hotkeys-master", icon::KEYBOARD, "Enable global hotkeys", "", app.saved.hotkeys) {
+                out.push(Action::GlobalHotkeys(!app.saved.hotkeys));
+            }
+            let on = ui.ctx().animate_bool_with_time(Id::new("hotkeys-on"), app.saved.hotkeys, 0.16);
+            ui.multiply_opacity(egui::lerp(0.4..=1.0, on));
+            for command in Command::ALL {
+                hotkey_row(ui, app, command, app.saved.hotkeys, out);
+            }
+            if app.saved.hotkey_combos != hotkeys::standard_combos()
+                && button_row(
+                    ui,
+                    "hotkeys-reset",
+                    icon::ARROWS_CLOCKWISE,
+                    "Reset all hotkeys",
+                    "Restore the default key bindings.",
+                    "Reset",
+                    false,
+                )
+            {
+                out.push(Action::ResetHotkeys);
+            }
+        },
+    );
+    if hotkeys::SUPPORTED {
+        ui.label(
+            RichText::new("Each hotkey needs Ctrl, Alt or Shift as a modifier.")
+                .font(sans(12.0))
+                .color(FAINT),
+        );
+        ui.add_space(4.0);
     }
-    let reset_at = pos2(card.right() - 10.0, card.top() - 15.0);
-    if app.saved.hotkey_combos != hotkeys::standard_combos()
-        && text_button(ui, reset_at, Id::new("hotkeys-reset"), "Reset to defaults").clicked()
-    {
-        out.push(Action::ResetHotkeys);
-    }
-    let text = "Hotkeys keep working while AURI is minimized. Each one needs Ctrl, Alt or Shift.";
-    let at = pos2(card.left() + 4.0, card.bottom() + SECTION_GAP / 2.0);
-    label(ui, at, Align2::LEFT_CENTER, text, sans(12.0), FAINT, card.width());
 }
 
 fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
@@ -5889,138 +5896,121 @@ fn appearance_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn player_bar_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let height = 2.0 * CARD_PAD + 7.0 * SETTING_ROW + 230.0;
-    section(ui, "Playback, Deck & Audio Stream (Normal Mode)", height, |ui| {
-        let size = vec2(ui.available_width(), SETTING_ROW);
+    let is_perf = app.saved.performance_mode;
 
-        // Bar Layout Selector: Docked vs Floating Capsule Pill
-        eyebrow(ui, "Deck Structure & Layout", 0.0);
-        let (layout_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
-        let count = BarLayout::ALL.len() as f32;
-        let pill_w = (size.x - 5.0 * (count - 1.0)) / count;
-        for (i, &layout) in BarLayout::ALL.iter().enumerate() {
-            let active = app.saved.bar_layout == layout;
-            let slot = Rect::from_min_size(
-                pos2(layout_row.left() + i as f32 * (pill_w + 5.0), layout_row.top()),
-                vec2(pill_w, 32.0),
-            );
-            let resp = ui.interact(slot, Id::new(("bar-layout-btn", i)), Sense::click());
-            let hover = hover_of(ui, &resp);
-            ui.painter().rect_filled(slot, 8.0, veil(0.06 + 0.05 * hover));
-            if active {
-                ui.painter().rect_stroke(slot, 8.0, Stroke::new(1.5_f32, app.saved.theme_palette.color()), StrokeKind::Inside);
-            }
-            ui.painter().text(slot.center(), Align2::CENTER_CENTER, layout.name(), medium(12.0), if active { TEXT } else { MUTED });
-            if resp.clicked() {
-                out.push(Action::SetBarLayout(layout));
-            }
+    settings_card_panel(ui, "playback-quality", "Audio quality & streaming", "Bitrate used when streaming from YouTube Music.", |ui| {
+        if let Some(quality) = segmented_row(
+            ui,
+            "stream-quality-seg",
+            icon::SPEAKER_HIGH,
+            "Stream quality",
+            "High quality streams 160 kbps Opus; Data saver drops to 70 kbps.",
+            app.saved.stream_quality,
+            &[
+                (StreamQuality::High, "High Quality (160 kbps Opus)"),
+                (StreamQuality::Low, "Data Saver (70 kbps Opus)"),
+            ],
+        ) {
+            out.push(Action::SetStreamQuality(quality));
         }
-        ui.add_space(8.0);
+    });
 
-        // Audio Stream Quality Selector
-        eyebrow(ui, "Audio Quality & Streaming Bitrate", 0.0);
-        let (qual_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
-        let q_count = StreamQuality::ALL.len() as f32;
-        let q_pill_w = (size.x - 5.0 * (q_count - 1.0)) / q_count;
-        for (i, &quality) in StreamQuality::ALL.iter().enumerate() {
-            let active = app.saved.stream_quality == quality;
-            let slot = Rect::from_min_size(
-                pos2(qual_row.left() + i as f32 * (q_pill_w + 5.0), qual_row.top()),
-                vec2(q_pill_w, 32.0),
-            );
-            let resp = ui.interact(slot, Id::new(("stream-quality-btn", i)), Sense::click());
-            let hover = hover_of(ui, &resp);
-            ui.painter().rect_filled(slot, 8.0, veil(0.06 + 0.05 * hover));
-            if active {
-                ui.painter().rect_stroke(slot, 8.0, Stroke::new(1.5_f32, app.saved.theme_palette.color()), StrokeKind::Inside);
-            }
-            ui.painter().text(slot.center(), Align2::CENTER_CENTER, quality.name(), medium(12.0), if active { TEXT } else { MUTED });
-            if resp.clicked() {
-                out.push(Action::SetStreamQuality(quality));
-            }
-        }
-        ui.add_space(8.0);
-
-        // Seamless Crossfade Switch
-        eyebrow(ui, "Track Transitions & Crossfade", 0.0);
-        let is_perf = app.saved.performance_mode;
-        let xfade_title = if is_perf {
-            "Seamless Track Crossfade (Bypassed in High Performance / Gaming Mode)"
+    settings_card_panel(ui, "playback-transitions", "Track transitions", "How AURI moves from one track to the next.", |ui| {
+        let xfade_desc = if is_perf {
+            "Bypassed while Performance Mode is active to save CPU cycles."
         } else {
-            "Seamless Track Crossfade"
+            "Blend the end of each track smoothly into the next."
         };
-        if switch_row(ui, size, icon::WAVEFORM, xfade_title, app.saved.crossfade_enabled) {
+        if toggle_row(
+            ui,
+            "crossfade-toggle",
+            icon::WAVEFORM,
+            "Seamless track crossfade",
+            xfade_desc,
+            app.saved.crossfade_enabled,
+        ) {
             out.push(Action::SetCrossfadeEnabled(!app.saved.crossfade_enabled));
         }
-
         if app.saved.crossfade_enabled {
-            let (xf_row, _) = ui.allocate_exact_size(size, Sense::hover());
-            ui.painter().text(pos2(xf_row.left() + 22.0, xf_row.center().y), Align2::CENTER_CENTER, icon::TIMER, glyph(17.0), MUTED);
-            label(ui, pos2(xf_row.left() + 46.0, xf_row.center().y), Align2::LEFT_CENTER, "Crossfade Duration", medium(13.5), if is_perf { MUTED } else { TEXT }, 170.0);
-            let val_str = format!("{} seconds", app.saved.crossfade_secs);
-            let (changed, new_secs) = settings_slider(
+            if let Some(secs) = slider_row(
                 ui,
-                xf_row,
-                Id::new("crossfade-duration-slider"),
+                "crossfade-duration",
+                icon::TIMER,
+                "Crossfade duration",
+                "",
                 app.saved.crossfade_secs as f32,
                 1.0..=10.0,
-                &val_str,
-                if is_perf { MUTED } else { app.saved.theme_palette.color() },
-            );
-            if !is_perf && changed {
-                out.push(Action::SetCrossfadeSecs(new_secs.round() as u8));
+                |v| format!("{} s", v.round() as u8),
+            ) {
+                if !is_perf {
+                    out.push(Action::SetCrossfadeSecs(secs.round() as u8));
+                }
             }
         }
-        ui.add_space(8.0);
+    });
 
-        // Glassmorphism Switch
-        eyebrow(ui, "Appearance & Translucency", 0.0);
-        if switch_row(ui, size, icon::DROP, "Glassmorphism & Translucency", app.saved.bar_glass) {
+    settings_card_panel(ui, "playback-deck", "Deck appearance", "Layout and glassmorphism of the bottom player deck.", |ui| {
+        if let Some(layout) = segmented_row(
+            ui,
+            "bar-layout-seg",
+            icon::SLIDERS,
+            "Deck layout",
+            "Docked spans the window; capsules float above page content.",
+            app.saved.bar_layout,
+            &[
+                (BarLayout::Docked, "Docked"),
+                (BarLayout::FloatingPill, "Floating Island"),
+                (BarLayout::MiniCapsule, "Mini Capsule"),
+            ],
+        ) {
+            out.push(Action::SetBarLayout(layout));
+        }
+        if toggle_row(
+            ui,
+            "bar-glass",
+            icon::DROP,
+            "Glassmorphism & translucency",
+            "Let page content glow through the deck.",
+            app.saved.bar_glass,
+        ) {
             out.push(Action::SetBarGlass(!app.saved.bar_glass));
         }
-
-        // Bar Opacity Slider
         if app.saved.bar_glass {
-            let (op_row, _) = ui.allocate_exact_size(size, Sense::hover());
-            ui.painter().text(pos2(op_row.left() + 22.0, op_row.center().y), Align2::CENTER_CENTER, icon::SLIDERS, glyph(17.0), MUTED);
-            label(ui, pos2(op_row.left() + 46.0, op_row.center().y), Align2::LEFT_CENTER, "Deck Opacity", medium(13.5), TEXT, 170.0);
-            let val_str = format!("{:.0}%", app.saved.bar_opacity * 100.0);
-            let (changed, new_op) = settings_slider(
+            if let Some(op) = slider_row(
                 ui,
-                op_row,
-                Id::new("bar-opacity-slider"),
+                "bar-opacity",
+                icon::EYEDROPPER,
+                "Deck opacity",
+                "",
                 app.saved.bar_opacity,
                 0.20..=1.0,
-                &val_str,
-                app.saved.theme_palette.color(),
-            );
-            if changed {
-                out.push(Action::SetBarOpacity(new_op));
+                |v| format!("{:.0}%", v * 100.0),
+            ) {
+                out.push(Action::SetBarOpacity(op));
             }
         }
-
-        // Frosted Grain Switch
-        if switch_row(ui, size, icon::SPARKLE, "Frosted Acrylic Grain Filter", app.saved.bar_grain) {
+        if toggle_row(
+            ui,
+            "bar-grain",
+            icon::SPARKLE,
+            "Frosted acrylic grain filter",
+            "Adds a subtle procedural noise texture to the deck.",
+            app.saved.bar_grain,
+        ) {
             out.push(Action::SetBarGrain(!app.saved.bar_grain));
         }
-
-        // Grain Strength Slider
         if app.saved.bar_grain {
-            let (gr_row, _) = ui.allocate_exact_size(size, Sense::hover());
-            ui.painter().text(pos2(gr_row.left() + 22.0, gr_row.center().y), Align2::CENTER_CENTER, icon::WAVEFORM, glyph(17.0), MUTED);
-            label(ui, pos2(gr_row.left() + 46.0, gr_row.center().y), Align2::LEFT_CENTER, "Grain Intensity", medium(13.5), TEXT, 170.0);
-            let val_str = format!("{:.0}%", app.saved.bar_grain_strength * 100.0);
-            let (changed, new_g) = settings_slider(
+            if let Some(strength) = slider_row(
                 ui,
-                gr_row,
-                Id::new("bar-grain-slider"),
+                "bar-grain-strength",
+                icon::WAVEFORM,
+                "Grain intensity",
+                "",
                 app.saved.bar_grain_strength,
                 0.05..=0.35,
-                &val_str,
-                app.saved.theme_palette.color(),
-            );
-            if changed {
-                out.push(Action::SetBarGrainStrength(new_g));
+                |v| format!("{:.0}%", v * 100.0),
+            ) {
+                out.push(Action::SetBarGrainStrength(strength));
             }
         }
     });
@@ -6143,164 +6133,136 @@ fn sync_together_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn lyrics_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let height = 2.0 * CARD_PAD + 4.0 * SETTING_ROW + 30.0;
-    section(ui, "Lyrics Customization", height, |ui| {
-        let size = vec2(ui.available_width(), SETTING_ROW);
-
-        // 1. Karaoke Synchronization Mode
-        if switch_row(ui, size, icon::MICROPHONE_STAGE, "Karaoke Auto-Sync Scrolling", app.saved.lyrics_synced_mode) {
+    settings_card_panel(ui, "lyrics-card", "Synced lyrics", "Karaoke-style timed lyrics while a song plays.", |ui| {
+        if toggle_row(
+            ui,
+            "lyrics-synced",
+            icon::MICROPHONE_STAGE,
+            "Karaoke auto-sync scrolling",
+            "Auto-scrolls to the active singing line.",
+            app.saved.lyrics_synced_mode,
+        ) {
             out.push(Action::SetLyricsSyncedMode(!app.saved.lyrics_synced_mode));
         }
-
-        // 2. Text Alignment (Center vs Left)
-        let (row, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(row.left() + 22.0, row.center().y), Align2::CENTER_CENTER, icon::TEXT_ALIGN_CENTER, glyph(17.0), MUTED);
-        label(ui, pos2(row.left() + 46.0, row.center().y - 8.0), Align2::LEFT_CENTER, "Lyrics Text Alignment", medium(14.0), TEXT, size.x - 240.0);
-        label(ui, pos2(row.left() + 46.0, row.center().y + 9.0), Align2::LEFT_CENTER, if app.saved.lyrics_align_center { "Centered on screen" } else { "Left-aligned layout" }, sans(11.5), FAINT, size.x - 240.0);
-        let align_btn = Rect::from_min_size(pos2(row.right() - 130.0, row.center().y - 14.0), vec2(120.0, 28.0));
-        let align_resp = ui.interact(align_btn, Id::new("lyrics-align-btn"), Sense::click());
-        let align_hov = hover_of(ui, &align_resp);
-        ui.painter().rect_filled(align_btn, 6.0, veil(0.08 + 0.08 * align_hov));
-        ui.painter().rect_stroke(align_btn, 6.0, Stroke::new(1.0_f32, veil(0.18)), StrokeKind::Inside);
-        let align_label = if app.saved.lyrics_align_center { "Center" } else { "Left" };
-        ui.painter().text(align_btn.center(), Align2::CENTER_CENTER, align_label, medium(12.0), TEXT);
-        if align_resp.clicked() {
-            out.push(Action::SetLyricsAlignCenter(!app.saved.lyrics_align_center));
-        }
-
-        // 3. Lyrics Font Size (Small 18px, Standard 24px, Large 30px)
-        let (font_row, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(font_row.left() + 22.0, font_row.center().y), Align2::CENTER_CENTER, icon::TEXT_T, glyph(17.0), MUTED);
-        label(ui, pos2(font_row.left() + 46.0, font_row.center().y - 8.0), Align2::LEFT_CENTER, "Lyrics Font Size", medium(14.0), TEXT, 180.0);
-        label(ui, pos2(font_row.left() + 46.0, font_row.center().y + 9.0), Align2::LEFT_CENTER, &format!("{:.0} px", app.saved.lyrics_font_size), sans(11.5), FAINT, 180.0);
-        let sizes = [(18.0, "Small"), (24.0, "Standard"), (30.0, "Large")];
-        let pal_color = app.saved.theme_palette.color();
-        for (idx, &(sz, lbl)) in sizes.iter().enumerate() {
-            let is_sel = (app.saved.lyrics_font_size - sz).abs() < 1.0;
-            let b_rect = Rect::from_min_size(pos2(font_row.right() - 220.0 + idx as f32 * 74.0, font_row.center().y - 13.0), vec2(68.0, 26.0));
-            let b_resp = ui.interact(b_rect, Id::new(("lyrics-sz-btn", idx)), Sense::click());
-            let b_hov = hover_of(ui, &b_resp);
-            let fill = if is_sel { pal_color.gamma_multiply(0.25) } else { veil(0.04 + 0.06 * b_hov) };
-            ui.painter().rect_filled(b_rect, 6.0, fill);
-            if is_sel {
-                ui.painter().rect_stroke(b_rect, 6.0, Stroke::new(1.2_f32, pal_color), StrokeKind::Inside);
-            }
-            ui.painter().text(b_rect.center(), Align2::CENTER_CENTER, lbl, medium(11.5), if is_sel { TEXT } else { MUTED });
-            if b_resp.clicked() {
-                out.push(Action::SetLyricsFontSize(sz));
-            }
-        }
-
-        // 4. Unsung Line Dimming Opacity Slider
-        let (dim_row, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(dim_row.left() + 22.0, dim_row.center().y), Align2::CENTER_CENTER, icon::EYE_SLASH, glyph(17.0), MUTED);
-        label(ui, pos2(dim_row.left() + 46.0, dim_row.center().y - 8.0), Align2::LEFT_CENTER, "Unsung Line Dimming", medium(13.5), TEXT, 170.0);
-        label(ui, pos2(dim_row.left() + 46.0, dim_row.center().y + 9.0), Align2::LEFT_CENTER, "Inactive line opacity", sans(11.5), FAINT, 170.0);
-        let val_str = format!("{:.0}%", app.saved.lyrics_dim_unsung * 100.0);
-        let (changed, new_dim) = settings_slider(
+        if let Some(align_center) = segmented_row(
             ui,
-            dim_row,
-            Id::new("lyrics-dim-unsung-slider"),
+            "lyrics-align",
+            icon::TEXT_ALIGN_CENTER,
+            "Lyrics text alignment",
+            "",
+            app.saved.lyrics_align_center,
+            &[(true, "Center"), (false, "Left")],
+        ) {
+            out.push(Action::SetLyricsAlignCenter(align_center));
+        }
+        if let Some(size) = segmented_row(
+            ui,
+            "lyrics-font-size",
+            icon::TEXT_T,
+            "Lyrics font size",
+            "",
+            app.saved.lyrics_font_size,
+            &[(18.0, "Small 18 px"), (24.0, "Standard 24 px"), (30.0, "Large 30 px")],
+        ) {
+            out.push(Action::SetLyricsFontSize(size));
+        }
+        if let Some(dim) = slider_row(
+            ui,
+            "lyrics-dim-unsung",
+            icon::EYE_SLASH,
+            "Unsung line dimming",
+            "Opacity of lines that are not being sung.",
             app.saved.lyrics_dim_unsung,
             0.10..=0.80,
-            &val_str,
-            pal_color,
-        );
-        if changed {
-            out.push(Action::SetLyricsDimUnsung(new_dim));
+            |v| format!("{:.0}%", v * 100.0),
+        ) {
+            out.push(Action::SetLyricsDimUnsung(dim));
         }
     });
 }
 
 fn storage_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let height = 2.0 * CARD_PAD + 4.0 * SETTING_ROW + 70.0;
-    let pal_color = app.saved.theme_palette.color();
-    section(ui, "Storage, Cache & Local Downloads", height, |ui| {
-        let size = vec2(ui.available_width(), SETTING_ROW);
-        let (row, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(row.left() + 22.0, row.center().y), Align2::CENTER_CENTER, icon::FOLDER_SIMPLE, glyph(17.0), MUTED);
-        label(ui, pos2(row.left() + 46.0, row.center().y - 9.0), Align2::LEFT_CENTER, "Main Storage & Downloads Directory", medium(13.5), TEXT, size.x - 240.0);
+    settings_card_panel(ui, "storage-dir", "Storage & downloads directory", "Where downloaded songs are saved on disk.", |ui| {
         let display_path = format!("{}\\downloads", app.saved.storage_dir);
-        label(ui, pos2(row.left() + 46.0, row.center().y + 9.0), Align2::LEFT_CENTER, &display_path, sans(12.0), pal_color, size.x - 240.0);
-
-        let btn_w = 80.0;
-        let browse_btn_rect = Rect::from_min_size(pos2(row.right() - 3.0 * btn_w - 12.0, row.center().y - 14.0), vec2(btn_w, 28.0));
-        let browse_resp = ui.interact(browse_btn_rect, Id::new("storage-browse-btn"), Sense::click());
-        let browse_hover = hover_of(ui, &browse_resp);
-        ui.painter().rect_filled(browse_btn_rect, 6.0, veil(0.06 + 0.05 * browse_hover));
-        ui.painter().rect_stroke(browse_btn_rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-        ui.painter().text(browse_btn_rect.center(), Align2::CENTER_CENTER, "Browse...", medium(11.5), TEXT);
-        if browse_resp.clicked() {
-            out.push(Action::BrowseStorageDir);
+        let row = row_base(ui, icon::FOLDER_SIMPLE, "Main storage directory", &display_path);
+        let btn_w = 78.0;
+        let buttons = [
+            ("storage-browse-btn", "Browse", Action::BrowseStorageDir, 3),
+            ("storage-open-btn", "Open", Action::OpenStorageDir, 2),
+            ("storage-reset-btn", "Default", Action::ResetStorageDir, 1),
+        ];
+        for (id, label_str, action, slot) in buttons {
+            let rect = Rect::from_min_size(
+                pos2(row.right() - slot as f32 * btn_w - (slot - 1) as f32 * 6.0, row.center().y - 14.0),
+                vec2(btn_w, 28.0),
+            );
+            let resp = ui.interact(rect, Id::new(id), Sense::click());
+            let hover = hover_of(ui, &resp);
+            ui.painter().rect_filled(rect, 6.0, veil(0.06 + 0.05 * hover));
+            ui.painter().rect_stroke(rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+            ui.painter().text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                label_str,
+                medium(11.5),
+                if hover > 0.1 { TEXT } else { MUTED },
+            );
+            describe(&resp, label_str);
+            if resp.clicked() {
+                out.push(action);
+            }
         }
-
-        let open_btn_rect = Rect::from_min_size(pos2(row.right() - 2.0 * btn_w - 6.0, row.center().y - 14.0), vec2(btn_w, 28.0));
-        let open_resp = ui.interact(open_btn_rect, Id::new("storage-open-btn"), Sense::click());
-        let open_hover = hover_of(ui, &open_resp);
-        ui.painter().rect_filled(open_btn_rect, 6.0, veil(0.06 + 0.05 * open_hover));
-        ui.painter().rect_stroke(open_btn_rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-        ui.painter().text(open_btn_rect.center(), Align2::CENTER_CENTER, "Open", medium(11.5), TEXT);
-        if open_resp.clicked() {
-            out.push(Action::OpenStorageDir);
-        }
-
-        let reset_btn_rect = Rect::from_min_size(pos2(row.right() - btn_w, row.center().y - 14.0), vec2(btn_w, 28.0));
-        let reset_resp = ui.interact(reset_btn_rect, Id::new("storage-reset-btn"), Sense::click());
-        let reset_hover = hover_of(ui, &reset_resp);
-        ui.painter().rect_filled(reset_btn_rect, 6.0, veil(0.06 + 0.05 * reset_hover));
-        ui.painter().rect_stroke(reset_btn_rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-        ui.painter().text(reset_btn_rect.center(), Align2::CENTER_CENTER, "Default", sans(11.5), MUTED);
-        if reset_resp.clicked() {
-            out.push(Action::ResetStorageDir);
-        }
-
-        ui.add_space(8.0);
-
-        // Offline Audio Cache Row
-        let (cache_row, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(cache_row.left() + 22.0, cache_row.center().y), Align2::CENTER_CENTER, icon::CLOUD_ARROW_DOWN, glyph(17.0), MUTED);
-        label(ui, pos2(cache_row.left() + 46.0, cache_row.center().y - 9.0), Align2::LEFT_CENTER, "Offline Audio Cache-as-You-Play", medium(13.5), TEXT, size.x - 240.0);
-        let cached_bytes = crate::cache::cache_size_bytes();
-        let cached_count = crate::cache::count_cached_tracks();
-        let cache_str = format!("{:.1} MB cached ({} songs ready offline)", cached_bytes as f64 / 1_048_576.0, cached_count);
-        label(ui, pos2(cache_row.left() + 46.0, cache_row.center().y + 9.0), Align2::LEFT_CENTER, &cache_str, sans(12.0), pal_color, size.x - 240.0);
-
-        let purge_btn_rect = Rect::from_min_size(pos2(cache_row.right() - 2.0 * btn_w - 6.0, cache_row.center().y - 14.0), vec2(btn_w, 28.0));
-        let purge_resp = ui.interact(purge_btn_rect, Id::new("cache-purge-btn"), Sense::click());
-        let purge_hover = hover_of(ui, &purge_resp);
-        ui.painter().rect_filled(purge_btn_rect, 6.0, veil(0.06 + 0.05 * purge_hover));
-        ui.painter().rect_stroke(purge_btn_rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-        ui.painter().text(purge_btn_rect.center(), Align2::CENTER_CENTER, "Purge", medium(11.5), TEXT);
-        if purge_resp.clicked() {
-            out.push(Action::PurgeAudioCache);
-        }
-
-        let open_cache_rect = Rect::from_min_size(pos2(cache_row.right() - btn_w, cache_row.center().y - 14.0), vec2(btn_w, 28.0));
-        let open_cache_resp = ui.interact(open_cache_rect, Id::new("cache-open-btn"), Sense::click());
-        let open_cache_hover = hover_of(ui, &open_cache_resp);
-        ui.painter().rect_filled(open_cache_rect, 6.0, veil(0.06 + 0.05 * open_cache_hover));
-        ui.painter().rect_stroke(open_cache_rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-        ui.painter().text(open_cache_rect.center(), Align2::CENTER_CENTER, "Explore", sans(11.5), MUTED);
-        if open_cache_resp.clicked() {
-            out.push(Action::OpenCacheDir);
-        }
-
-        let desc = "Songs you stream are transparently cached on disk for instant, zero-latency replay at 0% network usage. Right-click any song to explicitly download as a high-bitrate audio file.";
-        let (_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
-        paragraph(ui, desc, sans(11.5), FAINT, 2);
     });
+
+    settings_card_panel(
+        ui,
+        "storage-cache",
+        "Offline audio cache",
+        "Songs you stream are cached on disk for instant, zero-latency replay at 0% network usage.",
+        |ui| {
+            let cached_bytes = crate::cache::cache_size_bytes();
+            let cached_count = crate::cache::count_cached_tracks();
+            let cache_desc = format!("{:.1} MB cached. {} songs ready offline.", cached_bytes as f64 / 1_048_576.0, cached_count);
+            let row = row_base(ui, icon::CLOUD_ARROW_DOWN, "Cache-as-you-play", &cache_desc);
+            let btn_w = 78.0;
+            let buttons = [
+                ("cache-purge-btn", "Purge", Action::PurgeAudioCache, 2),
+                ("cache-open-btn", "Explore", Action::OpenCacheDir, 1),
+            ];
+            for (id, label_str, action, slot) in buttons {
+                let rect = Rect::from_min_size(
+                    pos2(row.right() - slot as f32 * btn_w - (slot - 1) as f32 * 6.0, row.center().y - 14.0),
+                    vec2(btn_w, 28.0),
+                );
+                let resp = ui.interact(rect, Id::new(id), Sense::click());
+                let hover = hover_of(ui, &resp);
+                ui.painter().rect_filled(rect, 6.0, veil(0.06 + 0.05 * hover));
+                ui.painter().rect_stroke(rect, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+                ui.painter().text(
+                    rect.center(),
+                    Align2::CENTER_CENTER,
+                    label_str,
+                    medium(11.5),
+                    if hover > 0.1 { TEXT } else { MUTED },
+                );
+                describe(&resp, label_str);
+                if resp.clicked() {
+                    out.push(action);
+                }
+            }
+            ui.add_space(4.0);
+            ui.label(
+                RichText::new("Right-click any song to explicitly download it as a high-bitrate audio file.")
+                    .font(sans(11.0))
+                    .color(FAINT),
+            );
+        },
+    );
 }
 
 fn about_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let size = vec2(ui.available_width(), SETTING_ROW);
-    let pal_color = app.saved.theme_palette.color();
-
-    // 1. Version & Release Status Card
-    section(ui, "Application & Release Version", 2.0 * CARD_PAD + SETTING_ROW + 15.0, |ui| {
-        let (row, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(row.left() + 22.0, row.center().y), Align2::CENTER_CENTER, icon::INFO, glyph(17.0), pal_color);
-        let text = format!("AURI v{} (Gaming Edition & Debug Build)", crate::VERSION);
-        label(ui, pos2(row.left() + 46.0, row.center().y), Align2::LEFT_CENTER, &text, medium(13.5), TEXT, size.x - 240.0);
+    settings_card_panel(ui, "about-version", "Application & release", "Version and update status of this build.", |ui| {
+        let row = row_base(ui, icon::INFO, "Version", &format!("AURI v{}", crate::VERSION));
         let right_center = pos2(row.right() - 14.0, row.center().y);
         if app.update.is_some() {
             if text_button(ui, right_center, Id::new("update-btn"), "Update Available").clicked() {
@@ -6311,40 +6273,42 @@ fn about_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         }
     });
 
-    ui.add_space(SECTION_GAP);
-
-    // 2. High-Fidelity Audio Decoding Engine
-    section(ui, "High-Fidelity Audio Engine", 2.0 * CARD_PAD + 2.0 * SETTING_ROW + 30.0, |ui| {
-        let (row1, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(row1.left() + 22.0, row1.center().y), Align2::CENTER_CENTER, icon::SPEAKER_HIGH, glyph(17.0), MUTED);
-        label(ui, pos2(row1.left() + 46.0, row1.center().y - 8.0), Align2::LEFT_CENTER, "Opus & Symphonia Multi-Stream Decoder", medium(13.5), TEXT, size.x - 220.0);
-        label(ui, pos2(row1.left() + 46.0, row1.center().y + 8.0), Align2::LEFT_CENTER, "Native 160 kbps Opus & 70 kbps Data-Saver streaming through Rodio sink", sans(11.5), MUTED, size.x - 220.0);
-
-        let (row2, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(row2.left() + 22.0, row2.center().y), Align2::CENTER_CENTER, icon::SLIDERS, glyph(17.0), MUTED);
-        label(ui, pos2(row2.left() + 46.0, row2.center().y - 8.0), Align2::LEFT_CENTER, "10-Band Biquad IIR DSP Equalizer", medium(13.5), TEXT, size.x - 220.0);
-        label(ui, pos2(row2.left() + 46.0, row2.center().y + 8.0), Align2::LEFT_CENTER, "Peak & shelving filters with software pre-amp and real-time gain normalizer", sans(11.5), MUTED, size.x - 220.0);
+    settings_card_panel(ui, "about-audio", "High-fidelity audio engine", "Pure-Rust decoding and DSP pipeline.", |ui| {
+        row_base(
+            ui,
+            icon::SPEAKER_HIGH,
+            "Opus & Symphonia multi-stream decoder",
+            "Native 160 kbps Opus and 70 kbps Data-Saver streaming through the Rodio sink.",
+        );
+        row_base(
+            ui,
+            icon::SLIDERS,
+            "10-band biquad IIR DSP equalizer",
+            "Peak & shelving filters with software pre-amp and a real-time loudness normalizer.",
+        );
     });
 
-    ui.add_space(SECTION_GAP);
-
-    // 3. Metrix-Style Pure Desktop Overlay Architecture
-    section(ui, "Desktop Overlay & Gaming Architecture", 2.0 * CARD_PAD + 2.0 * SETTING_ROW + 30.0, |ui| {
-        let (row1, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(row1.left() + 22.0, row1.center().y), Align2::CENTER_CENTER, icon::PICTURE_IN_PICTURE, glyph(17.0), MUTED);
-        label(ui, pos2(row1.left() + 46.0, row1.center().y - 8.0), Align2::LEFT_CENTER, "Pure Win32 Desktop Overlay HUD (Metrix-Engine)", medium(13.5), TEXT, size.x - 220.0);
-        label(ui, pos2(row1.left() + 46.0, row1.center().y + 8.0), Align2::LEFT_CENTER, "ITaskbarList3 deletion, WS_EX_TOOLWINDOW, and WS_EX_NOACTIVATE focus-free HUD", sans(11.5), MUTED, size.x - 220.0);
-
-        let (row2, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(row2.left() + 22.0, row2.center().y), Align2::CENTER_CENTER, icon::LIGHTNING, glyph(17.0), MUTED);
-        label(ui, pos2(row2.left() + 46.0, row2.center().y - 8.0), Align2::LEFT_CENTER, "Esports & Gaming Mode Engine", medium(13.5), TEXT, size.x - 220.0);
-        label(ui, pos2(row2.left() + 46.0, row2.center().y + 8.0), Align2::LEFT_CENTER, "Automatic crossfade bypass, frame throttling, and aggressive RAM purges for 0% FPS impact", sans(11.5), MUTED, size.x - 220.0);
+    settings_card_panel(ui, "about-overlay", "Desktop overlay & gaming architecture", "Focus-free floating HUD technology.", |ui| {
+        row_base(
+            ui,
+            icon::PICTURE_IN_PICTURE,
+            "Pure Win32 desktop overlay HUD",
+            "ITaskbarList3 deletion, WS_EX_TOOLWINDOW and WS_EX_NOACTIVATE for a focus-free HUD.",
+        );
+        row_base(
+            ui,
+            icon::LIGHTNING,
+            "Esports & gaming mode engine",
+            "Automatic crossfade bypass, frame throttling and aggressive RAM purges for 0% FPS impact.",
+        );
     });
 
-    ui.add_space(14.0);
-    let (cred, _) = ui.allocate_exact_size(vec2(size.x, 24.0), Sense::hover());
-    let text = "AURI is open source and updates directly from github.com/SuryakiranMK/AURI.";
-    label(ui, pos2(cred.left() + 4.0, cred.center().y), Align2::LEFT_CENTER, text, sans(12.0), FAINT, cred.width());
+    ui.label(
+        RichText::new("AURI is open source and updates directly from github.com/SuryakiranMK/AURI.")
+            .font(sans(12.0))
+            .color(FAINT),
+    );
+    ui.add_space(4.0);
 }
 
 fn general_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
@@ -6543,8 +6507,10 @@ fn settings_body(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<
             appearance_section(ui, app, out);
         }
         SettingsTab::Playback => {
-            player_bar_section(ui, app, out);
-            lyrics_settings_section(ui, app, out);
+            settings_column(ui, |ui| {
+                player_bar_section(ui, app, out);
+                lyrics_settings_section(ui, app, out);
+            });
         }
         SettingsTab::Equalizer => {
             audio_dsp_section(ui, app, out);
@@ -6562,13 +6528,13 @@ fn settings_body(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<
             discord_section(ui, app, out);
         }
         SettingsTab::GlobalHotkeys => {
-            hotkey_section(ui, app, out);
+            settings_column(ui, |ui| hotkey_section(ui, app, out));
         }
         SettingsTab::DataStorage => {
-            storage_section(ui, app, out);
+            settings_column(ui, |ui| storage_section(ui, app, out));
         }
         SettingsTab::About => {
-            about_section(ui, app, out);
+            settings_column(ui, |ui| about_section(ui, app, out));
         }
     }
     ui.add_space(32.0);
