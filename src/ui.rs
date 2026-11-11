@@ -1098,7 +1098,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
         .show(ctx, |ui| top_window_bar(app, ui, &mut out));
 
     if app.saved.bar_layout == BarLayout::Docked {
-        let bar_frame = if app.saved.bar_glass {
+        let bar_frame = if app.saved.bar_backdrop != crate::app::PanelBackdrop::Solid {
             Frame::new().fill(Color32::TRANSPARENT)
         } else {
             plain(p_col)
@@ -3237,6 +3237,80 @@ fn library_page_view(ui: &mut Ui, cx: &mut Cx, saved: &crate::app::Saved) {
     }
 }
 
+/// Tonal character of the frosted (blurred artwork) backdrop variants.
+#[derive(Clone, Copy, PartialEq)]
+enum FrostedTone {
+    Normal,
+    Dark,
+    Bright,
+}
+
+/// Shared painter for the three Frosted variants: the blurred cover is drawn
+/// as a fading mesh, then toned with a dark or milky veil for the variants.
+fn paint_frosted_artwork(
+    ui: &Ui,
+    app: &App,
+    active_cover: Option<&str>,
+    area: Rect,
+    glow: Color32,
+    base_color: Color32,
+    tone: FrostedTone,
+) {
+    let mut drew_texture = false;
+    if let Some(cover_str) = active_cover {
+        if let Some(blur_pic) = app.art.get(ui.ctx(), cover_str, 1.0) {
+            let haze_h = 560.0_f32.min(area.height());
+            let haze = Rect::from_min_size(area.min, vec2(area.width(), haze_h));
+            let alpha = (app.saved.artwork_bg_opacity.clamp(0.05, 0.60) * 255.0) as u8;
+            let mut mesh = egui::Mesh::with_texture(blur_pic.id);
+            let tint_top = Color32::from_white_alpha(alpha);
+            let tint_mid = Color32::from_white_alpha((alpha as f32 * 0.45) as u8);
+            let tint_bot = Color32::from_white_alpha(0);
+
+            let mid_y = haze.top() + haze.height() * 0.60;
+            mesh.vertices.push(egui::epaint::Vertex { pos: haze.left_top(), uv: pos2(0.0, 0.0), color: tint_top });
+            mesh.vertices.push(egui::epaint::Vertex { pos: haze.right_top(), uv: pos2(1.0, 0.0), color: tint_top });
+            mesh.vertices.push(egui::epaint::Vertex { pos: pos2(haze.left(), mid_y), uv: pos2(0.0, 0.60), color: tint_mid });
+            mesh.vertices.push(egui::epaint::Vertex { pos: pos2(haze.right(), mid_y), uv: pos2(1.0, 0.60), color: tint_mid });
+            mesh.vertices.push(egui::epaint::Vertex { pos: haze.left_bottom(), uv: pos2(0.0, 1.0), color: tint_bot });
+            mesh.vertices.push(egui::epaint::Vertex { pos: haze.right_bottom(), uv: pos2(1.0, 1.0), color: tint_bot });
+
+            mesh.indices.extend_from_slice(&[0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4]);
+            ui.painter().add(Shape::mesh(mesh));
+
+            match tone {
+                FrostedTone::Normal => {}
+                // Dark veil fading downward: moody, keeps cover colors readable.
+                FrostedTone::Dark => {
+                    let veil_alpha = (alpha as f32 * 0.95) as u8;
+                    wash(
+                        ui.painter(),
+                        haze,
+                        Color32::from_black_alpha(veil_alpha),
+                        Color32::from_black_alpha(0),
+                    );
+                }
+                // Milky veil: brighter, airier frost with a soft glow at the top.
+                FrostedTone::Bright => {
+                    let veil_alpha = (alpha as f32 * 0.55) as u8;
+                    wash(
+                        ui.painter(),
+                        haze,
+                        Color32::from_white_alpha(veil_alpha),
+                        Color32::from_white_alpha(0),
+                    );
+                }
+            }
+            drew_texture = true;
+        }
+    }
+    if !drew_texture {
+        let haze_h = 420.0_f32.min(area.height());
+        let haze = Rect::from_min_size(area.min, vec2(area.width(), haze_h));
+        wash(ui.painter(), haze, glow, base_color);
+    }
+}
+
 fn draw_ambient_backdrop(
     ui: &Ui,
     app: &App,
@@ -3261,35 +3335,13 @@ fn draw_ambient_backdrop(
                 wash(ui.painter(), haze, glow, base_color);
             }
             crate::app::ArtworkBgVariant::BlurredBackdrop => {
-                let mut drew_texture = false;
-                if let Some(cover_str) = active_cover {
-                    if let Some(blur_pic) = app.art.get(ui.ctx(), cover_str, 1.0) {
-                        let haze_h = 560.0_f32.min(area.height());
-                        let haze = Rect::from_min_size(area.min, vec2(area.width(), haze_h));
-                        let alpha = (app.saved.artwork_bg_opacity.clamp(0.05, 0.60) * 255.0) as u8;
-                        let mut mesh = egui::Mesh::with_texture(blur_pic.id);
-                        let tint_top = Color32::from_white_alpha(alpha);
-                        let tint_mid = Color32::from_white_alpha((alpha as f32 * 0.45) as u8);
-                        let tint_bot = Color32::from_white_alpha(0);
-
-                        let mid_y = haze.top() + haze.height() * 0.60;
-                        mesh.vertices.push(egui::epaint::Vertex { pos: haze.left_top(), uv: pos2(0.0, 0.0), color: tint_top });
-                        mesh.vertices.push(egui::epaint::Vertex { pos: haze.right_top(), uv: pos2(1.0, 0.0), color: tint_top });
-                        mesh.vertices.push(egui::epaint::Vertex { pos: pos2(haze.left(), mid_y), uv: pos2(0.0, 0.60), color: tint_mid });
-                        mesh.vertices.push(egui::epaint::Vertex { pos: pos2(haze.right(), mid_y), uv: pos2(1.0, 0.60), color: tint_mid });
-                        mesh.vertices.push(egui::epaint::Vertex { pos: haze.left_bottom(), uv: pos2(0.0, 1.0), color: tint_bot });
-                        mesh.vertices.push(egui::epaint::Vertex { pos: haze.right_bottom(), uv: pos2(1.0, 1.0), color: tint_bot });
-
-                        mesh.indices.extend_from_slice(&[0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4]);
-                        ui.painter().add(Shape::mesh(mesh));
-                        drew_texture = true;
-                    }
-                }
-                if !drew_texture {
-                    let haze_h = 420.0_f32.min(area.height());
-                    let haze = Rect::from_min_size(area.min, vec2(area.width(), haze_h));
-                    wash(ui.painter(), haze, glow, base_color);
-                }
+                paint_frosted_artwork(ui, app, active_cover, area, glow, base_color, FrostedTone::Normal);
+            }
+            crate::app::ArtworkBgVariant::FrostedDark => {
+                paint_frosted_artwork(ui, app, active_cover, area, glow, base_color, FrostedTone::Dark);
+            }
+            crate::app::ArtworkBgVariant::FrostedBright => {
+                paint_frosted_artwork(ui, app, active_cover, area, glow, base_color, FrostedTone::Bright);
             }
             crate::app::ArtworkBgVariant::AmbientRadialGlow => {
                 let center = pos2(area.center().x, area.top() + 140.0);
@@ -5562,6 +5614,8 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
                     &[
                         (crate::app::ArtworkBgVariant::CanvasTint, "Canvas Tint"),
                         (crate::app::ArtworkBgVariant::BlurredBackdrop, "Frosted Blur"),
+                        (crate::app::ArtworkBgVariant::FrostedDark, "Frosted Dark"),
+                        (crate::app::ArtworkBgVariant::FrostedBright, "Frosted Bright"),
                         (crate::app::ArtworkBgVariant::AmbientRadialGlow, "Radial Glow"),
                         (crate::app::ArtworkBgVariant::MinimalEdgeGlow, "Edge Glow"),
                     ],
@@ -5631,6 +5685,40 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
                 |v| format!("{:.0} px", v),
             ) {
                 out.push(Action::SetCornerRoundness(cr));
+            }
+        });
+
+        // Card 2b: PANEL BACKGROUNDS
+        settings_card_panel(ui, "app-card-panel-bg", "Panel backgrounds", "Backdrop style of the bottom player deck and the queue panel.", |ui| {
+            if let Some(backdrop) = segmented_row(
+                ui,
+                "bar-backdrop-seg",
+                icon::DROP,
+                "Player deck background",
+                "Glass is translucent, Solid is opaque, Artwork tints the deck with the playing cover.",
+                app.saved.bar_backdrop,
+                &[
+                    (crate::app::PanelBackdrop::Glass, "Glass"),
+                    (crate::app::PanelBackdrop::Solid, "Solid"),
+                    (crate::app::PanelBackdrop::Artwork, "Artwork"),
+                ],
+            ) {
+                out.push(Action::SetBarBackdrop(backdrop));
+            }
+            if let Some(backdrop) = segmented_row(
+                ui,
+                "queue-backdrop-seg",
+                icon::QUEUE,
+                "Queue panel background",
+                "Glass keeps the ambient cover glow, Solid is flat, Artwork washes the panel with the cover.",
+                app.saved.queue_backdrop,
+                &[
+                    (crate::app::PanelBackdrop::Glass, "Glass"),
+                    (crate::app::PanelBackdrop::Solid, "Solid"),
+                    (crate::app::PanelBackdrop::Artwork, "Artwork"),
+                ],
+            ) {
+                out.push(Action::SetQueueBackdrop(backdrop));
             }
         });
 
@@ -5737,17 +5825,7 @@ fn player_bar_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         ) {
             out.push(Action::SetBarLayout(layout));
         }
-        if toggle_row(
-            ui,
-            "bar-glass",
-            icon::DROP,
-            "Glassmorphism & translucency",
-            "Let page content glow through the deck.",
-            app.saved.bar_glass,
-        ) {
-            out.push(Action::SetBarGlass(!app.saved.bar_glass));
-        }
-        if app.saved.bar_glass {
+        if app.saved.bar_backdrop != crate::app::PanelBackdrop::Solid {
             if let Some(op) = slider_row(
                 ui,
                 "bar-opacity",
@@ -7602,8 +7680,17 @@ fn queue_panel(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
         .and_then(|cover| app.art.get(ui.ctx(), cover, BAR_ART))
         .map(|picture| picture.tint);
     let glow = mood(ui, "queue-glow", tint, PANEL, 0.3);
-    let haze = Rect::from_min_size(area.min, vec2(area.width(), AMBIENT_HEIGHT.min(area.height())));
-    wash(ui.painter(), haze, glow, PANEL);
+    match app.saved.queue_backdrop {
+        crate::app::PanelBackdrop::Solid => {}
+        crate::app::PanelBackdrop::Artwork => {
+            // Full-height wash tinted by the playing cover, fading into the panel.
+            wash(ui.painter(), area, tint.unwrap_or(glow), PANEL);
+        }
+        crate::app::PanelBackdrop::Glass => {
+            let haze = Rect::from_min_size(area.min, vec2(area.width(), AMBIENT_HEIGHT.min(area.height())));
+            wash(ui.painter(), haze, glow, PANEL);
+        }
+    }
     ui.painter().vline(area.left() + 0.5, area.y_range(), Stroke::new(1.0_f32, veil(0.06)));
     egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
         Frame::new().inner_margin(Margin::same(20)).show(ui, |ui| {
@@ -8115,21 +8202,28 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         ui.painter().rect_filled(deck.translate(vec2(0.0, 18.0)).expand(5.0), rounding + 4.0, Color32::from_black_alpha(20));
     }
 
-    // Deck Background: Glassmorphism / Opacity / Grain
-    let opacity = if app.saved.bar_glass {
-        app.saved.bar_opacity.clamp(0.15, 1.0)
-    } else {
+    // Deck Background: Glass / Solid / Artwork wash + Opacity / Grain
+    let opacity = if app.saved.bar_backdrop == crate::app::PanelBackdrop::Solid {
         1.0
+    } else {
+        app.saved.bar_opacity.clamp(0.15, 1.0)
     };
-    let bg_color = if app.saved.bar_layout != BarLayout::Docked {
+    let mut deck_base = if app.saved.bar_layout != BarLayout::Docked {
         if app.saved.theme_mode == ThemeMode::Light {
-            Color32::from_rgba_unmultiplied(245, 245, 248, (opacity * 255.0) as u8)
+            Color32::from_rgb(245, 245, 248)
         } else {
-            Color32::from_rgba_unmultiplied(20, 21, 26, (opacity * 255.0) as u8)
+            Color32::from_rgb(20, 21, 26)
         }
     } else {
-        Color32::from_rgba_unmultiplied(PANEL.r(), PANEL.g(), PANEL.b(), (opacity * 255.0) as u8)
+        PANEL
     };
+    // Artwork backdrop: blend the deck plate toward the playing cover's tint.
+    if app.saved.bar_backdrop == crate::app::PanelBackdrop::Artwork {
+        if let Some(tint) = tint {
+            deck_base = deck_base.lerp_to_gamma(tint, 0.38);
+        }
+    }
+    let bg_color = Color32::from_rgba_unmultiplied(deck_base.r(), deck_base.g(), deck_base.b(), (opacity * 255.0) as u8);
     ui.painter().rect_filled(deck, rounding, bg_color);
     // Light accents (e.g. Monochrome Glass) would wash the whole deck out and
     // hide the white transport controls, so dim light glow tints back down.

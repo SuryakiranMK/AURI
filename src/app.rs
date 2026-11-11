@@ -385,15 +385,19 @@ pub enum ArtworkBgVariant {
     CanvasTint,
     #[default]
     BlurredBackdrop,
+    FrostedDark,
+    FrostedBright,
     AmbientRadialGlow,
     MinimalEdgeGlow,
 }
 
 #[allow(dead_code)]
 impl ArtworkBgVariant {
-    pub const ALL: [ArtworkBgVariant; 4] = [
+    pub const ALL: [ArtworkBgVariant; 6] = [
         ArtworkBgVariant::CanvasTint,
         ArtworkBgVariant::BlurredBackdrop,
+        ArtworkBgVariant::FrostedDark,
+        ArtworkBgVariant::FrostedBright,
         ArtworkBgVariant::AmbientRadialGlow,
         ArtworkBgVariant::MinimalEdgeGlow,
     ];
@@ -402,8 +406,35 @@ impl ArtworkBgVariant {
         match self {
             ArtworkBgVariant::CanvasTint => "Canvas Tint",
             ArtworkBgVariant::BlurredBackdrop => "Frosted Blur",
+            ArtworkBgVariant::FrostedDark => "Frosted Dark",
+            ArtworkBgVariant::FrostedBright => "Frosted Bright",
             ArtworkBgVariant::AmbientRadialGlow => "Radial Glow",
             ArtworkBgVariant::MinimalEdgeGlow => "Edge Glow",
+        }
+    }
+}
+
+/// Backdrop style shared by the player deck and the queue panel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum PanelBackdrop {
+    /// Translucent glass with the ambient cover glow showing through.
+    #[default]
+    Glass,
+    /// Fully opaque panel color.
+    Solid,
+    /// Washed with the currently playing cover's tint.
+    Artwork,
+}
+
+#[allow(dead_code)]
+impl PanelBackdrop {
+    pub const ALL: [PanelBackdrop; 3] = [PanelBackdrop::Glass, PanelBackdrop::Solid, PanelBackdrop::Artwork];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            PanelBackdrop::Glass => "Glass",
+            PanelBackdrop::Solid => "Solid",
+            PanelBackdrop::Artwork => "Artwork",
         }
     }
 }
@@ -896,14 +927,16 @@ pub struct Saved {
 
     #[serde(default)]
     pub bar_layout: BarLayout,
-    #[serde(default = "default_true")]
-    pub bar_glass: bool,
+    #[serde(default)]
+    pub bar_backdrop: PanelBackdrop,
     #[serde(default = "default_bar_opacity")]
     pub bar_opacity: f32,
     #[serde(default = "default_false")]
     pub bar_grain: bool,
     #[serde(default = "default_bar_grain_strength")]
     pub bar_grain_strength: f32,
+    #[serde(default)]
+    pub queue_backdrop: PanelBackdrop,
 
     #[serde(default = "default_true")]
     pub sidebar_open: bool,
@@ -1181,10 +1214,11 @@ impl Default for Saved {
             mini_variant: MiniVariant::ClassicHud,
             mini_locked: false,
             bar_layout: BarLayout::Docked,
-            bar_glass: true,
+            bar_backdrop: PanelBackdrop::Glass,
             bar_opacity: 0.95,
             bar_grain: false,
             bar_grain_strength: 0.10,
+            queue_backdrop: PanelBackdrop::Glass,
             sidebar_open: true,
             queue_retractable: false,
             mini_capsule_retractable: false,
@@ -1346,7 +1380,8 @@ pub enum Action {
     ToggleMiniLock,
     CheckUpdate,
     SetBarLayout(BarLayout),
-    SetBarGlass(bool),
+    SetBarBackdrop(crate::app::PanelBackdrop),
+    SetQueueBackdrop(crate::app::PanelBackdrop),
     SetBarOpacity(f32),
     SetBarGrain(bool),
     SetBarGrainStrength(f32),
@@ -2997,8 +3032,11 @@ impl App {
             Action::SetBarLayout(layout) => {
                 self.saved.bar_layout = layout;
             }
-            Action::SetBarGlass(glass) => {
-                self.saved.bar_glass = glass;
+            Action::SetBarBackdrop(backdrop) => {
+                self.saved.bar_backdrop = backdrop;
+            }
+            Action::SetQueueBackdrop(backdrop) => {
+                self.saved.queue_backdrop = backdrop;
             }
             Action::SetBarOpacity(opacity) => {
                 self.saved.bar_opacity = opacity.clamp(0.20, 1.0);
@@ -3947,9 +3985,11 @@ mod tests {
 
     #[test]
     fn test_artwork_bg_variant_and_defaults() {
-        assert_eq!(ArtworkBgVariant::ALL.len(), 4);
+        assert_eq!(ArtworkBgVariant::ALL.len(), 6);
         assert_eq!(ArtworkBgVariant::CanvasTint.name(), "Canvas Tint");
         assert_eq!(ArtworkBgVariant::BlurredBackdrop.name(), "Frosted Blur");
+        assert_eq!(ArtworkBgVariant::FrostedDark.name(), "Frosted Dark");
+        assert_eq!(ArtworkBgVariant::FrostedBright.name(), "Frosted Bright");
         assert_eq!(ArtworkBgVariant::AmbientRadialGlow.name(), "Radial Glow");
         assert_eq!(ArtworkBgVariant::MinimalEdgeGlow.name(), "Edge Glow");
 
