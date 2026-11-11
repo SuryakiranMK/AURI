@@ -3561,6 +3561,266 @@ fn card_slider_row(
     changed
 }
 
+// ---------- Unified settings kit: icon-first rows inside auto-height cards ----------
+
+const ROW_PLAIN: f32 = 44.0;
+const ROW_DESC: f32 = 62.0;
+
+/// Centers settings content in the standard 740px column like the old cards did.
+fn settings_column(ui: &mut Ui, body: impl FnOnce(&mut Ui)) {
+    let full = ui.available_width();
+    let width = full.min(SETTINGS_WIDTH);
+    let pad = (full - width).max(0.0) / 2.0;
+    ui.horizontal(|ui| {
+        if pad > 0.0 {
+            ui.add_space(pad);
+        }
+        ui.vertical(|ui| {
+            ui.set_width(width);
+            body(ui);
+        });
+    });
+}
+
+/// Paints the icon + title (+ description) half of a settings row and returns its rect.
+fn row_base(ui: &mut Ui, sym: &str, title: &str, desc: &str) -> Rect {
+    let full = ui.available_width();
+    let height = if desc.is_empty() { ROW_PLAIN } else { ROW_DESC };
+    let (row, _) = ui.allocate_exact_size(vec2(full, height), Sense::hover());
+    let title_y = if desc.is_empty() { row.center().y } else { row.center().y - 10.0 };
+    ui.painter()
+        .text(pos2(row.left() + 6.0, title_y), Align2::CENTER_CENTER, sym, glyph(17.0), MUTED);
+    label(ui, pos2(row.left() + 34.0, title_y), Align2::LEFT_CENTER, title, medium(13.5), TEXT, full - 320.0);
+    if !desc.is_empty() {
+        label(ui, pos2(row.left() + 34.0, title_y + 18.0), Align2::LEFT_CENTER, desc, sans(11.5), MUTED, full - 320.0);
+    }
+    row
+}
+
+/// Icon-first toggle row. Returns true when the switch flips.
+fn toggle_row(ui: &mut Ui, id_salt: &str, sym: &str, title: &str, desc: &str, on: bool) -> bool {
+    let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
+    let full = ui.available_width();
+    let height = if desc.is_empty() { ROW_PLAIN } else { ROW_DESC };
+    let (row, response) = ui.allocate_exact_size(vec2(full, height), Sense::click());
+    let hover = hover_of(ui, &response);
+    ui.painter().rect_filled(row, 8.0, veil(0.05 * hover));
+    let title_y = if desc.is_empty() { row.center().y } else { row.center().y - 10.0 };
+    ui.painter().text(
+        pos2(row.left() + 6.0, title_y),
+        Align2::CENTER_CENTER,
+        sym,
+        glyph(17.0),
+        MUTED.lerp_to_gamma(TEXT, hover),
+    );
+    label(ui, pos2(row.left() + 34.0, title_y), Align2::LEFT_CENTER, title, medium(13.5), TEXT, full - 300.0);
+    if !desc.is_empty() {
+        label(ui, pos2(row.left() + 34.0, title_y + 18.0), Align2::LEFT_CENTER, desc, sans(11.5), MUTED, full - 300.0);
+    }
+    let lit = ui
+        .ctx()
+        .animate_bool_with_time(response.id.with(id_salt).with("switch"), on, HOVER_TIME);
+    let track = Rect::from_center_size(pos2(row.right() - 27.0, row.center().y), vec2(30.0, 18.0));
+    ui.painter().rect_filled(track, 9.0, veil(0.16).lerp_to_gamma(accent, lit));
+    let knob = pos2(egui::lerp(track.left() + 9.0..=track.right() - 9.0, lit), track.center().y);
+    ui.painter().circle_filled(knob, 6.0, TEXT.lerp_to_gamma(contrast_text_for(accent), lit));
+    response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, true, on, title));
+    describe(&response, title);
+    response.clicked()
+}
+
+/// Icon-first slider row with a visible track. Returns the value while it changes.
+fn slider_row(
+    ui: &mut Ui,
+    id_salt: &str,
+    sym: &str,
+    title: &str,
+    desc: &str,
+    value: f32,
+    range: std::ops::RangeInclusive<f32>,
+    format: impl Fn(f32) -> String,
+) -> Option<f32> {
+    let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
+    let row = row_base(ui, sym, title, desc);
+    let val_w = 58.0;
+    let track_right = row.right() - val_w - 12.0;
+    let track_left = (track_right - 220.0).max(row.left() + 150.0);
+    if track_right - track_left < 60.0 {
+        return None;
+    }
+    let line = Rect::from_min_max(
+        pos2(track_left, row.center().y - 3.0),
+        pos2(track_right, row.center().y + 3.0),
+    );
+    let galley = ui.painter().layout_no_wrap(format(value), bold(12.5), accent);
+    ui.painter().galley(
+        pos2(row.right() - galley.size().x, row.center().y - galley.size().y / 2.0),
+        galley,
+        accent,
+    );
+    let resp = ui.interact(line.expand2(vec2(0.0, 9.0)), Id::new(id_salt), Sense::click_and_drag());
+    point_at(&resp);
+    let min = *range.start();
+    let max = *range.end();
+    let frac = if max > min { ((value - min) / (max - min)).clamp(0.0, 1.0) } else { 0.0 };
+    ui.painter().rect_filled(line, 3.0, Color32::from_rgb(52, 54, 66));
+    let fill = Rect::from_min_max(line.min, pos2(line.left() + line.width() * frac, line.max.y));
+    ui.painter().rect_filled(fill, 3.0, accent);
+    let thumb = pos2(line.left() + line.width() * frac, line.center().y);
+    ui.painter().circle_filled(thumb, 7.0, Color32::WHITE);
+    ui.painter().circle_filled(thumb, 3.5, accent);
+    describe(&resp, title);
+    if let (true, Some(pointer)) = ((resp.clicked() || resp.dragged()), resp.interact_pointer_pos()) {
+        let new_frac = ((pointer.x - line.left()) / line.width().max(1.0)).clamp(0.0, 1.0);
+        let new_value = min + new_frac * (max - min);
+        if (new_value - value).abs() > f32::EPSILON {
+            return Some(new_value);
+        }
+    }
+    None
+}
+
+/// Icon-first row whose options render as an equal-width pill group below the title.
+fn segmented_row<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    id_salt: &str,
+    sym: &str,
+    title: &str,
+    desc: &str,
+    current: T,
+    options: &[(T, &str)],
+) -> Option<T> {
+    let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
+    row_base(ui, sym, title, desc);
+    let full = ui.available_width();
+    let count = options.len().max(1) as f32;
+    let pill_w = (full - 6.0 * (count - 1.0)) / count;
+    let (pill_row, _) = ui.allocate_exact_size(vec2(full, 32.0), Sense::hover());
+    let mut picked = None;
+    for (index, &(value, opt_label)) in options.iter().enumerate() {
+        let rect = Rect::from_min_size(
+            pos2(pill_row.left() + index as f32 * (pill_w + 6.0), pill_row.top() + 1.0),
+            vec2(pill_w, 30.0),
+        );
+        let resp = ui.interact(rect, Id::new((id_salt, index)), Sense::click());
+        let hover = hover_of(ui, &resp);
+        let active = current == value;
+        if active {
+            ui.painter().rect_filled(rect, 9.0, accent);
+            ui.painter()
+                .text(rect.center(), Align2::CENTER_CENTER, opt_label, bold(12.0), contrast_text_for(accent));
+        } else {
+            ui.painter().rect_filled(rect, 9.0, veil(0.06 + 0.04 * hover));
+            ui.painter().rect_stroke(rect, 9.0, Stroke::new(1.0_f32, veil(0.10 + 0.06 * hover)), StrokeKind::Inside);
+            ui.painter().text(
+                rect.center(),
+                Align2::CENTER_CENTER,
+                opt_label,
+                medium(12.0),
+                if hover > 0.1 { TEXT } else { MUTED },
+            );
+        }
+        describe(&resp, opt_label);
+        if resp.clicked() {
+            picked = Some(value);
+        }
+    }
+    ui.add_space(4.0);
+    picked
+}
+
+/// Icon-first row with a trailing combo box.
+fn combo_row<T: Copy + PartialEq>(
+    ui: &mut Ui,
+    id_salt: &str,
+    sym: &str,
+    title: &str,
+    desc: &str,
+    current: T,
+    options: &[(T, &str)],
+) -> Option<T> {
+    let mut picked = None;
+    let row = row_base(ui, sym, title, desc);
+    let area = Rect::from_min_max(pos2(row.right() - 210.0, row.top()), pos2(row.right(), row.bottom()));
+    let mut combo = ui.new_child(
+        UiBuilder::new()
+            .id_salt(id_salt)
+            .max_rect(area)
+            .layout(egui::Layout::right_to_left(Align::Center)),
+    );
+    let selected = options
+        .iter()
+        .find(|(value, _)| *value == current)
+        .map(|(_, opt_label)| *opt_label)
+        .unwrap_or("");
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(RichText::new(selected).font(sans(12.0)).color(TEXT))
+        .width(200.0)
+        .show_ui(&mut combo, |ui| {
+            for &(value, opt_label) in options {
+                if ui.selectable_label(value == current, opt_label).clicked() {
+                    picked = Some(value);
+                }
+            }
+        });
+    picked
+}
+
+/// Icon-first row with a trailing pill button. `danger` renders the button in red.
+fn button_row(ui: &mut Ui, id_salt: &str, sym: &str, title: &str, desc: &str, button: &str, danger: bool) -> bool {
+    let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
+    let row = row_base(ui, sym, title, desc);
+    let btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(104.0, 28.0));
+    let resp = ui.interact(btn, Id::new(id_salt), Sense::click());
+    let hover = hover_of(ui, &resp);
+    let tint = if danger {
+        Color32::from_rgb(239, 68, 68)
+    } else {
+        accent
+    };
+    ui.painter().rect_filled(btn, 14.0, tint.gamma_multiply(0.18 + 0.12 * hover));
+    ui.painter().rect_stroke(btn, 14.0, Stroke::new(1.0_f32, tint), StrokeKind::Inside);
+    ui.painter().text(
+        btn.center(),
+        Align2::CENTER_CENTER,
+        button,
+        bold(12.0),
+        if hover > 0.1 { TEXT } else { tint },
+    );
+    describe(&resp, button);
+    resp.clicked()
+}
+
+/// Icon-first row with a visible trailing text input. Returns the text while typing.
+fn input_row(
+    ui: &mut Ui,
+    id_salt: &str,
+    sym: &str,
+    title: &str,
+    desc: &str,
+    hint: &str,
+    secret: bool,
+    width: f32,
+    current: &str,
+) -> Option<String> {
+    let row = row_base(ui, sym, title, desc);
+    let field = Rect::from_min_size(pos2(row.right() - width - 8.0, row.center().y - 15.0), vec2(width, 30.0));
+    ui.painter().rect_filled(field, 7.0, veil(0.07));
+    ui.painter().rect_stroke(field, 7.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+    let mut buffer = current.to_owned();
+    let edit = egui::TextEdit::singleline(&mut buffer)
+        .hint_text(hint)
+        .desired_width(width - 8.0)
+        .font(sans(12.5))
+        .password(secret)
+        .frame(false);
+    let resp = ui.push_id(id_salt, |ui| ui.put(field.shrink2(vec2(5.0, 2.0)), edit));
+    if resp.inner.changed() {
+        return Some(buffer);
+    }
+    None
+}
+
 fn discord_toggle_row(ui: &mut Ui, label_text: &str, desc_text: &str, on: bool) -> bool {
     let size = vec2(ui.available_width(), 38.0);
     let clicked = switch_row(ui, size, "", label_text, on);
@@ -5767,101 +6027,119 @@ fn player_bar_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn sync_together_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let height = 2.0 * CARD_PAD + 5.0 * SETTING_ROW + 120.0;
-    section(ui, "Listen Together & GitHub Sync", height, |ui| {
-        let size = vec2(ui.available_width(), SETTING_ROW);
-
-        // 1. Status row
-        let (row, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(row.left() + 22.0, row.center().y), Align2::CENTER_CENTER, icon::HEADPHONES, glyph(17.0), MUTED);
-        label(ui, pos2(row.left() + 46.0, row.center().y - 9.0), Align2::LEFT_CENTER, "Session Status", medium(14.0), TEXT, size.x - 240.0);
+    let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
+    settings_card_panel(ui, "sync-card", "Listen Together", "Synchronized playback with friends through instant room codes.", |ui| {
+        // 1. Session status with Host / Leave button
+        let connected = app.sync_mode != crate::sync::SyncMode::Disconnected;
         let status_desc = match app.sync_mode {
-            crate::sync::SyncMode::Disconnected => "Disconnected (Host a room or join a friend's room code)".to_owned(),
-            crate::sync::SyncMode::Host => format!("Hosting Room: {} (Broadcasting playback)", app.sync_room),
-            crate::sync::SyncMode::Guest => format!("Syncing in Room: {} (Listening along with friend)", app.sync_room),
+            crate::sync::SyncMode::Disconnected => "Disconnected. Host a room or join a friend's code.".to_owned(),
+            crate::sync::SyncMode::Host => format!("Hosting room {}. Broadcasting playback.", app.sync_room),
+            crate::sync::SyncMode::Guest => format!("Syncing in room {}. Listening along.", app.sync_room),
         };
-        let status_tone = if app.sync_mode != crate::sync::SyncMode::Disconnected { Color32::from_rgb(16, 185, 129) } else { FAINT };
-        label(ui, pos2(row.left() + 46.0, row.center().y + 9.0), Align2::LEFT_CENTER, &status_desc, sans(12.0), status_tone, size.x - 240.0);
-
-        if app.sync_mode != crate::sync::SyncMode::Disconnected {
-            let disc_btn = Rect::from_min_size(pos2(row.right() - 120.0, row.center().y - 14.0), vec2(110.0, 28.0));
-            let disc_resp = ui.interact(disc_btn, Id::new("sync-disconnect-btn"), Sense::click());
-            let disc_hover = hover_of(ui, &disc_resp);
-            ui.painter().rect_filled(disc_btn, 6.0, Color32::from_rgb(244, 63, 94).gamma_multiply(0.20 + 0.15 * disc_hover));
-            ui.painter().rect_stroke(disc_btn, 6.0, Stroke::new(1.0_f32, Color32::from_rgb(244, 63, 94)), StrokeKind::Inside);
-            ui.painter().text(disc_btn.center(), Align2::CENTER_CENTER, "Leave Room", medium(12.0), Color32::WHITE);
-            if disc_resp.clicked() {
-                out.push(Action::StopSync);
-            }
+        let row = row_base(ui, icon::HEADPHONES, "Session status", &status_desc);
+        let host_btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(104.0, 28.0));
+        let host_resp = ui.interact(host_btn, Id::new("sync-host-btn"), Sense::click());
+        let host_hov = hover_of(ui, &host_resp);
+        let (host_label, host_tone) = if connected {
+            ("Leave room", Color32::from_rgb(244, 63, 94))
         } else {
-            let host_btn = Rect::from_min_size(pos2(row.right() - 120.0, row.center().y - 14.0), vec2(110.0, 28.0));
-            let host_resp = ui.interact(host_btn, Id::new("sync-host-btn"), Sense::click());
-            let host_hover = hover_of(ui, &host_resp);
-            let pal_color = app.saved.theme_palette.color();
-            ui.painter().rect_filled(host_btn, 6.0, pal_color.gamma_multiply(0.20 + 0.15 * host_hover));
-            ui.painter().rect_stroke(host_btn, 6.0, Stroke::new(1.0_f32, pal_color), StrokeKind::Inside);
-            ui.painter().text(host_btn.center(), Align2::CENTER_CENTER, "Host Room", medium(12.0), TEXT);
-            if host_resp.clicked() {
-                let code = format!("AURI-{:04}", (std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |e| e.as_millis()) % 10000));
+            ("Host room", accent)
+        };
+        ui.painter().rect_filled(host_btn, 14.0, host_tone.gamma_multiply(0.18 + 0.12 * host_hov));
+        ui.painter().rect_stroke(host_btn, 14.0, Stroke::new(1.0_f32, host_tone), StrokeKind::Inside);
+        ui.painter().text(
+            host_btn.center(),
+            Align2::CENTER_CENTER,
+            host_label,
+            bold(12.0),
+            if host_hov > 0.1 { TEXT } else { host_tone },
+        );
+        describe(&host_resp, host_label);
+        if host_resp.clicked() {
+            if connected {
+                out.push(Action::StopSync);
+            } else {
+                let code = format!(
+                    "AURI-{:04}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map_or(0, |elapsed| elapsed.as_millis() % 10000)
+                );
                 out.push(Action::StartSyncHost(code));
             }
         }
-        ui.add_space(8.0);
 
-        // 2. Join Room row
-        let (j_row, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(j_row.left() + 22.0, j_row.center().y), Align2::CENTER_CENTER, icon::LINK, glyph(17.0), MUTED);
-        label(ui, pos2(j_row.left() + 46.0, j_row.center().y), Align2::LEFT_CENTER, "Join Friend's Room:", medium(14.0), TEXT, 180.0);
-        let input_rect = Rect::from_min_size(pos2(j_row.left() + 210.0, j_row.center().y - 14.0), vec2(size.x - 320.0, 28.0));
-        let join_id = Id::new("sync-join-input");
-        let mut join_code: String = ui.data(|d| d.get_temp(join_id)).unwrap_or_else(|| app.saved.sync_room_code.clone());
-        let input_resp = ui.put(input_rect, egui::TextEdit::singleline(&mut join_code).hint_text("Enter room code (e.g. AURI-1234)...").clip_text(false));
-        if input_resp.changed() {
-            ui.data_mut(|d| d.insert_temp(join_id, join_code.clone()));
+        // 2. Join row: room code input + Join button
+        let join_id = Id::new("sync-join-code");
+        let join_code: String = ui
+            .data(|d| d.get_temp(join_id))
+            .unwrap_or_else(|| app.saved.sync_room_code.clone());
+        let row = row_base(ui, icon::LINK, "Join a friend's room", "");
+        let field = Rect::from_min_size(pos2(row.right() - 330.0, row.center().y - 15.0), vec2(216.0, 30.0));
+        ui.painter().rect_filled(field, 7.0, veil(0.07));
+        ui.painter().rect_stroke(field, 7.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+        let mut buffer = join_code.clone();
+        let edit = egui::TextEdit::singleline(&mut buffer)
+            .hint_text("Room code (e.g. AURI-1234)")
+            .desired_width(204.0)
+            .font(sans(12.5))
+            .frame(false);
+        let edit_resp = ui.put(field.shrink2(vec2(5.0, 2.0)), edit);
+        if edit_resp.changed() {
+            ui.data_mut(|d| d.insert_temp(join_id, buffer.clone()));
         }
-        let join_btn = Rect::from_min_size(pos2(j_row.right() - 100.0, j_row.center().y - 14.0), vec2(90.0, 28.0));
+        let join_btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(104.0, 28.0));
         let join_resp = ui.interact(join_btn, Id::new("sync-join-btn"), Sense::click());
-        let join_hover = hover_of(ui, &join_resp);
-        ui.painter().rect_filled(join_btn, 6.0, veil(0.08 + 0.08 * join_hover));
-        ui.painter().rect_stroke(join_btn, 6.0, Stroke::new(1.0_f32, veil(0.18)), StrokeKind::Inside);
-        ui.painter().text(join_btn.center(), Align2::CENTER_CENTER, "Join", medium(12.0), TEXT);
-        if join_resp.clicked() && !join_code.trim().is_empty() {
-            out.push(Action::StartSyncJoin(join_code.trim().to_uppercase()));
-        }
-        ui.add_space(10.0);
-
-        // 3. GitHub Gist Support Header
-        let (gh_hdr, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
-        ui.painter().text(pos2(gh_hdr.left() + 22.0, gh_hdr.center().y), Align2::CENTER_CENTER, icon::GITHUB_LOGO, glyph(17.0), MUTED);
-        label(ui, pos2(gh_hdr.left() + 46.0, gh_hdr.center().y - 7.0), Align2::LEFT_CENTER, "Persistent GitHub Gist Cloud Sync", medium(14.0), TEXT, size.x - 60.0);
-        label(ui, pos2(gh_hdr.left() + 46.0, gh_hdr.center().y + 10.0), Align2::LEFT_CENTER, "Synchronize room sessions and playback state securely via a private GitHub Gist", sans(11.5), FAINT, size.x - 60.0);
-        ui.add_space(8.0);
-
-        // 4. GitHub Token Row
-        let (tok_row, _) = ui.allocate_exact_size(size, Sense::hover());
-        label(ui, pos2(tok_row.left() + 46.0, tok_row.center().y), Align2::LEFT_CENTER, "GitHub Token (PAT):", sans(13.0), MUTED, 180.0);
-        let tok_rect = Rect::from_min_size(pos2(tok_row.left() + 210.0, tok_row.center().y - 14.0), vec2(size.x - 220.0, 28.0));
-        let tok_id_key = Id::new("sync-tok-id-input");
-        let mut tok_str = ui.data(|d| d.get_temp(tok_id_key)).unwrap_or_else(|| app.saved.sync_github_token.clone());
-        let t_resp = ui.put(tok_rect, egui::TextEdit::singleline(&mut tok_str).hint_text("ghp_... (Personal access token with 'gist' scope)").password(true).clip_text(false));
-        if t_resp.changed() {
-            ui.data_mut(|d| d.insert_temp(tok_id_key, tok_str.clone()));
-            out.push(Action::SetSyncGithubToken(tok_str));
-        }
-        ui.add_space(6.0);
-
-        // 5. GitHub Gist ID Row
-        let (gist_row, _) = ui.allocate_exact_size(size, Sense::hover());
-        label(ui, pos2(gist_row.left() + 46.0, gist_row.center().y), Align2::LEFT_CENTER, "Gist ID (Optional):", sans(13.0), MUTED, 180.0);
-        let gist_rect = Rect::from_min_size(pos2(gist_row.left() + 210.0, gist_row.center().y - 14.0), vec2(size.x - 220.0, 28.0));
-        let gist_id_key = Id::new("sync-gist-id-input");
-        let mut gist_str = ui.data(|d| d.get_temp(gist_id_key)).unwrap_or_else(|| app.saved.sync_gist_id.clone());
-        let g_resp = ui.put(gist_rect, egui::TextEdit::singleline(&mut gist_str).hint_text("Enter Gist ID or leave empty to create automatically").clip_text(false));
-        if g_resp.changed() {
-            ui.data_mut(|d| d.insert_temp(gist_id_key, gist_str.clone()));
-            out.push(Action::SetSyncGistId(gist_str));
+        let join_hov = hover_of(ui, &join_resp);
+        ui.painter().rect_filled(join_btn, 14.0, veil(0.10 + 0.10 * join_hov));
+        ui.painter().rect_stroke(join_btn, 14.0, Stroke::new(1.0_f32, veil(0.18)), StrokeKind::Inside);
+        ui.painter().text(
+            join_btn.center(),
+            Align2::CENTER_CENTER,
+            "Join",
+            bold(12.0),
+            if join_hov > 0.1 { TEXT } else { MUTED },
+        );
+        describe(&join_resp, "Join");
+        if join_resp.clicked() && !buffer.trim().is_empty() {
+            out.push(Action::StartSyncJoin(buffer.trim().to_uppercase()));
         }
     });
+
+    settings_card_panel(
+        ui,
+        "sync-github",
+        "Persistent GitHub Gist sync",
+        "Keep room sessions and playback state in sync through a private GitHub Gist.",
+        |ui| {
+            if let Some(token) = input_row(
+                ui,
+                "sync-token",
+                icon::GITHUB_LOGO,
+                "GitHub token (PAT)",
+                "Personal access token with the 'gist' scope.",
+                "ghp_...",
+                true,
+                340.0,
+                &app.saved.sync_github_token,
+            ) {
+                out.push(Action::SetSyncGithubToken(token));
+            }
+            if let Some(gist) = input_row(
+                ui,
+                "sync-gist",
+                icon::DATABASE,
+                "Gist ID",
+                "Leave empty to create one automatically.",
+                "Gist ID",
+                false,
+                340.0,
+                &app.saved.sync_gist_id,
+            ) {
+                out.push(Action::SetSyncGistId(gist));
+            }
+        },
+    );
 }
 
 fn lyrics_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
@@ -6070,75 +6348,102 @@ fn about_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn general_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let blocked_rows = (app.saved.blocked_artists.len() / 3 + 1) as f32;
-    let height = 2.0 * CARD_PAD + 6.0 * SETTING_ROW + blocked_rows * 36.0 + 50.0;
-    section(ui, "General Preferences & Filters", height, |ui| {
-        let size = vec2(ui.available_width(), SETTING_ROW);
-
-        // 1. Close to tray
-        if switch_row(ui, size, icon::MINUS_CIRCLE, "Minimize to system tray on window close", app.saved.close_to_tray) {
+    settings_card_panel(ui, "general-card", "General preferences", "Everyday window and behaviour options.", |ui| {
+        if toggle_row(
+            ui,
+            "gen-close-to-tray",
+            icon::MINUS_CIRCLE,
+            "Minimize to system tray on window close",
+            "Closing the window keeps AURI running in the tray.",
+            app.saved.close_to_tray,
+        ) {
             out.push(Action::SetCloseToTray(!app.saved.close_to_tray));
         }
-
-        // 2. Desktop Notifications
-        if switch_row(ui, size, icon::BELL, "Show desktop notifications on song track change", app.saved.song_notifications) {
+        if toggle_row(
+            ui,
+            "gen-notifications",
+            icon::BELL,
+            "Desktop notifications on song change",
+            "Show a system toast whenever a new track starts.",
+            app.saved.song_notifications,
+        ) {
             out.push(Action::SetSongNotifications(!app.saved.song_notifications));
         }
-
-        // 3. Launch on startup
-        if switch_row(ui, size, icon::POWER, "Launch AURI automatically when Windows starts", app.saved.launch_on_startup) {
+        if toggle_row(
+            ui,
+            "gen-startup",
+            icon::POWER,
+            "Launch AURI when Windows starts",
+            "Starts AURI automatically when you sign in.",
+            app.saved.launch_on_startup,
+        ) {
             out.push(Action::SetLaunchOnStartup(!app.saved.launch_on_startup));
         }
-
-        // 4. Listening history
-        if switch_row(ui, size, icon::CLOCK_COUNTER_CLOCKWISE, "Track playback history and listening stats", app.saved.history_enabled) {
+        if toggle_row(
+            ui,
+            "gen-history",
+            icon::CLOCK_COUNTER_CLOCKWISE,
+            "Track playback history and listening stats",
+            "Powers Recently played and the Stats page.",
+            app.saved.history_enabled,
+        ) {
             out.push(Action::SetHistoryEnabled(!app.saved.history_enabled));
         }
+    });
 
-        // 5. Blocked Artists Filter
-        eyebrow(ui, "Blocked Artists (Auto-Skip & Radio Filter)", 0.0);
-        let blocked_count = app.saved.blocked_artists.len();
-        if blocked_count == 0 {
-            let (empty_row, _) = ui.allocate_exact_size(vec2(size.x, 30.0), Sense::hover());
-            label(ui, pos2(empty_row.left() + 20.0, empty_row.center().y), Align2::LEFT_CENTER, "No blocked artists. Songs by all artists are permitted.", sans(12.0), MUTED, size.x - 40.0);
-        } else {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
-                for artist in &app.saved.blocked_artists {
-                    let chip_w = (artist.len() as f32 * 7.5 + 40.0).clamp(70.0, 220.0);
-                    let (chip_rect, chip_resp) = ui.allocate_exact_size(vec2(chip_w, 28.0), Sense::click());
-                    let chip_hov = hover_of(ui, &chip_resp);
-                    ui.painter().rect_filled(chip_rect, 6.0, veil(0.08 + 0.05 * chip_hov));
-                    ui.painter().rect_stroke(chip_rect, 6.0, Stroke::new(1.0_f32, veil(0.14)), StrokeKind::Inside);
-                    label(ui, pos2(chip_rect.left() + 10.0, chip_rect.center().y), Align2::LEFT_CENTER, artist, medium(11.5), TEXT, chip_w - 28.0);
-                    let x_center = pos2(chip_rect.right() - 12.0, chip_rect.center().y);
-                    ui.painter().text(x_center, Align2::CENTER_CENTER, icon::X, glyph(12.0), Color32::from_rgb(239, 68, 68));
-                    describe(&chip_resp, &format!("Unblock artist: {}", artist));
-                    if chip_resp.clicked() {
-                        out.push(Action::UnblockArtist(artist.clone()));
+    settings_card_panel(
+        ui,
+        "general-blocked",
+        "Blocked artists",
+        "Songs by blocked artists are auto-skipped and filtered from radio.",
+        |ui| {
+            if app.saved.blocked_artists.is_empty() {
+                ui.label(RichText::new("No blocked artists. Songs by all artists are permitted.").font(sans(12.0)).color(MUTED));
+            } else {
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
+                    for artist in &app.saved.blocked_artists {
+                        let chip_w = (artist.len() as f32 * 7.5 + 40.0).clamp(70.0, 220.0);
+                        let (chip_rect, chip_resp) = ui.allocate_exact_size(vec2(chip_w, 28.0), Sense::click());
+                        let chip_hov = hover_of(ui, &chip_resp);
+                        ui.painter().rect_filled(chip_rect, 6.0, veil(0.08 + 0.05 * chip_hov));
+                        ui.painter().rect_stroke(chip_rect, 6.0, Stroke::new(1.0_f32, veil(0.14)), StrokeKind::Inside);
+                        label(
+                            ui,
+                            pos2(chip_rect.left() + 10.0, chip_rect.center().y),
+                            Align2::LEFT_CENTER,
+                            artist,
+                            medium(11.5),
+                            TEXT,
+                            chip_w - 28.0,
+                        );
+                        ui.painter().text(
+                            pos2(chip_rect.right() - 12.0, chip_rect.center().y),
+                            Align2::CENTER_CENTER,
+                            icon::X,
+                            glyph(12.0),
+                            Color32::from_rgb(239, 68, 68),
+                        );
+                        describe(&chip_resp, &format!("Unblock artist: {}", artist));
+                        if chip_resp.clicked() {
+                            out.push(Action::UnblockArtist(artist.clone()));
+                        }
                     }
-                }
-            });
-            ui.add_space(4.0);
-        }
-        ui.add_space(8.0);
+                });
+            }
+        },
+    );
 
-        // 6. Reset stats button
-        let (row, resp) = ui.allocate_exact_size(size, Sense::click());
-        let hover = hover_of(ui, &resp);
-        if hover > 0.0 {
-            ui.painter().rect_filled(row, 8.0, veil(0.04 * hover));
-        }
-        ui.painter().text(pos2(row.left() + 20.0, row.center().y), Align2::CENTER_CENTER, icon::TRASH, glyph(16.0), Color32::from_rgb(239, 68, 68));
-        label(ui, pos2(row.left() + 38.0, row.center().y - 8.0), Align2::LEFT_CENTER, "Reset Listening Statistics", medium(13.0), TEXT, row.width() - 180.0);
-        label(ui, pos2(row.left() + 38.0, row.center().y + 8.0), Align2::LEFT_CENTER, "Clears all listening history, streaks, and top tracks", sans(11.0), MUTED, row.width() - 180.0);
-        let btn_rect = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 13.0), vec2(100.0, 26.0));
-        let btn_resp = ui.interact(btn_rect, Id::new("reset-stats-btn"), Sense::click());
-        let btn_hov = hover_of(ui, &btn_resp);
-        ui.painter().rect_filled(btn_rect, 6.0, Color32::from_rgba_unmultiplied(239, 68, 68, if btn_hov > 0.1 { 50 } else { 30 }));
-        ui.painter().rect_stroke(btn_rect, 6.0, Stroke::new(1.0_f32, Color32::from_rgb(239, 68, 68)), StrokeKind::Inside);
-        ui.painter().text(btn_rect.center(), Align2::CENTER_CENTER, "Reset Data", bold(11.5), Color32::from_rgb(248, 113, 113));
-        if btn_resp.clicked() || (resp.clicked() && !btn_resp.hovered()) {
+    settings_card_panel(ui, "general-stats", "Listening statistics", "Your listening history lives on this device only.", |ui| {
+        if button_row(
+            ui,
+            "gen-reset-stats",
+            icon::TRASH,
+            "Reset listening statistics",
+            "Clears all listening history, streaks, and top tracks.",
+            "Reset data",
+            true,
+        ) {
             out.push(Action::ClearStats);
         }
     });
@@ -6229,8 +6534,10 @@ fn settings_header_and_tabs(ui: &mut Ui, app: &App, active_tab: SettingsTab, out
 fn settings_body(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<Action>) {
     match active_tab {
         SettingsTab::General => {
-            general_section(ui, app, out);
-            sync_together_section(ui, app, out);
+            settings_column(ui, |ui| {
+                general_section(ui, app, out);
+                sync_together_section(ui, app, out);
+            });
         }
         SettingsTab::Appearance => {
             appearance_section(ui, app, out);
