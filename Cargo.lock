@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "auri"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "async-channel",
  "block2 0.6.2",
