@@ -1124,21 +1124,16 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
             .show_separator_line(false)
             .frame(plain(p_col))
             .show(ctx, |ui| sidebar(app, ui, anim_sidebar_w, &mut out));
-        if app.saved.queue_open {
-            egui::SidePanel::right("queue")
-                .exact_width(QUEUE_WIDTH)
-                .resizable(false)
-                .show_separator_line(false)
-                .frame(plain(p_col))
-                .show(ctx, |ui| queue_panel(app, ui, &mut out));
-        } else if app.settings_preview_open
+        let preview_route = app.settings_preview_open
             && matches!(
                 app.route(),
                 Route::Settings(SettingsTab::Discord | SettingsTab::Appearance | SettingsTab::GamingMode)
-            )
-        {
-            // The settings live preview borrows the queue dock's rail slot, so
-            // the settings column itself never shrinks.
+            );
+        if preview_route {
+            // Added first so it lands at the far right edge; the queue panel
+            // (added below) then docks to its left, so the preview spawns NEXT
+            // to the queue instead of replacing it. The top spacer keeps the
+            // preview aligned with the settings content, not the page title.
             let preview_w = QUEUE_WIDTH - 24.0;
             egui::SidePanel::right("settings-preview")
                 .exact_width(QUEUE_WIDTH)
@@ -1146,7 +1141,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                 .show_separator_line(false)
                 .frame(plain(p_col))
                 .show(ctx, |ui| {
-                    ui.add_space(12.0);
+                    ui.add_space(156.0);
                     match app.route() {
                         Route::Settings(SettingsTab::Discord) => render_discord_preview(ui, app, &mut out, preview_w),
                         Route::Settings(SettingsTab::Appearance) => render_appearance_preview(ui, app, &mut out, preview_w),
@@ -1154,6 +1149,14 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                         _ => unreachable!(),
                     }
                 });
+        }
+        if app.saved.queue_open {
+            egui::SidePanel::right("queue")
+                .exact_width(QUEUE_WIDTH)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(plain(p_col))
+                .show(ctx, |ui| queue_panel(app, ui, &mut out));
         }
         egui::CentralPanel::default()
             .frame(plain(b_col))
@@ -1181,7 +1184,8 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
 
         if app.saved.bar_layout != BarLayout::Docked {
             let screen = ctx.content_rect();
-            let queue_w = if app.saved.queue_open { QUEUE_WIDTH } else { 0.0 };
+            let queue_w = if app.saved.queue_open { QUEUE_WIDTH } else { 0.0 }
+                + if preview_route { QUEUE_WIDTH } else { 0.0 };
             let center_x = (anim_sidebar_w + (screen.right() - queue_w)) / 2.0;
 
             let (deck_w, deck_h) = if app.saved.bar_layout == BarLayout::MiniCapsule {
@@ -3992,7 +3996,7 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
         let btn_rect = Rect::from_min_size(pos2(preview_pill.right() - btn_w, preview_pill.center().y - 13.0), vec2(btn_w, 26.0));
         let btn_resp = ui.interact(btn_rect, Id::new("settings-discord-toggle-preview-btn"), Sense::click());
         let hov = hover_of(ui, &btn_resp);
-        let preview_active = app.settings_preview_open && !app.saved.queue_open;
+        let preview_active = app.settings_preview_open;
         ui.painter().rect_filled(btn_rect, 13.0, if preview_active { pal_color.gamma_multiply(0.20) } else { veil(0.06 + 0.04 * hov) });
         ui.painter().rect_stroke(btn_rect, 13.0, Stroke::new(1.0_f32, if preview_active { pal_color } else { veil(0.12) }), StrokeKind::Inside);
         let text = if preview_active { "✕ Close Preview" } else { "👁 Live Preview ➔" };
@@ -4349,7 +4353,7 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
         let btn_rect = Rect::from_min_size(pos2(preview_pill.right() - btn_w, preview_pill.center().y - 13.0), vec2(btn_w, 26.0));
         let btn_resp = ui.interact(btn_rect, Id::new("settings-gaming-toggle-preview-btn"), Sense::click());
         let hov = hover_of(ui, &btn_resp);
-        let preview_active = app.settings_preview_open && !app.saved.queue_open;
+        let preview_active = app.settings_preview_open;
         ui.painter().rect_filled(btn_rect, 13.0, if preview_active { pal_color.gamma_multiply(0.20) } else { veil(0.06 + 0.04 * hov) });
         ui.painter().rect_stroke(btn_rect, 13.0, Stroke::new(1.0_f32, if preview_active { pal_color } else { veil(0.12) }), StrokeKind::Inside);
         let text = if preview_active { "✕ Close Preview" } else { "👁 Live Preview ➔" };
@@ -5406,7 +5410,7 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
         let btn_rect = Rect::from_min_size(pos2(preview_pill.right() - btn_w, preview_pill.center().y - 13.0), vec2(btn_w, 26.0));
         let btn_resp = ui.interact(btn_rect, Id::new("settings-appearance-toggle-preview-btn"), Sense::click());
         let hov = hover_of(ui, &btn_resp);
-        let preview_active = app.settings_preview_open && !app.saved.queue_open;
+        let preview_active = app.settings_preview_open;
         ui.painter().rect_filled(btn_rect, 13.0, if preview_active { pal_color.gamma_multiply(0.20) } else { veil(0.06 + 0.04 * hov) });
         ui.painter().rect_stroke(btn_rect, 13.0, Stroke::new(1.0_f32, if preview_active { pal_color } else { veil(0.12) }), StrokeKind::Inside);
         let text = if preview_active { "✕ Close Preview" } else { "👁 Live Preview ➔" };
