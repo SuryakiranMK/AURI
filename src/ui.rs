@@ -1161,12 +1161,35 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                 .show_separator_line(false)
                 .frame(plain(p_col))
                 .show(ctx, |ui| queue_panel(app, ui, &mut out));
+        } else if app.settings_preview_open
+            && matches!(
+                app.route(),
+                Route::Settings(SettingsTab::Discord | SettingsTab::Appearance | SettingsTab::GamingMode)
+            )
+        {
+            // The settings live preview borrows the queue dock's rail slot, so
+            // the settings column itself never shrinks.
+            let preview_w = QUEUE_WIDTH - 24.0;
+            egui::SidePanel::right("settings-preview")
+                .exact_width(QUEUE_WIDTH)
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(plain(p_col))
+                .show(ctx, |ui| {
+                    ui.add_space(12.0);
+                    match app.route() {
+                        Route::Settings(SettingsTab::Discord) => render_discord_preview(ui, app, &mut out, preview_w),
+                        Route::Settings(SettingsTab::Appearance) => render_appearance_preview(ui, app, &mut out, preview_w),
+                        Route::Settings(SettingsTab::GamingMode) => render_gaming_preview(ui, app, &mut out, preview_w),
+                        _ => unreachable!(),
+                    }
+                });
         }
         egui::CentralPanel::default()
             .frame(plain(b_col))
             .show(ctx, |ui| content(app, ui, &mut out));
 
-        if app.saved.queue_retractable && !app.saved.queue_open {
+        if app.saved.queue_retractable && !app.saved.queue_open && !app.settings_preview_open {
             let screen = ctx.content_rect();
             let tab_y = screen.center().y - 28.0;
             egui::Area::new(Id::new("queue-expand-tab"))
@@ -1195,7 +1218,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                 (520.0_f32.min(screen.width() - anim_sidebar_w - queue_w - 32.0), 56.0_f32)
             } else {
                 let max_w = (screen.width() - anim_sidebar_w - queue_w - 48.0).clamp(640.0, 1080.0);
-                (max_w.min(screen.width() - 32.0), 66.0_f32)
+                (max_w.min(screen.width() - 32.0), 80.0_f32)
             };
             let deck_bottom = screen.bottom() - 14.0;
             let deck_rect = Rect::from_center_size(pos2(center_x, deck_bottom - deck_h / 2.0), vec2(deck_w, deck_h));
@@ -4119,27 +4142,9 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
 }
 
 fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let full = ui.available_width();
-    let has_preview = app.settings_preview_open && !app.saved.queue_open;
-    let content_w = full.min(if has_preview { 1080.0_f32 } else { 740.0_f32 });
-    let pad = (full - content_w).max(0.0) / 2.0;
-
-    let prev_w = 320.0_f32;
-    let ctrl_w = if has_preview { content_w - prev_w - 24.0 } else { content_w };
-
-    ui.horizontal(|ui| {
-        if pad > 0.0 {
-            ui.add_space(pad);
-        }
-
-        if has_preview {
-            render_discord_controls(ui, app, out, ctrl_w);
-            ui.add_space(24.0);
-            render_discord_preview(ui, app, out, prev_w);
-        } else {
-            render_discord_controls(ui, app, out, content_w);
-        }
-    });
+    // The live preview renders in the right rail (the queue dock slot), so the
+    // controls always keep the full 740px settings column.
+    render_discord_controls(ui, app, out, ui.available_width().min(740.0));
 }
 
 fn render_gaming_preview(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32) {
@@ -4479,27 +4484,9 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
 }
 
 fn gaming_mode_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let full = ui.available_width();
-    let has_preview = app.settings_preview_open && !app.saved.queue_open;
-    let content_w = full.min(if has_preview { 1080.0_f32 } else { 740.0_f32 });
-    let pad = (full - content_w).max(0.0) / 2.0;
-
-    let prev_w = 320.0_f32;
-    let ctrl_w = if has_preview { content_w - prev_w - 24.0 } else { content_w };
-
-    ui.horizontal(|ui| {
-        if pad > 0.0 {
-            ui.add_space(pad);
-        }
-
-        if has_preview {
-            render_gaming_controls(ui, app, out, ctrl_w);
-            ui.add_space(24.0);
-            render_gaming_preview(ui, app, out, prev_w);
-        } else {
-            render_gaming_controls(ui, app, out, content_w);
-        }
-    });
+    // The live preview renders in the right rail (the queue dock slot), so the
+    // controls always keep the full 740px settings column.
+    render_gaming_controls(ui, app, out, ui.available_width().min(740.0));
 }
 
 fn hotkey_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
@@ -5669,27 +5656,9 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
 }
 
 fn appearance_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let full = ui.available_width();
-    let has_preview = app.settings_preview_open && !app.saved.queue_open;
-    let content_w = full.min(if has_preview { 1080.0_f32 } else { 740.0_f32 });
-    let pad = (full - content_w).max(0.0) / 2.0;
-
-    let prev_w = 320.0_f32;
-    let ctrl_w = if has_preview { content_w - prev_w - 24.0 } else { content_w };
-
-    ui.horizontal(|ui| {
-        if pad > 0.0 {
-            ui.add_space(pad);
-        }
-
-        if has_preview {
-            render_appearance_controls(ui, app, out, ctrl_w);
-            ui.add_space(24.0);
-            render_appearance_preview(ui, app, out, prev_w);
-        } else {
-            render_appearance_controls(ui, app, out, content_w);
-        }
-    });
+    // The live preview renders in the right rail (the queue dock slot), so the
+    // controls always keep the full 740px settings column.
+    render_appearance_controls(ui, app, out, ui.available_width().min(740.0));
 }
 
 fn player_bar_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
