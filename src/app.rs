@@ -52,6 +52,7 @@ pub enum SettingsTab {
     Playback,
     Equalizer,
     Performance,
+    GamingMode,
     MiniMode,
     GlobalHotkeys,
     Discord,
@@ -61,12 +62,13 @@ pub enum SettingsTab {
 
 #[allow(dead_code)]
 impl SettingsTab {
-    pub const ALL: [SettingsTab; 10] = [
+    pub const ALL: [SettingsTab; 11] = [
         SettingsTab::General,
         SettingsTab::Appearance,
         SettingsTab::Playback,
         SettingsTab::Equalizer,
         SettingsTab::Performance,
+        SettingsTab::GamingMode,
         SettingsTab::MiniMode,
         SettingsTab::GlobalHotkeys,
         SettingsTab::Discord,
@@ -81,6 +83,7 @@ impl SettingsTab {
             SettingsTab::Playback => "Playback",
             SettingsTab::Equalizer => "Equalizer",
             SettingsTab::Performance => "Performance",
+            SettingsTab::GamingMode => "Gaming Mode",
             SettingsTab::MiniMode => "Mini Mode",
             SettingsTab::GlobalHotkeys => "Global Hotkeys",
             SettingsTab::Discord => "Discord",
@@ -320,6 +323,7 @@ pub enum ThemeBase {
     CharcoalSlate,
 }
 
+#[allow(dead_code)]
 impl ThemeBase {
     pub const ALL: [ThemeBase; 4] = [
         ThemeBase::DarkObsidian,
@@ -371,6 +375,33 @@ impl PerfProfile {
             PerfProfile::Balanced => "Balanced Desktop",
             PerfProfile::Audiophile => "Audiophile Max",
             PerfProfile::Custom => "Custom Profile",
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Debug, Default)]
+pub enum ArtworkBgVariant {
+    #[default]
+    CanvasTint,
+    BlurredBackdrop,
+    AmbientRadialGlow,
+    MinimalEdgeGlow,
+}
+
+impl ArtworkBgVariant {
+    pub const ALL: [ArtworkBgVariant; 4] = [
+        ArtworkBgVariant::CanvasTint,
+        ArtworkBgVariant::BlurredBackdrop,
+        ArtworkBgVariant::AmbientRadialGlow,
+        ArtworkBgVariant::MinimalEdgeGlow,
+    ];
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            ArtworkBgVariant::CanvasTint => "Canvas Tint",
+            ArtworkBgVariant::BlurredBackdrop => "Frosted Blur",
+            ArtworkBgVariant::AmbientRadialGlow => "Radial Glow",
+            ArtworkBgVariant::MinimalEdgeGlow => "Edge Glow",
         }
     }
 }
@@ -545,8 +576,8 @@ pub enum DiscordLineContent {
     Off,
 }
 
+#[allow(dead_code)]
 impl DiscordLineContent {
-    #[allow(dead_code)]
     pub const ALL: [DiscordLineContent; 5] = [
         DiscordLineContent::Title,
         DiscordLineContent::Artist,
@@ -566,9 +597,140 @@ impl DiscordLineContent {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DiscordStatusField {
+    #[default]
+    Line2Artist,
+    Line1Title,
+    Line3Album,
+    ListeningToApp,
+    Custom,
+    None,
+}
+
+#[allow(dead_code)]
+impl DiscordStatusField {
+    pub const ALL: [DiscordStatusField; 6] = [
+        DiscordStatusField::Line2Artist,
+        DiscordStatusField::Line1Title,
+        DiscordStatusField::Line3Album,
+        DiscordStatusField::ListeningToApp,
+        DiscordStatusField::Custom,
+        DiscordStatusField::None,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            DiscordStatusField::Line2Artist => "Line 2 · Artist",
+            DiscordStatusField::Line1Title => "Line 1 · Song title",
+            DiscordStatusField::Line3Album => "Line 3 · Album",
+            DiscordStatusField::ListeningToApp => "Listening to App",
+            DiscordStatusField::Custom => "Custom status text",
+            DiscordStatusField::None => "None",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DiscordButtonOption {
+    #[default]
+    ListenOnYtm,
+    GetApp,
+    None,
+}
+
+#[allow(dead_code)]
+impl DiscordButtonOption {
+    pub const ALL: [DiscordButtonOption; 3] = [
+        DiscordButtonOption::ListenOnYtm,
+        DiscordButtonOption::GetApp,
+        DiscordButtonOption::None,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            DiscordButtonOption::ListenOnYtm => "Listen on YouTube Music",
+            DiscordButtonOption::GetApp => "Get AURI",
+            DiscordButtonOption::None => "None",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum GameOverlayHotkey {
+    #[default]
+    CtrlShiftG,
+    ShiftTab,
+    F9,
+    F12,
+    CtrlF1,
+}
+
+#[allow(dead_code)]
+impl GameOverlayHotkey {
+    pub const ALL: [GameOverlayHotkey; 5] = [
+        GameOverlayHotkey::CtrlShiftG,
+        GameOverlayHotkey::ShiftTab,
+        GameOverlayHotkey::F9,
+        GameOverlayHotkey::F12,
+        GameOverlayHotkey::CtrlF1,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            GameOverlayHotkey::CtrlShiftG => "Ctrl + Shift + G",
+            GameOverlayHotkey::ShiftTab => "Shift + Tab",
+            GameOverlayHotkey::F9 => "F9",
+            GameOverlayHotkey::F12 => "F12",
+            GameOverlayHotkey::CtrlF1 => "Ctrl + F1",
+        }
+    }
+
+    pub fn matches(&self, input: &egui::InputState) -> bool {
+        match self {
+            GameOverlayHotkey::CtrlShiftG => input.modifiers.ctrl && input.modifiers.shift && input.key_pressed(egui::Key::G),
+            GameOverlayHotkey::ShiftTab => input.modifiers.shift && input.key_pressed(egui::Key::Tab),
+            GameOverlayHotkey::F9 => input.key_pressed(egui::Key::F9),
+            GameOverlayHotkey::F12 => input.key_pressed(egui::Key::F12),
+            GameOverlayHotkey::CtrlF1 => input.modifiers.ctrl && input.key_pressed(egui::Key::F1),
+        }
+    }
+}
+
 fn default_discord_line1() -> DiscordLineContent { DiscordLineContent::Title }
 fn default_discord_line2() -> DiscordLineContent { DiscordLineContent::Artist }
 fn default_discord_line3() -> DiscordLineContent { DiscordLineContent::Album }
+fn default_discord_button2() -> DiscordButtonOption { DiscordButtonOption::GetApp }
+fn default_game_overlay_opacity() -> f32 { 0.55 }
+fn default_corner_roundness() -> f32 { 12.0 }
+fn default_background_tint_shade() -> f32 { 0.0 }
+fn default_game_whitelist() -> Vec<String> {
+    vec![
+        "cs2.exe".into(),
+        "valorant.exe".into(),
+        "dota2.exe".into(),
+        "r5apex.exe".into(),
+        "fortniteclient-win64-shipping.exe".into(),
+        "overwatch.exe".into(),
+        "gta5.exe".into(),
+    ]
+}
+fn default_game_blacklist() -> Vec<String> {
+    vec![
+        "chrome.exe".into(),
+        "msedge.exe".into(),
+        "firefox.exe".into(),
+        "discord.exe".into(),
+        "code.exe".into(),
+        "vlc.exe".into(),
+        "explorer.exe".into(),
+        "spotify.exe".into(),
+        "auri.exe".into(),
+    ]
+}
+fn default_game_music_pos() -> [f32; 2] { [60.0, 105.0] }
+fn default_game_audio_pos() -> [f32; 2] { [60.0, 335.0] }
+fn default_game_queue_pos() -> [f32; 2] { [760.0, 105.0] }
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
@@ -596,6 +758,8 @@ pub struct Saved {
     pub hotkeys: bool,
     pub hotkey_combos: [Option<Combo>; 5],
     pub auto_purge_ram: bool,
+    #[serde(default = "default_false")]
+    pub auto_game_mode: bool,
     #[serde(default = "default_false")]
     pub performance_mode: bool,
     #[serde(default = "default_true")]
@@ -628,6 +792,51 @@ pub struct Saved {
     pub discord_button_listen: bool,
     #[serde(default = "default_true")]
     pub discord_button_app: bool,
+    #[serde(default = "default_false")]
+    pub discord_show_when_paused: bool,
+    #[serde(default = "default_false")]
+    pub discord_hide_details: bool,
+    #[serde(default)]
+    pub discord_status_text: DiscordStatusField,
+    #[serde(default)]
+    pub discord_app_name: String,
+    #[serde(default = "default_true")]
+    pub discord_album_art: bool,
+    #[serde(default = "default_true")]
+    pub discord_provider_badge: bool,
+    #[serde(default = "default_true")]
+    pub discord_progress_bar: bool,
+    #[serde(default = "default_false")]
+    pub discord_line1_clickable: bool,
+    #[serde(default = "default_false")]
+    pub discord_line2_clickable: bool,
+    #[serde(default = "default_false")]
+    pub discord_art_clickable: bool,
+    #[serde(default)]
+    pub discord_button1: DiscordButtonOption,
+    #[serde(default = "default_discord_button2")]
+    pub discord_button2: DiscordButtonOption,
+
+    #[serde(default)]
+    pub game_overlay_hotkey: GameOverlayHotkey,
+    #[serde(default = "default_game_overlay_opacity")]
+    pub game_overlay_opacity: f32,
+    #[serde(default = "default_true")]
+    pub game_show_music_widget: bool,
+    #[serde(default = "default_true")]
+    pub game_show_audio_widget: bool,
+    #[serde(default = "default_true")]
+    pub game_show_queue_widget: bool,
+    #[serde(default = "default_game_whitelist")]
+    pub game_whitelist: Vec<String>,
+    #[serde(default = "default_game_blacklist")]
+    pub game_blacklist: Vec<String>,
+    #[serde(default = "default_game_music_pos")]
+    pub game_music_pos: [f32; 2],
+    #[serde(default = "default_game_audio_pos")]
+    pub game_audio_pos: [f32; 2],
+    #[serde(default = "default_game_queue_pos")]
+    pub game_queue_pos: [f32; 2],
 
     #[serde(default)]
     pub mini_palette: MiniPalette,
@@ -660,6 +869,10 @@ pub struct Saved {
     pub theme_mode: ThemeMode,
     #[serde(default)]
     pub theme_preset: ThemePreset,
+    #[serde(default = "default_corner_roundness")]
+    pub corner_roundness: f32,
+    #[serde(default = "default_background_tint_shade")]
+    pub background_tint_shade: f32,
     #[serde(default = "default_false")]
     pub close_to_tray: bool,
     #[serde(default = "default_false")]
@@ -748,6 +961,24 @@ pub struct Saved {
     pub crossfade_secs: u8,
     #[serde(default)]
     pub blocked_artists: Vec<String>,
+    #[serde(default)]
+    pub last_playlist_id: Option<String>,
+    #[serde(default = "default_true")]
+    pub ambient_artwork_blur: bool,
+    #[serde(default)]
+    pub artwork_bg_variant: ArtworkBgVariant,
+    #[serde(default = "default_artwork_bg_opacity")]
+    pub artwork_bg_opacity: f32,
+    #[serde(default = "default_artwork_bg_blur")]
+    pub artwork_bg_blur: f32,
+}
+
+fn default_artwork_bg_opacity() -> f32 {
+    0.50
+}
+
+fn default_artwork_bg_blur() -> f32 {
+    0.60
 }
 
 fn default_crossfade_secs() -> u8 {
@@ -888,6 +1119,7 @@ impl Default for Saved {
             hotkeys: false,
             hotkey_combos: hotkeys::standard_combos(),
             auto_purge_ram: true,
+            auto_game_mode: false,
             performance_mode: false,
             perf_aggressive_ram: true,
             perf_suspend_animations: true,
@@ -904,6 +1136,28 @@ impl Default for Saved {
             discord_line3: DiscordLineContent::Album,
             discord_button_listen: true,
             discord_button_app: true,
+            discord_show_when_paused: false,
+            discord_hide_details: false,
+            discord_status_text: DiscordStatusField::Line2Artist,
+            discord_app_name: String::new(),
+            discord_album_art: true,
+            discord_provider_badge: true,
+            discord_progress_bar: true,
+            discord_line1_clickable: false,
+            discord_line2_clickable: false,
+            discord_art_clickable: false,
+            discord_button1: DiscordButtonOption::ListenOnYtm,
+            discord_button2: DiscordButtonOption::GetApp,
+            game_overlay_hotkey: GameOverlayHotkey::CtrlShiftG,
+            game_overlay_opacity: 0.55,
+            game_show_music_widget: true,
+            game_show_audio_widget: true,
+            game_show_queue_widget: true,
+            game_whitelist: default_game_whitelist(),
+            game_blacklist: default_game_blacklist(),
+            game_music_pos: default_game_music_pos(),
+            game_audio_pos: default_game_audio_pos(),
+            game_queue_pos: default_game_queue_pos(),
             mini_palette: MiniPalette::CyberViolet,
             mini_opacity: 0.92,
             mini_show_shuffle_repeat: true,
@@ -919,6 +1173,8 @@ impl Default for Saved {
             ambient_glow: true,
             theme_mode: ThemeMode::Dark,
             theme_preset: ThemePreset::Default,
+            corner_roundness: 12.0,
+            background_tint_shade: 0.0,
             close_to_tray: false,
             song_notifications: false,
             launch_on_startup: false,
@@ -959,6 +1215,11 @@ impl Default for Saved {
             crossfade_enabled: false,
             crossfade_secs: 3,
             blocked_artists: Vec::new(),
+            last_playlist_id: None,
+            ambient_artwork_blur: true,
+            artwork_bg_variant: ArtworkBgVariant::CanvasTint,
+            artwork_bg_opacity: 0.50,
+            artwork_bg_blur: 0.60,
         }
     }
 }
@@ -1009,6 +1270,7 @@ pub enum Action {
     Pin(Item),
     ToggleQueue,
     ToggleSidebar,
+    #[allow(dead_code)]
     ToggleQueueRetractable,
     ToggleMiniCapsuleRetractable,
     ToggleShuffle,
@@ -1030,7 +1292,9 @@ pub enum Action {
     ClearHistory,
     RestoreHistory(Vec<Item>),
     ShowOnDiscord(bool),
+    #[allow(dead_code)]
     DiscordHeadline(Headline),
+    #[allow(dead_code)]
     DiscordName(String),
     ToggleMiniMode,
     ToggleLoudness,
@@ -1057,7 +1321,9 @@ pub enum Action {
     SetDiscordLine1(DiscordLineContent),
     SetDiscordLine2(DiscordLineContent),
     SetDiscordLine3(DiscordLineContent),
+    #[allow(dead_code)]
     SetDiscordButtonListen(bool),
+    #[allow(dead_code)]
     SetDiscordButtonApp(bool),
     #[allow(dead_code)]
     SetSettingsTab(SettingsTab),
@@ -1084,8 +1350,10 @@ pub enum Action {
     SetMiniGrain(bool),
     SetMiniGrainStrength(f32),
     SetThemePalette(MiniPalette),
+    #[allow(dead_code)]
     SetThemeBase(ThemeBase),
     SetAmbientGlow(bool),
+    SetAmbientArtworkBlur(bool),
     SetSelectionGlow(bool),
     SetMiniVariant(MiniVariant),
     ToggleMiniLock,
@@ -1133,6 +1401,56 @@ pub enum Action {
     UnblockArtist(String),
     OpenUpdateDialog,
     CloseUpdateDialog,
+    StartRadio(Item),
+    Dislike(Item),
+    ToggleGameMode,
+    ExitGameMode,
+    ToggleGameOverlay,
+    #[allow(dead_code)]
+    ToggleGameHud,
+    SetAutoGameMode(bool),
+    SetGameOverlayHotkey(GameOverlayHotkey),
+    SetGameOverlayOpacity(f32),
+    ToggleGameMusicWidget,
+    ToggleGameAudioWidget,
+    ToggleGameQueueWidget,
+    #[allow(dead_code)]
+    AddGameWhitelist(String),
+    #[allow(dead_code)]
+    RemoveGameWhitelist(usize),
+    #[allow(dead_code)]
+    AddGameBlacklist(String),
+    #[allow(dead_code)]
+    RemoveGameBlacklist(usize),
+    #[allow(dead_code)]
+    SetGameMusicPos(f32, f32),
+    #[allow(dead_code)]
+    SetGameAudioPos(f32, f32),
+    #[allow(dead_code)]
+    SetGameQueuePos(f32, f32),
+    #[allow(dead_code)]
+    ResetGameWidgetPositions,
+    ResetDiscordDefaults,
+    SetDiscordShowWhenPaused(bool),
+    SetDiscordHideDetails(bool),
+    SetDiscordStatusText(DiscordStatusField),
+    SetDiscordAppName(String),
+    SetDiscordAlbumArt(bool),
+    SetDiscordProviderBadge(bool),
+    SetDiscordProgressBar(bool),
+    SetDiscordLine1Clickable(bool),
+    SetDiscordLine2Clickable(bool),
+    SetDiscordArtClickable(bool),
+    SetDiscordButton1(DiscordButtonOption),
+    SetDiscordButton2(DiscordButtonOption),
+    SetCornerRoundness(f32),
+    SetBackgroundTintShade(f32),
+    ResetThemeDefaults,
+    ToggleSettingsPreview,
+    SetArtworkBgVariant(ArtworkBgVariant),
+    SetArtworkBgOpacity(f32),
+    SetArtworkBgBlur(f32),
+    ExitGameModeToMini,
 }
 
 enum Event {
@@ -1184,7 +1502,7 @@ pub struct App {
     replaced: Option<(Vec<Item>, Option<usize>, u64)>,
     curated: bool,
     growing: Option<(Route, usize, usize)>,
-    resume_at: Option<u64>,
+    pub resume_at: Option<u64>,
     pub sign_in: Option<SignIn>,
     pub library: Vec<Item>,
     pub accounts: Vec<Account>,
@@ -1218,6 +1536,16 @@ pub struct App {
     pub sync_room: String,
     pub sync_last_publish: Option<Instant>,
     pub last_listen_tick: Option<Instant>,
+    pub in_game_mode: bool,
+    #[allow(dead_code)]
+    pub game_hud_visible: bool,
+    pub game_overlay_open: bool,
+    pub game_mode_start_time: Option<Instant>,
+    pub hotkey_was_down: bool,
+    pub last_game_check: Instant,
+    pub auto_game_detected: bool,
+    pub original_queue: Option<Vec<Item>>,
+    pub settings_preview_open: bool,
     restart: Option<PathBuf>,
 }
 
@@ -1316,6 +1644,15 @@ impl App {
             sync_room: String::new(),
             sync_last_publish: None,
             last_listen_tick: None,
+            in_game_mode: false,
+            game_hud_visible: false,
+            game_overlay_open: false,
+            game_mode_start_time: None,
+            hotkey_was_down: false,
+            last_game_check: Instant::now(),
+            auto_game_detected: false,
+            original_queue: None,
+            settings_preview_open: false,
             restart: None,
         };
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
@@ -1335,7 +1672,15 @@ impl App {
                 app.query = query.clone();
                 app.go(Route::Search(query));
             }
-            None => app.ensure(&Route::Home),
+            None => {
+                let init_route = match app.saved.last_playlist_id.as_deref() {
+                    Some("liked") => Route::Liked,
+                    Some(id) if app.saved.playlists.iter().any(|p| p.id == id) => Route::CustomPlaylist(id.to_string()),
+                    _ => Route::Home,
+                };
+                app.history = vec![init_route.clone()];
+                app.ensure(&init_route);
+            }
         }
         app.restart_hotkeys();
         app.load_library();
@@ -1608,6 +1953,10 @@ impl App {
         if *self.route() == route {
             return;
         }
+        if matches!(route, Route::Settings(SettingsTab::Discord | SettingsTab::Appearance | SettingsTab::GamingMode)) && self.saved.queue_open {
+            self.saved.queue_open = false;
+            self.notify("Queue docked to expand view");
+        }
         if matches!((self.route(), &route), (Route::Search(_), Route::Search(_))) {
             self.history[self.at] = route;
         } else {
@@ -1674,10 +2023,14 @@ impl App {
         }
         self.curated = self.saved.queue.len() > 1;
         let mut at = self.saved.queue.iter().position(|item| item.video_id == chosen).unwrap_or(0);
+        let original = self.saved.queue.clone();
         if self.saved.shuffle && !self.saved.queue.is_empty() {
+            self.original_queue = Some(original);
             self.saved.queue.swap(0, at);
             at = 0;
             shuffle(&mut self.saved.queue[1..]);
+        } else {
+            self.original_queue = None;
         }
         self.radio_seed.clear();
         self.play_index(at);
@@ -2237,15 +2590,29 @@ impl App {
                 self.notify("Copied share link");
             }
             Action::Pin(item) => toggle(&mut self.saved.pinned, item),
-            Action::ToggleQueue => self.saved.queue_open ^= true,
+            Action::ToggleQueue => {
+                self.saved.queue_open ^= true;
+                if self.saved.queue_open {
+                    self.settings_preview_open = false;
+                }
+            }
             Action::ToggleSidebar => self.saved.sidebar_open ^= true,
             Action::ToggleQueueRetractable => self.saved.queue_retractable ^= true,
             Action::ToggleMiniCapsuleRetractable => self.saved.mini_capsule_retractable ^= true,
             Action::ToggleShuffle => {
                 self.saved.shuffle ^= true;
-                let upcoming = self.saved.current.map_or(0, |current| current + 1).min(self.saved.queue.len());
                 if self.saved.shuffle {
+                    self.original_queue = Some(self.saved.queue.clone());
+                    let upcoming = self.saved.current.map_or(0, |current| current + 1).min(self.saved.queue.len());
                     shuffle(&mut self.saved.queue[upcoming..]);
+                } else if let Some(orig) = self.original_queue.take() {
+                    let cur_id = self.saved.current.and_then(|c| self.saved.queue.get(c)).map(|s| s.video_id.clone());
+                    self.saved.queue = orig;
+                    if let Some(id) = cur_id {
+                        if let Some(pos) = self.saved.queue.iter().position(|s| s.video_id == id) {
+                            self.saved.current = Some(pos);
+                        }
+                    }
                 }
             }
             Action::CycleRepeat => {
@@ -2623,6 +2990,9 @@ impl App {
             Action::SetAmbientGlow(v) => {
                 self.saved.ambient_glow = v;
             }
+            Action::SetAmbientArtworkBlur(v) => {
+                self.saved.ambient_artwork_blur = v;
+            }
             Action::SetSelectionGlow(v) => {
                 self.saved.selection_glow = v;
             }
@@ -2816,13 +3186,336 @@ impl App {
             Action::CloseUpdateDialog => {
                 self.update_dialog_open = false;
             }
+            Action::StartRadio(item) => {
+                let seed = item.video_id.clone();
+                self.curated = false;
+                self.saved.queue = vec![item.clone()];
+                self.saved.current = Some(0);
+                self.play_index(0);
+                self.radio_seed = seed.clone();
+                let (yt, sender, ctx) = (self.yt.clone(), self.sender.clone(), self.ctx.clone());
+                std::thread::spawn(move || {
+                    if let Ok(items) = yt.radio(&seed) {
+                        let _ = sender.send(Event::Radio(seed, items));
+                        ctx.request_repaint();
+                    }
+                });
+                self.notify(format!("Starting radio for {}", item.title));
+            }
+            Action::Dislike(item) => {
+                if self.saved.current.and_then(|c| self.saved.queue.get(c)).is_some_and(|cur| cur.video_id == item.video_id) {
+                    self.next(false);
+                }
+                let mut i = 0;
+                while i < self.saved.queue.len() {
+                    if self.saved.queue[i].video_id == item.video_id {
+                        self.saved.queue.remove(i);
+                        if let Some(current) = self.saved.current.as_mut().filter(|current| i < **current) {
+                            *current -= 1;
+                        }
+                    } else {
+                        i += 1;
+                    }
+                }
+                self.notify(format!("Disliked and removed: {}", item.title));
+            }
+            Action::ToggleGameMode => {
+                if self.in_game_mode {
+                    self.apply(Action::ExitGameMode);
+                } else {
+                    self.in_game_mode = true;
+                    self.game_overlay_open = false;
+                    self.game_mode_start_time = Some(Instant::now());
+                    self.apply(Action::PurgeMemory);
+                    self.title_bar.enable_transparency();
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-32000.0, -32000.0)));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1.0, 1.0)));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                    self.notify(format!("⚡ Gaming Mode Active ({})", self.saved.game_overlay_hotkey.label()));
+                }
+            }
+            Action::ExitGameMode => {
+                self.in_game_mode = false;
+                self.game_overlay_open = false;
+                self.game_mode_start_time = None;
+                self.title_bar.restore_decorations();
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(100.0, 100.0)));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                self.notify("Restored Normal AURI Mode");
+            }
+            Action::ExitGameModeToMini => {
+                self.in_game_mode = false;
+                self.game_overlay_open = false;
+                self.game_mode_start_time = None;
+                self.title_bar.restore_decorations();
+                self.saved.mini_mode = true;
+                let (w, h) = self.saved.mini_variant.size(self.mini_queue_open);
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(120.0, 120.0)));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+                let level = if self.saved.mini_always_on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                self.notify("Switched to Mini Player Mode");
+            }
+            Action::ToggleGameOverlay => {
+                if self.in_game_mode {
+                    self.game_overlay_open = !self.game_overlay_open;
+                    if self.game_overlay_open {
+                        #[cfg(windows)]
+                        let (sw, sh) = {
+                            use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+                            unsafe { (GetSystemMetrics(SM_CXSCREEN) as f32, GetSystemMetrics(SM_CYSCREEN) as f32) }
+                        };
+                        #[cfg(not(windows))]
+                        let (sw, sh) = (1920.0, 1080.0);
+                        let ppp = self.ctx.pixels_per_point().max(0.5);
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(sw / ppp, sh / ppp)));
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                        self.apply(Action::PurgeMemory);
+                    } else {
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-32000.0, -32000.0)));
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(1.0, 1.0)));
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                        self.apply(Action::PurgeMemory);
+                    }
+                }
+            }
+            Action::ToggleGameHud => {
+                self.apply(Action::ToggleGameOverlay);
+            }
+            Action::SetAutoGameMode(on) => {
+                self.saved.auto_game_mode = on;
+            }
+            Action::SetGameOverlayHotkey(hk) => {
+                self.saved.game_overlay_hotkey = hk;
+            }
+            Action::SetGameOverlayOpacity(op) => {
+                self.saved.game_overlay_opacity = op.clamp(0.15, 0.95);
+            }
+            Action::ToggleGameMusicWidget => {
+                self.saved.game_show_music_widget = !self.saved.game_show_music_widget;
+            }
+            Action::ToggleGameAudioWidget => {
+                self.saved.game_show_audio_widget = !self.saved.game_show_audio_widget;
+            }
+            Action::ToggleGameQueueWidget => {
+                self.saved.game_show_queue_widget = !self.saved.game_show_queue_widget;
+            }
+            Action::AddGameWhitelist(exe) => {
+                let trimmed = exe.trim().to_string();
+                if !trimmed.is_empty() && !self.saved.game_whitelist.iter().any(|g| g.eq_ignore_ascii_case(&trimmed)) {
+                    self.saved.game_whitelist.push(trimmed.clone());
+                    self.notify(format!("Added \"{}\" to game whitelist", trimmed));
+                }
+            }
+            Action::RemoveGameWhitelist(idx) => {
+                if idx < self.saved.game_whitelist.len() {
+                    let removed = self.saved.game_whitelist.remove(idx);
+                    self.notify(format!("Removed \"{}\" from whitelist", removed));
+                }
+            }
+            Action::AddGameBlacklist(exe) => {
+                let trimmed = exe.trim().to_string();
+                if !trimmed.is_empty() && !self.saved.game_blacklist.iter().any(|b| b.eq_ignore_ascii_case(&trimmed)) {
+                    self.saved.game_blacklist.push(trimmed.clone());
+                    self.notify(format!("Added \"{}\" to app blacklist", trimmed));
+                }
+            }
+            Action::RemoveGameBlacklist(idx) => {
+                if idx < self.saved.game_blacklist.len() {
+                    let removed = self.saved.game_blacklist.remove(idx);
+                    self.notify(format!("Removed \"{}\" from blacklist", removed));
+                }
+            }
+            Action::SetGameMusicPos(x, y) => {
+                self.saved.game_music_pos = [x.max(0.0), y.max(0.0)];
+            }
+            Action::SetGameAudioPos(x, y) => {
+                self.saved.game_audio_pos = [x.max(0.0), y.max(0.0)];
+            }
+            Action::SetGameQueuePos(x, y) => {
+                self.saved.game_queue_pos = [x.max(0.0), y.max(0.0)];
+            }
+            Action::ResetGameWidgetPositions => {
+                self.saved.game_music_pos = default_game_music_pos();
+                self.saved.game_audio_pos = default_game_audio_pos();
+                self.saved.game_queue_pos = default_game_queue_pos();
+                self.notify("Overlay widget positions reset to default");
+            }
+            Action::ResetDiscordDefaults => {
+                self.saved.discord_show_when_paused = false;
+                self.saved.discord_hide_details = false;
+                self.saved.discord_status_text = DiscordStatusField::Line2Artist;
+                self.saved.discord_app_name = String::new();
+                self.saved.discord_line1 = DiscordLineContent::Title;
+                self.saved.discord_line2 = DiscordLineContent::Artist;
+                self.saved.discord_line3 = DiscordLineContent::Album;
+                self.saved.discord_album_art = true;
+                self.saved.discord_provider_badge = true;
+                self.saved.discord_progress_bar = true;
+                self.saved.discord_line1_clickable = false;
+                self.saved.discord_line2_clickable = false;
+                self.saved.discord_art_clickable = false;
+                self.saved.discord_button1 = DiscordButtonOption::ListenOnYtm;
+                self.saved.discord_button2 = DiscordButtonOption::GetApp;
+                self.notify("Discord settings reset to defaults");
+            }
+            Action::SetDiscordShowWhenPaused(val) => self.saved.discord_show_when_paused = val,
+            Action::SetDiscordHideDetails(val) => self.saved.discord_hide_details = val,
+            Action::SetDiscordStatusText(st) => self.saved.discord_status_text = st,
+            Action::SetDiscordAppName(name) => self.saved.discord_app_name = name,
+            Action::SetDiscordAlbumArt(val) => self.saved.discord_album_art = val,
+            Action::SetDiscordProviderBadge(val) => self.saved.discord_provider_badge = val,
+            Action::SetDiscordProgressBar(val) => self.saved.discord_progress_bar = val,
+            Action::SetDiscordLine1Clickable(val) => self.saved.discord_line1_clickable = val,
+            Action::SetDiscordLine2Clickable(val) => self.saved.discord_line2_clickable = val,
+            Action::SetDiscordArtClickable(val) => self.saved.discord_art_clickable = val,
+            Action::SetDiscordButton1(b) => self.saved.discord_button1 = b,
+            Action::SetDiscordButton2(b) => self.saved.discord_button2 = b,
+            Action::SetCornerRoundness(r) => {
+                self.saved.corner_roundness = r.clamp(0.0, 24.0);
+            }
+            Action::SetBackgroundTintShade(s) => {
+                self.saved.background_tint_shade = s.clamp(0.0, 1.0);
+            }
+            Action::ResetThemeDefaults => {
+                self.saved.theme_palette = self.saved.theme_preset.default_accent();
+                self.saved.theme_base = ThemeBase::DarkObsidian;
+                self.saved.corner_roundness = 12.0;
+                self.saved.background_tint_shade = 0.0;
+                self.saved.artwork_bg_variant = ArtworkBgVariant::CanvasTint;
+                self.saved.artwork_bg_opacity = 0.50;
+                self.saved.artwork_bg_blur = 0.60;
+                self.notify("Appearance reset to preset defaults");
+            }
+            Action::ToggleSettingsPreview => {
+                self.settings_preview_open = !self.settings_preview_open;
+                if self.settings_preview_open {
+                    self.saved.queue_open = false;
+                }
+            }
+            Action::SetArtworkBgVariant(v) => self.saved.artwork_bg_variant = v,
+            Action::SetArtworkBgOpacity(v) => self.saved.artwork_bg_opacity = v.clamp(0.05, 1.0),
+            Action::SetArtworkBgBlur(v) => self.saved.artwork_bg_blur = v.clamp(0.1, 1.0),
         }
     }
 }
 
+#[cfg(windows)]
+pub fn detect_fullscreen_game(whitelist: &[String], blacklist: &[String]) -> bool {
+    use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+        SM_CXSCREEN, SM_CYSCREEN,
+    };
+    unsafe {
+        let hwnd = GetForegroundWindow();
+        if hwnd.is_null() {
+            return false;
+        }
+        let mut pid = 0;
+        GetWindowThreadProcessId(hwnd, &mut pid);
+        if pid == 0 || pid == std::process::id() {
+            return false;
+        }
+
+        // 1. Query process executable name
+        let mut proc_name = String::new();
+        let h_proc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+        if !h_proc.is_null() {
+            let mut buf = [0u16; 512];
+            let mut size = 512u32;
+            if QueryFullProcessImageNameW(h_proc, 0, buf.as_mut_ptr(), &mut size) != 0 && size > 0 {
+                let full = String::from_utf16_lossy(&buf[..size as usize]);
+                if let Some(exe) = full.split('\\').last() {
+                    proc_name = exe.to_lowercase();
+                }
+            }
+            CloseHandle(h_proc);
+        }
+
+        // 2. Query window title
+        let mut title_buf = [0u16; 512];
+        let tlen = GetWindowTextW(hwnd, title_buf.as_mut_ptr(), 512);
+        let win_title = if tlen > 0 {
+            String::from_utf16_lossy(&title_buf[..tlen as usize]).to_lowercase()
+        } else {
+            String::new()
+        };
+
+        // 3. Blacklist check: if foreground app matches blacklist, never trigger gaming mode
+        for b in blacklist {
+            let b_lower = b.trim().to_lowercase();
+            if !b_lower.is_empty() && (proc_name.contains(&b_lower) || win_title.contains(&b_lower)) {
+                return false;
+            }
+        }
+
+        // 4. Whitelist check: if foreground app matches whitelist, trigger gaming mode immediately
+        for w in whitelist {
+            let w_lower = w.trim().to_lowercase();
+            if !w_lower.is_empty() && (proc_name.contains(&w_lower) || win_title.contains(&w_lower)) {
+                return true;
+            }
+        }
+
+        // 5. Fallback: check if window is full screen resolution and not Windows Shell
+        let mut rect = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut rect) != 0 {
+            let screen_w = GetSystemMetrics(SM_CXSCREEN);
+            let screen_h = GetSystemMetrics(SM_CYSCREEN);
+            let w = rect.right - rect.left;
+            let h = rect.bottom - rect.top;
+            if w >= screen_w && h >= screen_h {
+                let mut class_name = [0u16; 256];
+                let len = GetClassNameW(hwnd, class_name.as_mut_ptr(), 256);
+                if len > 0 {
+                    let s = String::from_utf16_lossy(&class_name[..len as usize]);
+                    if s != "Progman" && s != "WorkerW" && s != "Shell_TrayWnd" && s != "Windows.UI.Core.CoreWindow" {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
+#[cfg(not(windows))]
+pub fn detect_fullscreen_game(_whitelist: &[String], _blacklist: &[String]) -> bool {
+    false
+}
+
+#[cfg(windows)]
+pub fn is_overlay_hotkey_pressed(hotkey: GameOverlayHotkey) -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_CONTROL, VK_F1, VK_F12, VK_F9, VK_SHIFT, VK_TAB,
+    };
+    unsafe {
+        let is_down = |vk: i32| (GetAsyncKeyState(vk) as u16 & 0x8000) != 0;
+        match hotkey {
+            GameOverlayHotkey::CtrlShiftG => is_down(VK_CONTROL as i32) && is_down(VK_SHIFT as i32) && is_down(0x47 /* 'G' */),
+            GameOverlayHotkey::ShiftTab => is_down(VK_SHIFT as i32) && is_down(VK_TAB as i32),
+            GameOverlayHotkey::F9 => is_down(VK_F9 as i32),
+            GameOverlayHotkey::F12 => is_down(VK_F12 as i32),
+            GameOverlayHotkey::CtrlF1 => is_down(VK_CONTROL as i32) && is_down(VK_F1 as i32),
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_overlay_hotkey_pressed(_hotkey: GameOverlayHotkey) -> bool {
+    false
+}
+
 impl eframe::App for App {
     fn clear_color(&self, visuals: &egui::Visuals) -> [f32; 4] {
-        if self.saved.mini_mode {
+        if self.in_game_mode || self.saved.mini_mode {
             [0.0, 0.0, 0.0, 0.0]
         } else {
             let fill = visuals.panel_fill;
@@ -2843,6 +3536,18 @@ impl eframe::App for App {
         if self.saved.performance_mode && self.saved.perf_aggressive_ram && self.last_purge.elapsed() >= Duration::from_secs(30) {
             self.apply(Action::PurgeMemory);
             self.last_purge = Instant::now();
+        }
+        #[cfg(windows)]
+        if self.saved.auto_game_mode && self.last_game_check.elapsed() >= Duration::from_millis(2500) {
+            self.last_game_check = Instant::now();
+            let is_gaming = detect_fullscreen_game(&self.saved.game_whitelist, &self.saved.game_blacklist);
+            if is_gaming && !self.in_game_mode {
+                self.auto_game_detected = true;
+                self.apply(Action::ToggleGameMode);
+            } else if !is_gaming && self.in_game_mode && self.auto_game_detected {
+                self.auto_game_detected = false;
+                self.apply(Action::ExitGameMode);
+            }
         }
         if self.sync_mode == crate::sync::SyncMode::Host {
             let should_pub = match self.sync_last_publish {
@@ -2873,7 +3578,25 @@ impl eframe::App for App {
         self.art.begin_frame(ctx);
         self.drain(ctx);
         let mut actions = if self.record(ctx) { Vec::new() } else { self.shortcuts(ctx) };
-        if self.saved.mini_mode {
+        #[cfg(windows)]
+        if self.in_game_mode {
+            let down = is_overlay_hotkey_pressed(self.saved.game_overlay_hotkey);
+            if down && !self.hotkey_was_down {
+                actions.push(Action::ToggleGameOverlay);
+            }
+            self.hotkey_was_down = down;
+        }
+
+        if self.in_game_mode {
+            if self.game_overlay_open {
+                if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    actions.push(Action::ToggleGameOverlay);
+                }
+                actions.extend(ui::draw_game_overlay(self, ctx));
+            } else {
+                ctx.request_repaint_after(Duration::from_millis(50));
+            }
+        } else if self.saved.mini_mode {
             let is_maximized = ctx.input(|input| input.viewport().maximized == Some(true));
             if is_maximized {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
@@ -2892,8 +3615,10 @@ impl eframe::App for App {
         self.look_up_covers();
         self.look_up_lyrics();
         let minimized = self.ctx.input(|input| input.viewport().minimized == Some(true));
-        if !minimized && (self.playing() || self.player.loading()) {
-            let tick = if self.saved.performance_mode {
+        if self.playing() || self.player.loading() {
+            let tick = if minimized || self.in_game_mode {
+                Duration::from_millis(500)
+            } else if self.saved.performance_mode {
                 Duration::from_millis(1000 / self.saved.perf_tick_fps.max(1) as u64)
             } else {
                 PROGRESS_TICK
@@ -2966,17 +3691,27 @@ impl eframe::App for App {
         if let Some(media) = &mut self.media {
             media.show(item, playing, position_ms, duration_ms);
         }
-        if let Some(discord) = self.discord.as_mut().filter(|_| !self.player.loading()) {
-            let track = item.filter(|_| playing).map(|item| (item, self.saved.covers.of(item)));
+        if let Some(discord) = self.discord.as_mut() {
+            let track = item.filter(|_| playing || self.saved.discord_show_when_paused).map(|item| (item, self.saved.covers.of(item)));
             let (headline, name) = (self.saved.discord_headline, &self.saved.discord_name);
             let fmt = crate::discord::DiscordFormat {
+                show_when_paused: self.saved.discord_show_when_paused,
+                hide_details: self.saved.discord_hide_details,
+                status_text: self.saved.discord_status_text,
+                app_name: self.saved.discord_app_name.clone(),
                 line1: self.saved.discord_line1,
                 line2: self.saved.discord_line2,
                 line3: self.saved.discord_line3,
-                button_listen: self.saved.discord_button_listen,
-                button_app: self.saved.discord_button_app,
+                album_art: self.saved.discord_album_art,
+                provider_badge: self.saved.discord_provider_badge,
+                progress_bar: self.saved.discord_progress_bar,
+                line1_clickable: self.saved.discord_line1_clickable,
+                line2_clickable: self.saved.discord_line2_clickable,
+                art_clickable: self.saved.discord_art_clickable,
+                button1: self.saved.discord_button1,
+                button2: self.saved.discord_button2,
             };
-            discord.show(track, headline, name, position_ms, duration_ms, fmt);
+            discord.show(track, headline, name, position_ms, duration_ms, fmt, playing);
         }
     }
 
@@ -2994,7 +3729,17 @@ impl eframe::App for App {
             (_, false) => self.geometry = storage.get_string(WINDOW_KEY),
         }
         self.saved.visitor = self.yt.visitor();
-        self.saved.position_ms = self.resume_at.unwrap_or_else(|| self.player.position_ms());
+        self.saved.position_ms = if self.playing() {
+            self.player.position_ms()
+        } else {
+            self.resume_at.unwrap_or_else(|| self.player.position_ms())
+        };
+        match self.route() {
+            Route::CustomPlaylist(id) => self.saved.last_playlist_id = Some(id.clone()),
+            Route::Liked => self.saved.last_playlist_id = Some("liked".to_string()),
+            Route::Home => self.saved.last_playlist_id = None,
+            _ => {}
+        }
         eframe::set_value(storage, eframe::APP_KEY, &self.saved);
     }
 }
@@ -3208,5 +3953,19 @@ mod tests {
         // Test unblock
         saved.blocked_artists.retain(|b| !b.eq_ignore_ascii_case("disliked band"));
         assert!(saved.blocked_artists.is_empty());
+    }
+
+    #[test]
+    fn test_artwork_bg_variant_and_defaults() {
+        assert_eq!(ArtworkBgVariant::ALL.len(), 4);
+        assert_eq!(ArtworkBgVariant::CanvasTint.name(), "Canvas Tint");
+        assert_eq!(ArtworkBgVariant::BlurredBackdrop.name(), "Frosted Blur");
+        assert_eq!(ArtworkBgVariant::AmbientRadialGlow.name(), "Radial Glow");
+        assert_eq!(ArtworkBgVariant::MinimalEdgeGlow.name(), "Edge Glow");
+
+        let saved = Saved::default();
+        assert_eq!(saved.artwork_bg_variant, ArtworkBgVariant::CanvasTint);
+        assert!((saved.artwork_bg_opacity - 0.50).abs() < 0.01);
+        assert!((saved.artwork_bg_blur - 0.60).abs() < 0.01);
     }
 }

@@ -5,7 +5,7 @@
 ## Phase 1: Research, Architecture & Technical Specification (Current Phase)
 - [x] Inspect workspace and initialize Git repository (`https://github.com/SuryakiranMK/AURI.git`).
 - [x] Analyze design reference images (Desktop layout, Floating mini-player, Gaming HUD).
-- [x] Deep research into competing lightweight architectures (foobar2000, LiMusic, ViMusic).
+- [x] Deep research into competing lightweight architectures (foobar2000, AURI, ViMusic).
 - [x] Technical evaluation of programming languages, UI frameworks, audio engines, and Windows integration.
 - [x] Produce comprehensive architectural documentation:
   - `PRODUCT_SPECIFICATION.md`
