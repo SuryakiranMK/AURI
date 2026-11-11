@@ -4639,129 +4639,89 @@ fn hotkey_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 
 fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
     let pal_color = app.saved.theme_palette.color();
-    let eq_height = if app.saved.eq_enabled { 450.0 } else { 0.0 };
-    let height = 2.0 * CARD_PAD + 3.0 * SETTING_ROW + 44.0 + eq_height;
-    section(ui, "Audio & DSP Engine", height, |ui| {
-        let size = vec2(ui.available_width(), SETTING_ROW);
-        if switch_row(ui, size, icon::WAVEFORM, "Studio Loudness Normalizer (-14.0 LUFS)", app.saved.loudness_normalizer) {
+    settings_card_panel(ui, "eq-loudness", "Loudness & limiting", "Uniform, clipping-free volume across every track.", |ui| {
+        if toggle_row(
+            ui,
+            "loudness-toggle",
+            icon::WAVEFORM,
+            "Studio loudness normalizer (-14.0 LUFS)",
+            "Normalizes tracks from YouTube Music broadcast loudness metadata for uniform listening.",
+            app.saved.loudness_normalizer,
+        ) {
             out.push(Action::ToggleLoudness);
         }
-        let desc = "Normalizes tracks based on YouTube Music broadcast loudness metadata for uniform listening.";
-        let (row, _) = ui.allocate_exact_size(vec2(size.x, 22.0), Sense::hover());
-        label(ui, pos2(row.left() + 46.0, row.center().y), Align2::LEFT_CENTER, desc, sans(12.0), MUTED, size.x - 58.0);
+        row_base(
+            ui,
+            icon::FADERS,
+            "Soft-knee peak limiter (active)",
+            "Prevents clipping and harsh distortion on loud transients with studio-grade brickwall limiting.",
+        );
+    });
 
-        let (limiter_row, _) = ui.allocate_exact_size(size, Sense::hover());
-        let middle = limiter_row.center().y;
-        ui.painter().text(pos2(limiter_row.left() + 22.0, middle), Align2::CENTER_CENTER, icon::FADERS, glyph(17.0), pal_color);
-        label(ui, pos2(limiter_row.left() + 46.0, middle - 8.0), Align2::LEFT_CENTER, "Soft-Knee Peak Limiter (Active)", medium(13.5), TEXT, size.x - 58.0);
-        let sub = "Prevents clipping and harsh distortion on loud transients with studio-grade brickwall limiting.";
-        label(ui, pos2(limiter_row.left() + 46.0, middle + 10.0), Align2::LEFT_CENTER, sub, sans(12.0), MUTED, size.x - 58.0);
+    settings_card_panel(
+        ui,
+        "eq-card",
+        "10-band graphic equalizer",
+        "Precision biquad peaking filter bank (31 Hz - 16 kHz) for studio mastering and gaming audio tuning.",
+        |ui| {
+            if toggle_row(ui, "eq-toggle", icon::EQUALIZER, "Enable equalizer", "", app.saved.eq_enabled) {
+                out.push(Action::ToggleEq(!app.saved.eq_enabled));
+            }
+            if app.saved.eq_enabled {
+                let size = vec2(ui.available_width(), SETTING_ROW);
+                ui.add_space(2.0);
 
-        if switch_row(ui, size, icon::EQUALIZER, "10-Band Graphic Equalizer", app.saved.eq_enabled) {
-            out.push(Action::ToggleEq(!app.saved.eq_enabled));
-        }
-        let eq_desc = "Precision biquad peaking filter bank (31Hz–16kHz) for studio mastering & gaming audio tuning.";
-        let (row2, _) = ui.allocate_exact_size(vec2(size.x, 22.0), Sense::hover());
-        label(ui, pos2(row2.left() + 46.0, row2.center().y), Align2::LEFT_CENTER, eq_desc, sans(12.0), MUTED, size.x - 58.0);
-
-        if app.saved.eq_enabled {
-            ui.add_space(10.0);
-
-            // 1. Presets & AutoEq Header Row (Image 1)
-            let (top_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
-            let mut top_x = top_row.left() + 10.0;
-
-            // Presets label & pills
-            label(ui, pos2(top_x, top_row.center().y), Align2::LEFT_CENTER, "Presets", medium(12.0), MUTED, 60.0);
-            top_x += 54.0;
-            let presets = crate::dsp::EqPreset::ALL;
-            for &preset in &presets {
-                let active = app.saved.eq_preset == preset;
-                let short_name = match preset {
-                    crate::dsp::EqPreset::Flat => "Flat",
-                    crate::dsp::EqPreset::FpsFootsteps => "FPS Footsteps",
-                    crate::dsp::EqPreset::BassPunch => "Bass Punch",
-                    crate::dsp::EqPreset::VocalClarity => "Vocal",
-                    crate::dsp::EqPreset::Cinematic => "Cinematic",
-                    crate::dsp::EqPreset::Custom => "Custom",
-                };
-                let p_w = 16.0 + short_name.len() as f32 * 7.0;
-                let p_rect = Rect::from_min_size(pos2(top_x, top_row.center().y - 13.0), vec2(p_w, 26.0));
-                let resp = ui.interact(p_rect, Id::new(("eq-preset-pill", short_name)), Sense::click());
-                let hov = hover_of(ui, &resp);
-                if active {
-                    ui.painter().rect_filled(p_rect, 13.0, pal_color);
-                    ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, short_name, bold(11.5), contrast_text_for(pal_color));
-                } else {
-                    ui.painter().rect_filled(p_rect, 13.0, veil(0.06 + 0.04 * hov));
-                    ui.painter().rect_stroke(p_rect, 13.0, Stroke::new(1.0_f32, veil(0.10)), StrokeKind::Inside);
-                    ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, short_name, medium(11.5), if hov > 0.1 { TEXT } else { MUTED });
-                }
-                if resp.clicked() {
+                if let Some(preset) = segmented_row(
+                    ui,
+                    "eq-preset-seg",
+                    icon::SLIDERS,
+                    "Presets",
+                    "",
+                    app.saved.eq_preset,
+                    &[
+                        (crate::dsp::EqPreset::Flat, "Flat"),
+                        (crate::dsp::EqPreset::FpsFootsteps, "FPS Footsteps"),
+                        (crate::dsp::EqPreset::BassPunch, "Bass Punch"),
+                        (crate::dsp::EqPreset::VocalClarity, "Vocal"),
+                        (crate::dsp::EqPreset::Cinematic, "Cinematic"),
+                        (crate::dsp::EqPreset::Custom, "Custom"),
+                    ],
+                ) {
                     out.push(Action::SetEqPreset(preset));
                 }
-                top_x += p_w + 6.0;
-            }
 
-            ui.add_space(8.0);
-
-            // AutoEq Row (Image 1)
-            let (autoeq_row, _) = ui.allocate_exact_size(vec2(size.x, 30.0), Sense::hover());
-            let mut a_x = autoeq_row.left() + 10.0;
-            label(ui, pos2(a_x, autoeq_row.center().y), Align2::LEFT_CENTER, "AutoEq", medium(12.0), MUTED, 60.0);
-            a_x += 54.0;
-            for &hp in &crate::dsp::AutoEqHeadphone::ALL {
-                let active = app.saved.autoeq_headphone == hp;
-                let hp_label = hp.label();
-                let p_w = 14.0 + hp_label.len() as f32 * 6.8;
-                let p_rect = Rect::from_min_size(pos2(a_x, autoeq_row.center().y - 12.0), vec2(p_w, 24.0));
-                let resp = ui.interact(p_rect, Id::new(("autoeq-hp", hp_label)), Sense::click());
-                let hov = hover_of(ui, &resp);
-                if active {
-                    ui.painter().rect_filled(p_rect, 12.0, pal_color.gamma_multiply(0.25));
-                    ui.painter().rect_stroke(p_rect, 12.0, Stroke::new(1.0_f32, pal_color), StrokeKind::Inside);
-                    ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, hp_label, bold(11.0), pal_color);
-                } else {
-                    ui.painter().rect_filled(p_rect, 12.0, veil(0.04 + 0.04 * hov));
-                    ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, hp_label, sans(11.0), if hov > 0.1 { TEXT } else { MUTED });
-                }
-                if resp.clicked() {
+                if let Some(hp) = segmented_row(
+                    ui,
+                    "eq-autoeq-seg",
+                    icon::HEADPHONES,
+                    "AutoEq headphone compensation",
+                    "Applies a frequency-response correction profile for popular headphones.",
+                    app.saved.autoeq_headphone,
+                    &[
+                        (crate::dsp::AutoEqHeadphone::None, "None"),
+                        (crate::dsp::AutoEqHeadphone::SonyWh1000xm4, "Sony WH-1000XM4"),
+                        (crate::dsp::AutoEqHeadphone::LogitechGProX, "Logitech G Pro X"),
+                        (crate::dsp::AutoEqHeadphone::HyperXCloud2, "HyperX Cloud II"),
+                        (crate::dsp::AutoEqHeadphone::SennheiserHd600, "Sennheiser HD 600"),
+                        (crate::dsp::AutoEqHeadphone::AirPodsMax, "AirPods Max"),
+                        (crate::dsp::AutoEqHeadphone::BeyerDt770, "DT 770 Pro"),
+                    ],
+                ) {
                     out.push(Action::SetAutoEq(hp));
                 }
-                a_x += p_w + 6.0;
-                if a_x > autoeq_row.right() - 80.0 { break; }
-            }
 
-            ui.add_space(10.0);
-
-            // 2. Preamp Horizontal Slider Bar (Image 1)
-            let (pre_row, _) = ui.allocate_exact_size(vec2(size.x, 28.0), Sense::hover());
-            label(ui, pos2(pre_row.left() + 10.0, pre_row.center().y), Align2::LEFT_CENTER, "Preamp", medium(12.0), MUTED, 60.0);
-
-            let pre_track = Rect::from_min_max(pos2(pre_row.left() + 70.0, pre_row.center().y - 3.5), pos2(pre_row.right() - 65.0, pre_row.center().y + 3.5));
-            let pre_resp = ui.interact(pre_track.expand2(vec2(0.0, 8.0)), Id::new("eq-preamp-slider"), Sense::click_and_drag());
-            let pre_hov = hover_of(ui, &pre_resp);
-            ui.painter().rect_filled(pre_track, 3.5, veil(0.14));
-
-            let pre_gain = app.saved.eq_preamp_db;
-            let pre_frac = ((pre_gain + 12.0) / 24.0).clamp(0.0, 1.0);
-            let pre_fill_w = pre_track.width() * pre_frac;
-            ui.painter().rect_filled(Rect::from_min_size(pre_track.min, vec2(pre_fill_w, 7.0)), 3.5, pal_color);
-
-            let pre_thumb_x = pre_track.left() + pre_fill_w;
-            let pre_thumb_y = pre_track.center().y;
-            ui.painter().circle_filled(pos2(pre_thumb_x, pre_thumb_y), 6.0 + 1.0 * pre_hov, Color32::WHITE);
-            ui.painter().circle_filled(pos2(pre_thumb_x, pre_thumb_y), 4.0, pal_color);
-
-            if let (true, Some(pos)) = (pre_resp.clicked() || pre_resp.dragged(), pre_resp.interact_pointer_pos()) {
-                let frac = ((pos.x - pre_track.left()) / pre_track.width()).clamp(0.0, 1.0);
-                let gain = (frac * 24.0 - 12.0 * 2.0).round() / 2.0;
-                out.push(Action::SetEqPreamp(gain));
-            }
-
-            let pre_sign = if pre_gain > 0.0 { "+" } else { "" };
-            let pre_str = format!("{pre_sign}{:.1} dB", pre_gain);
-            ui.painter().text(pos2(pre_row.right() - 8.0, pre_row.center().y), Align2::RIGHT_CENTER, pre_str, medium(12.0), if pre_gain.abs() > 0.05 { pal_color } else { MUTED });
+                if let Some(gain) = slider_row(
+                    ui,
+                    "eq-preamp",
+                    icon::FADERS,
+                    "Preamp",
+                    "Global gain applied before the equalizer filters.",
+                    app.saved.eq_preamp_db,
+                    -12.0..=12.0,
+                    |v| format!("{:+.1} dB", (v * 2.0).round() / 2.0),
+                ) {
+                    out.push(Action::SetEqPreamp((gain * 2.0).round() / 2.0));
+                }
 
             ui.add_space(12.0);
 
@@ -4877,15 +4837,15 @@ fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 
             ui.add_space(8.0);
 
-            // Reset Button positioned cleanly below the equalizer graph
-            let (reset_row, _) = ui.allocate_exact_size(vec2(size.x, 30.0), Sense::hover());
-            let reset_rect = Rect::from_min_size(pos2(reset_row.right() - 86.0, reset_row.center().y - 13.0), vec2(76.0, 26.0));
-            let reset_resp = ui.interact(reset_rect, Id::new("eq-reset-btn"), Sense::click());
-            let r_hov = hover_of(ui, &reset_resp);
-            ui.painter().rect_filled(reset_rect, 13.0, veil(0.12 + 0.08 * r_hov));
-            ui.painter().rect_stroke(reset_rect, 13.0, Stroke::new(1.0_f32, veil(0.18 + 0.12 * r_hov)), StrokeKind::Inside);
-            ui.painter().text(reset_rect.center(), Align2::CENTER_CENTER, "Reset", bold(12.0), if r_hov > 0.1 { Color32::WHITE } else { TEXT });
-            if reset_resp.clicked() {
+            if button_row(
+                ui,
+                "eq-reset-btn",
+                icon::ARROWS_CLOCKWISE,
+                "Reset equalizer",
+                "Restore the Flat preset, clear AutoEq and zero the preamp.",
+                "Reset",
+                false,
+            ) {
                 out.push(Action::ResetEq);
             }
         }
@@ -4893,164 +4853,154 @@ fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 }
 
 fn performance_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
-    let perf_mode = app.saved.performance_mode;
-    let height = 2.0 * CARD_PAD + 7.0 * SETTING_ROW + 170.0;
-    let pal_color = app.saved.theme_palette.color();
-    let card = section(ui, "Extreme Performance Engine & Resource Tuning", height, |ui| {
-        let size = vec2(ui.available_width(), SETTING_ROW);
-
-        // 1. Master Mode Switch
-        if switch_row(ui, size, icon::LIGHTNING, "⚡ Master Performance Mode", perf_mode) {
-            out.push(Action::TogglePerformanceMode);
-        }
-        let desc = "When active, AURI enforces hardware resource limits for maximum in-game FPS and zero background lag.";
-        let (row, _) = ui.allocate_exact_size(vec2(size.x, 20.0), Sense::hover());
-        label(ui, pos2(row.left() + 46.0, row.center().y), Align2::LEFT_CENTER, desc, sans(12.0), MUTED, size.x - 58.0);
-        ui.add_space(8.0);
-
-        // 2. Profile Selection Row
-        let (prof_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
-        let prof_width = (size.x - 18.0) / 4.0;
-        for (i, &prof) in PerfProfile::ALL.iter().enumerate() {
-            let active = app.saved.perf_profile == prof;
-            let pill_rect = Rect::from_min_size(
-                pos2(prof_row.left() + i as f32 * (prof_width + 6.0), prof_row.top()),
-                vec2(prof_width, 32.0),
-            );
-            let resp = ui.interact(pill_rect, Id::new(("perf-prof-btn", i)), Sense::click());
-            let hover = hover_of(ui, &resp);
-            let fill = if active { pal_color } else { veil(0.06 + 0.04 * hover) };
-            let text_color = if active { contrast_text_for(pal_color) } else { TEXT };
-            ui.painter().rect_filled(pill_rect, 8.0, fill);
-            if active {
-                ui.painter().rect_stroke(pill_rect, 8.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 80)), StrokeKind::Inside);
+    let live_ram = get_live_ram_mb();
+    settings_card_panel(
+        ui,
+        "perf-engine",
+        "Extreme performance engine",
+        "Hardware resource limits for maximum in-game FPS and zero background lag.",
+        |ui| {
+            if toggle_row(
+                ui,
+                "perf-master",
+                icon::LIGHTNING,
+                "Master performance mode",
+                "Enforces the resource limits below and suspends repaint-heavy animations.",
+                app.saved.performance_mode,
+            ) {
+                out.push(Action::TogglePerformanceMode);
             }
-            let label_str = match prof {
-                PerfProfile::CompetitiveGaming => "⚡ Gaming Max",
-                PerfProfile::Balanced => "Balanced",
-                PerfProfile::Audiophile => "Audiophile",
-                PerfProfile::Custom => "Custom",
-            };
-            ui.painter().text(pill_rect.center(), Align2::CENTER_CENTER, label_str, medium(12.0), text_color);
-            if resp.clicked() {
-                out.push(Action::SetPerfProfile(prof));
+            if let Some(profile) = segmented_row(
+                ui,
+                "perf-profile",
+                icon::SPEEDOMETER,
+                "Profile",
+                "Presets retune every option on this page; Custom keeps your own choices.",
+                app.saved.perf_profile,
+                &[
+                    (PerfProfile::CompetitiveGaming, "Competitive Gaming"),
+                    (PerfProfile::Balanced, "Balanced"),
+                    (PerfProfile::Audiophile, "Audiophile"),
+                    (PerfProfile::Custom, "Custom"),
+                ],
+            ) {
+                out.push(Action::SetPerfProfile(profile));
             }
-        }
-        ui.add_space(10.0);
+        },
+    );
 
-        // 3. Audio Stream Window Buffer Size
-        let (buf_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
-        ui.painter().text(pos2(buf_row.left() + 22.0, buf_row.center().y), Align2::CENTER_CENTER, icon::DATABASE, glyph(16.0), MUTED);
-        label(ui, pos2(buf_row.left() + 46.0, buf_row.center().y), Align2::LEFT_CENTER, "Audio Stream Buffer", medium(13.5), TEXT, 160.0);
-        let buf_opts: [(f32, &str); 4] = [(1.5, "1.5 MB"), (4.0, "4 MB"), (8.0, "8 MB"), (16.0, "16 MB")];
-        let mut cur_x = buf_row.right() - 8.0;
-        for (val, name) in buf_opts.iter().rev() {
-            let active = (app.saved.perf_audio_buffer_mb - *val).abs() < 0.1;
-            let pill_width = 62.0;
-            let p_rect = Rect::from_min_size(pos2(cur_x - pill_width, buf_row.center().y - 13.0), vec2(pill_width, 26.0));
-            cur_x -= pill_width + 6.0;
-            let resp = ui.interact(p_rect, Id::new(("perf-buf", *name)), Sense::click());
-            let hover = hover_of(ui, &resp);
-            let fill = if active { pal_color } else { veil(0.06 + 0.04 * hover) };
-            let color = if active { contrast_text_for(pal_color) } else { MUTED };
-            ui.painter().rect_filled(p_rect, 6.0, fill);
-            ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, *name, sans(11.5), color);
-            if resp.clicked() {
-                out.push(Action::SetPerfAudioBuffer(*val));
+    settings_card_panel(
+        ui,
+        "perf-tuning",
+        "Resource tuning",
+        "Fine-grained budgets. Changing any option switches the profile to Custom.",
+        |ui| {
+            if let Some(mb) = segmented_row(
+                ui,
+                "perf-audio-buffer",
+                icon::DATABASE,
+                "Audio stream buffer",
+                "Sliding memory window used while streaming a track.",
+                app.saved.perf_audio_buffer_mb,
+                &[(1.5, "1.5 MB"), (4.0, "4 MB"), (8.0, "8 MB"), (16.0, "16 MB")],
+            ) {
+                out.push(Action::SetPerfAudioBuffer(mb));
             }
-        }
-
-        // 4. Artwork Texture Cache Budget
-        let (art_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
-        ui.painter().text(pos2(art_row.left() + 22.0, art_row.center().y), Align2::CENTER_CENTER, icon::IMAGE, glyph(16.0), MUTED);
-        label(ui, pos2(art_row.left() + 46.0, art_row.center().y), Align2::LEFT_CENTER, "Cover Art Cache Budget", medium(13.5), TEXT, 160.0);
-        let art_opts: [(usize, &str); 4] = [(2, "2 MB"), (4, "4 MB"), (12, "12 MB"), (32, "32 MB")];
-        let mut cur_x = art_row.right() - 8.0;
-        for (val, name) in art_opts.iter().rev() {
-            let active = app.saved.perf_art_cache_mb == *val;
-            let pill_width = 62.0;
-            let p_rect = Rect::from_min_size(pos2(cur_x - pill_width, art_row.center().y - 13.0), vec2(pill_width, 26.0));
-            cur_x -= pill_width + 6.0;
-            let resp = ui.interact(p_rect, Id::new(("perf-art", *name)), Sense::click());
-            let hover = hover_of(ui, &resp);
-            let fill = if active { pal_color } else { veil(0.06 + 0.04 * hover) };
-            let color = if active { contrast_text_for(pal_color) } else { MUTED };
-            ui.painter().rect_filled(p_rect, 6.0, fill);
-            ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, *name, sans(11.5), color);
-            if resp.clicked() {
-                out.push(Action::SetPerfArtCache(*val));
+            if let Some(mb) = segmented_row(
+                ui,
+                "perf-art-cache",
+                icon::IMAGE,
+                "Cover art cache budget",
+                "Texture memory reserved for album artwork.",
+                app.saved.perf_art_cache_mb,
+                &[(2, "2 MB"), (4, "4 MB"), (12, "12 MB"), (32, "32 MB")],
+            ) {
+                out.push(Action::SetPerfArtCache(mb));
             }
-        }
-
-        // 5. UI Animation Tick Rate
-        let (fps_row, _) = ui.allocate_exact_size(vec2(size.x, 32.0), Sense::hover());
-        ui.painter().text(pos2(fps_row.left() + 22.0, fps_row.center().y), Align2::CENTER_CENTER, icon::SPEEDOMETER, glyph(16.0), MUTED);
-        label(ui, pos2(fps_row.left() + 46.0, fps_row.center().y), Align2::LEFT_CENTER, "HUD Refresh Rate", medium(13.5), TEXT, 160.0);
-        let fps_opts: [(u32, &str); 3] = [(1, "1 FPS (Static)"), (30, "30 FPS"), (60, "60 FPS (Fluid)")];
-        let mut cur_x = fps_row.right() - 8.0;
-        for (val, name) in fps_opts.iter().rev() {
-            let active = app.saved.perf_tick_fps == *val;
-            let pill_width = 100.0;
-            let p_rect = Rect::from_min_size(pos2(cur_x - pill_width, fps_row.center().y - 13.0), vec2(pill_width, 26.0));
-            cur_x -= pill_width + 6.0;
-            let resp = ui.interact(p_rect, Id::new(("perf-fps", *name)), Sense::click());
-            let hover = hover_of(ui, &resp);
-            let fill = if active { pal_color } else { veil(0.06 + 0.04 * hover) };
-            let color = if active { contrast_text_for(pal_color) } else { MUTED };
-            ui.painter().rect_filled(p_rect, 6.0, fill);
-            ui.painter().text(p_rect.center(), Align2::CENTER_CENTER, *name, sans(11.0), color);
-            if resp.clicked() {
-                out.push(Action::SetPerfTickFps(*val));
+            if let Some(fps) = segmented_row(
+                ui,
+                "perf-tick-fps",
+                icon::SPEEDOMETER,
+                "HUD refresh rate",
+                "How often the UI repaints while playing in performance mode.",
+                app.saved.perf_tick_fps,
+                &[(1, "1 FPS (static)"), (30, "30 FPS"), (60, "60 FPS (fluid)")],
+            ) {
+                out.push(Action::SetPerfTickFps(fps));
             }
-        }
-        ui.add_space(4.0);
+            if toggle_row(
+                ui,
+                "perf-aggressive-ram",
+                icon::BROOM,
+                "Aggressive RAM purge",
+                "Trims the working set every 30 seconds and on every track switch.",
+                app.saved.perf_aggressive_ram,
+            ) {
+                out.push(Action::SetPerfAggressiveRam(!app.saved.perf_aggressive_ram));
+            }
+            if toggle_row(
+                ui,
+                "perf-purge-minimized",
+                icon::BROOM,
+                "Purge RAM when minimized",
+                "Trims the working set whenever the window is minimized.",
+                app.saved.auto_purge_ram,
+            ) {
+                out.push(Action::AutoPurgeRam(!app.saved.auto_purge_ram));
+            }
+            if toggle_row(
+                ui,
+                "perf-disable-blurs",
+                icon::EYE_SLASH,
+                "Disable ambient blurs & background glows",
+                "Removes artwork-tinted washes and backdrop effects.",
+                app.saved.perf_disable_blurs,
+            ) {
+                out.push(Action::SetPerfDisableBlurs(!app.saved.perf_disable_blurs));
+            }
+            if toggle_row(
+                ui,
+                "perf-compact-buffers",
+                icon::DATABASE,
+                "Compact audio & stream buffers",
+                "Shrinks the sliding stream window below 2 MB.",
+                app.saved.perf_compact_buffers,
+            ) {
+                out.push(Action::SetPerfCompactBuffers(!app.saved.perf_compact_buffers));
+            }
+            if toggle_row(
+                ui,
+                "perf-placeholder-mood",
+                icon::IMAGE,
+                "Lightweight vector mood art",
+                "Saves RAM and network by using vector mood artwork.",
+                app.saved.perf_placeholder_mood_art,
+            ) {
+                out.push(Action::SetPerfPlaceholderMoodArt(!app.saved.perf_placeholder_mood_art));
+            }
+        },
+    );
 
-        // 6. Switches
-        if switch_row(ui, size, icon::BROOM, "Aggressive RAM Purge (Every 30s & Track Switch)", app.saved.perf_aggressive_ram) {
-            out.push(Action::SetPerfAggressiveRam(!app.saved.perf_aggressive_ram));
-        }
-        if switch_row(ui, size, icon::EYE_SLASH, "Disable Ambient Blurs & Background Shader Glows", app.saved.perf_disable_blurs) {
-            out.push(Action::SetPerfDisableBlurs(!app.saved.perf_disable_blurs));
-        }
-        if switch_row(ui, size, icon::DATABASE, "Compact Audio & Stream Buffers (Sub-2MB Window)", app.saved.perf_compact_buffers) {
-            out.push(Action::SetPerfCompactBuffers(!app.saved.perf_compact_buffers));
-        }
-        if switch_row(ui, size, icon::IMAGE, "Lightweight Vector Mood/Genre Art (Save RAM & Network)", app.saved.perf_placeholder_mood_art) {
-            out.push(Action::SetPerfPlaceholderMoodArt(!app.saved.perf_placeholder_mood_art));
-        }
-        if switch_row(ui, size, icon::GAME_CONTROLLER, "Automatic Game Mode (Detects running games & activates ultra-light HUD)", app.saved.auto_game_mode) {
-            out.push(Action::SetAutoGameMode(!app.saved.auto_game_mode));
-        }
-
-        // 7. Manual Game Mode Toggle Button
-        let (game_row, g_resp) = ui.allocate_exact_size(size, Sense::click());
-        let g_hover = hover_of(ui, &g_resp);
-        ui.painter().rect_filled(game_row, 7.0, veil(0.08 * g_hover));
-        ui.painter().text(pos2(game_row.left() + 22.0, game_row.center().y), Align2::CENTER_CENTER, icon::LIGHTNING, glyph(17.0), pal_color);
-        let g_title = if app.in_game_mode { "Exit Gaming HUD Mode" } else { "Enter Gaming Mode (Zero-Overhead F9 HUD)" };
-        label(ui, pos2(game_row.left() + 46.0, game_row.center().y), Align2::LEFT_CENTER, g_title, medium(13.5), TEXT, size.x - 180.0);
-        let g_right_center = pos2(game_row.right() - 14.0, game_row.center().y);
-        let g_badge = if app.in_game_mode { "Exit HUD" } else { "Start HUD" };
-        let _ = keycaps(ui, g_right_center, &[g_badge.to_owned()], pal_color);
-        if g_resp.clicked() {
-            out.push(Action::ToggleGameMode);
-        }
-
-        // 8. Manual Purge Button
-        let (purge_row, resp) = ui.allocate_exact_size(size, Sense::click());
+    settings_card_panel(ui, "perf-live", "Live memory", "Physical RAM AURI is using right now.", |ui| {
+        let row = row_base(ui, icon::CPU, "Physical working set", &format!("{:.1} MB", live_ram));
+        let btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(104.0, 28.0));
+        let resp = ui.interact(btn, Id::new("perf-purge-now"), Sense::click());
         let hover = hover_of(ui, &resp);
-        ui.painter().rect_filled(purge_row, 7.0, veil(0.08 * hover));
-        ui.painter().text(pos2(purge_row.left() + 22.0, purge_row.center().y), Align2::CENTER_CENTER, icon::CPU, glyph(17.0), pal_color);
-        label(ui, pos2(purge_row.left() + 46.0, purge_row.center().y), Align2::LEFT_CENTER, "Purge Working Set Memory Now", medium(13.5), TEXT, size.x - 180.0);
-        let right_center = pos2(purge_row.right() - 14.0, purge_row.center().y);
-        let _ = keycaps(ui, right_center, &["Clean RAM".to_owned()], pal_color);
+        let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
+        ui.painter().rect_filled(btn, 14.0, accent.gamma_multiply(0.18 + 0.12 * hover));
+        ui.painter().rect_stroke(btn, 14.0, Stroke::new(1.0_f32, accent), StrokeKind::Inside);
+        ui.painter().text(
+            btn.center(),
+            Align2::CENTER_CENTER,
+            "Purge now",
+            bold(12.0),
+            if hover > 0.1 { TEXT } else { accent },
+        );
+        describe(&resp, "Purge working set memory now");
         if resp.clicked() {
             out.push(Action::PurgeMemory);
         }
     });
-    let text = "Customizable profiles allow you to connect performance settings directly to your gaming setup or audio preference.";
-    let at = pos2(card.left() + 4.0, card.bottom() + SECTION_GAP / 2.0);
-    label(ui, at, Align2::LEFT_CENTER, text, sans(12.0), FAINT, card.width());
 }
 
 fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
@@ -6513,10 +6463,10 @@ fn settings_body(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<
             });
         }
         SettingsTab::Equalizer => {
-            audio_dsp_section(ui, app, out);
+            settings_column(ui, |ui| audio_dsp_section(ui, app, out));
         }
         SettingsTab::Performance => {
-            performance_settings_section(ui, app, out);
+            settings_column(ui, |ui| performance_settings_section(ui, app, out));
         }
         SettingsTab::GamingMode => {
             gaming_mode_section(ui, app, out);
