@@ -1135,7 +1135,12 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                 .exact_width(QUEUE_WIDTH)
                 .resizable(false)
                 .show_separator_line(false)
-                .frame(plain(if app.saved.queue_backdrop == crate::app::PanelBackdrop::Unified { b_col } else { p_col }))
+                .frame(plain(match app.saved.queue_backdrop {
+                    crate::app::PanelBackdrop::Unified => b_col,
+                    // Sheer glass: the canvas behind the panel shows through.
+                    crate::app::PanelBackdrop::Translucent => Color32::TRANSPARENT,
+                    _ => p_col,
+                }))
                 .show(ctx, |ui| queue_panel(app, ui, &mut out));
         } else if preview_route {
             // The live preview and the queue share the same rail slot, so
@@ -3376,6 +3381,11 @@ fn draw_ambient_backdrop(
         let haze = Rect::from_min_size(area.min, vec2(area.width(), haze_h));
         wash(ui.painter(), haze, glow, base_color);
     }
+}
+
+/// Same color at a fixed alpha — used by the sheer-glass panel styles.
+fn sheer(color: Color32, alpha: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
 }
 
 /// The ambient page canvas painted behind the content. Panels that opt into
@@ -5775,10 +5785,11 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
                 "bar-backdrop-seg",
                 icon::DROP,
                 "Player deck background",
-                "Glass is translucent, Solid is opaque, Artwork tints the deck with the playing cover, Unified melts it into the page canvas.",
+                "Glass is frosted, Translucent is sheer see-through glass, Solid is opaque, Artwork tints the deck, Unified melts it into the page canvas.",
                 app.saved.bar_backdrop,
                 &[
                     (crate::app::PanelBackdrop::Glass, "Glass"),
+                    (crate::app::PanelBackdrop::Translucent, "Translucent"),
                     (crate::app::PanelBackdrop::Solid, "Solid"),
                     (crate::app::PanelBackdrop::Artwork, "Artwork"),
                     (crate::app::PanelBackdrop::Unified, "Unified"),
@@ -5791,10 +5802,11 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
                 "queue-backdrop-seg",
                 icon::QUEUE,
                 "Queue panel background",
-                "Glass keeps the ambient cover glow, Solid is flat, Artwork washes the panel with the cover, Unified shares the page background.",
+                "Glass keeps the ambient cover glow, Translucent is sheer see-through glass, Solid is flat, Artwork washes the panel, Unified shares the page background.",
                 app.saved.queue_backdrop,
                 &[
                     (crate::app::PanelBackdrop::Glass, "Glass"),
+                    (crate::app::PanelBackdrop::Translucent, "Translucent"),
                     (crate::app::PanelBackdrop::Solid, "Solid"),
                     (crate::app::PanelBackdrop::Artwork, "Artwork"),
                     (crate::app::PanelBackdrop::Unified, "Unified"),
@@ -7772,6 +7784,11 @@ fn queue_panel(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
             let haze = Rect::from_min_size(area.min, vec2(area.width(), AMBIENT_HEIGHT.min(area.height())));
             wash(ui.painter(), haze, glow, PANEL);
         }
+        crate::app::PanelBackdrop::Translucent => {
+            // Sheer glass: a faint cover tint fading into a lifted plate, so
+            // the canvas behind the panel still shows through.
+            wash(ui.painter(), area, sheer(tint.unwrap_or(glow), 60), sheer(Color32::from_rgb(46, 50, 58), 150));
+        }
         crate::app::PanelBackdrop::Unified => paint_page_backdrop(ui, app, area),
     }
     ui.painter().vline(area.left() + 0.5, area.y_range(), Stroke::new(1.0_f32, veil(0.06)));
@@ -8278,24 +8295,29 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         .map(|picture| picture.tint);
     let pal_color = app.saved.theme_palette.color();
 
-    // Unified backdrop: the deck melts into the page canvas — no plate, no
-    // shadow, no grain; only the controls float above the shared background.
+    let floating = app.saved.bar_layout != BarLayout::Docked;
     let unified = app.saved.bar_backdrop == crate::app::PanelBackdrop::Unified;
+    // Unified removes the plate entirely when the deck is docked into the page
+    // frame; a floating deck still needs a glass veil, otherwise its controls
+    // sit unreadable on top of the page content.
+    let bare = unified && !floating;
 
     // Floating bar drop shadow so it visibly pops above page content
-    if app.saved.bar_layout != BarLayout::Docked && !unified {
+    if floating && !bare {
         ui.painter().rect_filled(deck.translate(vec2(0.0, 4.0)), rounding, Color32::from_black_alpha(85));
         ui.painter().rect_filled(deck.translate(vec2(0.0, 10.0)).expand(2.0), rounding + 2.0, Color32::from_black_alpha(45));
         ui.painter().rect_filled(deck.translate(vec2(0.0, 18.0)).expand(5.0), rounding + 4.0, Color32::from_black_alpha(20));
     }
 
-    // Deck Background: Glass / Solid / Artwork wash + Opacity / Grain
-    let opacity = if app.saved.bar_backdrop == crate::app::PanelBackdrop::Solid {
-        1.0
-    } else {
-        app.saved.bar_opacity.clamp(0.15, 1.0)
+    // Deck Background: Glass / Translucent / Solid / Artwork / Unified + Opacity / Grain
+    let opacity = match app.saved.bar_backdrop {
+        crate::app::PanelBackdrop::Solid => 1.0,
+        crate::app::PanelBackdrop::Translucent => app.saved.bar_opacity.clamp(0.15, 1.0) * 0.5,
+        crate::app::PanelBackdrop::Unified if floating => 0.62,
+        crate::app::PanelBackdrop::Unified => 0.0,
+        _ => app.saved.bar_opacity.clamp(0.15, 1.0),
     };
-    let mut deck_base = if app.saved.bar_layout != BarLayout::Docked {
+    let mut deck_base = if floating {
         if app.saved.theme_mode == ThemeMode::Light {
             Color32::from_rgb(245, 245, 248)
         } else {
@@ -8304,6 +8326,10 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     } else {
         PANEL
     };
+    // Sheer glass: lift the plate above the canvas behind it so it reads.
+    if app.saved.bar_backdrop == crate::app::PanelBackdrop::Translucent {
+        deck_base = deck_base.lerp_to_gamma(Color32::from_rgb(140, 146, 158), 0.30);
+    }
     // Artwork backdrop: blend the deck plate toward the playing cover's tint.
     if app.saved.bar_backdrop == crate::app::PanelBackdrop::Artwork {
         if let Some(tint) = tint {
@@ -8311,7 +8337,7 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         }
     }
     let bg_color = Color32::from_rgba_unmultiplied(deck_base.r(), deck_base.g(), deck_base.b(), (opacity * 255.0) as u8);
-    if !unified {
+    if !bare {
         ui.painter().rect_filled(deck, rounding, bg_color);
     }
     // Light accents (e.g. Monochrome Glass) would wash the whole deck out and
@@ -8322,7 +8348,7 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     let glow_left = mood(ui, "bar-glow-left", active_tint, PANEL, 0.42 * opacity);
     let glow_mid = mood(ui, "bar-glow-mid", active_tint, PANEL, 0.14 * opacity);
     let glow_right = mood(ui, "bar-glow-right", active_tint, PANEL, 0.03 * opacity);
-    if !unified {
+    if !bare {
         if rounding > 0.0 {
             paint_rounded_gradient(ui.painter(), deck, rounding, glow_left, glow_right);
         } else {
@@ -8410,7 +8436,8 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
             out.push(Action::Expand(!app.expanded));
         }
 
-        let scrub_track = Rect::from_min_size(pos2(deck.left() + 24.0, deck.bottom() - 4.5), vec2(deck.width() - 48.0, 3.0));
+        // Compact scrubber centered under the prev/play/next cluster.
+        let scrub_track = Rect::from_center_size(pos2(play_center.x, deck.bottom() - 4.5), vec2(150.0, 3.0));
         let sense = if duration > 0 { Sense::click_and_drag() } else { Sense::hover() };
         let scrub_resp = ui.interact(scrub_track.expand(4.0), Id::new("capsule-bar-scrub"), sense);
         if let (true, Some(pointer)) = (scrub_resp.dragged() || scrub_resp.clicked(), scrub_resp.interact_pointer_pos()) {
@@ -8446,7 +8473,13 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         BarLayout::FloatingPill => (mid - 15.0, mid + 15.0),
         _ => (mid - 16.0, mid + 22.0),
     };
-    let half = (deck.width() * 0.30).clamp(120.0, 320.0);
+    // Floating decks get a compact scrubber tucked under the transport
+    // buttons instead of the wide docked-style line.
+    let half = if app.saved.bar_layout == BarLayout::FloatingPill {
+        110.0
+    } else {
+        (deck.width() * 0.30).clamp(120.0, 320.0)
+    };
     let (track_rect, zone) = {
         let track = Rect::from_min_max(
             pos2(deck.center().x - half, scrub_y - 1.5),

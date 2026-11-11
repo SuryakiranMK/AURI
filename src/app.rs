@@ -417,9 +417,11 @@ impl ArtworkBgVariant {
 /// Backdrop style shared by the player deck and the queue panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum PanelBackdrop {
-    /// Translucent glass with the ambient cover glow showing through.
+    /// Frosted glass with the ambient cover glow showing through.
     #[default]
     Glass,
+    /// Sheer glass sheet: the canvas behind shows through clearly.
+    Translucent,
     /// Fully opaque panel color.
     Solid,
     /// Washed with the currently playing cover's tint.
@@ -430,8 +432,9 @@ pub enum PanelBackdrop {
 
 #[allow(dead_code)]
 impl PanelBackdrop {
-    pub const ALL: [PanelBackdrop; 4] = [
+    pub const ALL: [PanelBackdrop; 5] = [
         PanelBackdrop::Glass,
+        PanelBackdrop::Translucent,
         PanelBackdrop::Solid,
         PanelBackdrop::Artwork,
         PanelBackdrop::Unified,
@@ -440,6 +443,7 @@ impl PanelBackdrop {
     pub fn name(&self) -> &'static str {
         match self {
             PanelBackdrop::Glass => "Glass",
+            PanelBackdrop::Translucent => "Translucent",
             PanelBackdrop::Solid => "Solid",
             PanelBackdrop::Artwork => "Artwork",
             PanelBackdrop::Unified => "Unified",
