@@ -9422,11 +9422,30 @@ pub fn draw_game_overlay(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
     egui::CentralPanel::default()
         .frame(Frame::NONE)
         .show(ctx, |ui| {
-            let rect = ui.max_rect();
+            let full = ui.max_rect();
+            // Size variants crop the overlay UI to a region of the always
+            // fullscreen window, so toggling never resizes the swapchain.
+            let rect = match app.saved.game_overlay_size {
+                crate::app::GameOverlaySize::Full => full,
+                crate::app::GameOverlaySize::Half => Rect::from_min_max(pos2(full.left(), full.center().y), full.max),
+                crate::app::GameOverlaySize::Compact => Rect::from_center_size(
+                    pos2(full.center().x, full.center().y + full.height() * 0.25),
+                    vec2(full.width() * 0.5, full.height() * 0.5),
+                ),
+            };
 
-            // 1. Translucent backdrop (customizable opacity)
+            // 1. Translucent backdrop (customizable opacity), cropped to the
+            // overlay region; the rest of the window stays fully transparent.
             let alpha = (app.saved.game_overlay_opacity.clamp(0.15, 0.95) * 255.0) as u8;
             ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(alpha));
+
+            // Clicking outside a shrunken overlay returns to the game.
+            if app.saved.game_overlay_size != crate::app::GameOverlaySize::Full {
+                let outside = ui.interact(full, Id::new("game-overlay-outside-click"), Sense::click());
+                if outside.clicked() {
+                    actions.push(Action::ToggleGameOverlay);
+                }
+            }
 
             // Background click to dismiss overlay
             let bg_resp = ui.interact(rect, Id::new("game-overlay-backdrop-click"), Sense::click());

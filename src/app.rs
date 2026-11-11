@@ -735,16 +735,6 @@ impl GameOverlaySize {
     }
 }
 
-/// Window geometry (logical size + position) for the in-game overlay: full
-/// screen, the bottom half of the screen, or a compact bottom-centered card.
-fn overlay_geometry(size: GameOverlaySize, sw: f32, sh: f32, ppp: f32) -> (f32, f32, f32, f32) {
-    match size {
-        GameOverlaySize::Full => (sw / ppp, sh / ppp, 0.0, 0.0),
-        GameOverlaySize::Half => (sw / ppp, sh / (2.0 * ppp), 0.0, sh / (2.0 * ppp)),
-        GameOverlaySize::Compact => (sw / (2.0 * ppp), sh / (2.0 * ppp), sw / (4.0 * ppp), sh / (2.0 * ppp)),
-    }
-}
-
 #[allow(dead_code)]
 impl GameOverlayHotkey {
     pub const ALL: [GameOverlayHotkey; 5] = [
@@ -1611,7 +1601,7 @@ pub struct App {
     pub game_hud_visible: bool,
     pub game_overlay_open: bool,
     pub game_mode_start_time: Option<Instant>,
-    pub hotkey_was_down: bool,
+    game_hotkey_stop: Arc<AtomicBool>,
     pub last_game_check: Instant,
     pub auto_game_detected: bool,
     pub original_queue: Option<Vec<Item>>,
@@ -1724,7 +1714,7 @@ impl App {
             game_hud_visible: false,
             game_overlay_open: false,
             game_mode_start_time: None,
-            hotkey_was_down: false,
+            game_hotkey_stop: Arc::default(),
             last_game_check: Instant::now(),
             auto_game_detected: false,
             original_queue: None,
@@ -2268,6 +2258,32 @@ impl App {
             Some(current) if current > 0 && self.player.position_ms() < RESTART_AFTER_MS => self.play_index(current - 1),
             Some(_) => self.player.seek(0),
             None => {}
+        }
+    }
+
+    /// Polls the overlay hotkey on a dedicated thread while Gaming Mode is
+    /// active, so the UI never needs a repaint loop just to watch the keyboard.
+    /// Only a rising edge sends the toggle action and wakes the UI.
+    fn start_game_hotkey(&mut self) {
+        self.game_hotkey_stop.store(true, Relaxed);
+        #[cfg(windows)]
+        {
+            let stop = Arc::new(AtomicBool::new(false));
+            self.game_hotkey_stop = stop.clone();
+            let (sender, ctx) = (self.sender.clone(), self.ctx.clone());
+            let hotkey = self.saved.game_overlay_hotkey;
+            std::thread::spawn(move || {
+                let mut was_down = false;
+                while !stop.load(Relaxed) {
+                    let down = is_overlay_hotkey_pressed(hotkey);
+                    if down && !was_down {
+                        let _ = sender.send(Event::Pressed(Action::ToggleGameOverlay));
+                        ctx.request_repaint();
+                    }
+                    was_down = down;
+                    std::thread::sleep(Duration::from_millis(30));
+                }
+            });
         }
     }
 
@@ -3309,6 +3325,10 @@ impl App {
                     self.game_overlay_open = false;
                     self.game_mode_start_time = Some(Instant::now());
                     self.apply(Action::PurgeMemory);
+                    // Idle footprint: a tiny artwork cache plus the dedicated
+                    // hotkey thread keeps RAM in single digits and CPU/GPU idle.
+                    self.art.set_budget_bytes(1024 * 1024);
+                    self.start_game_hotkey();
                     self.title_bar.enable_transparency();
                     // Park the window at FULL off-screen size: toggling the
                     // overlay later only moves the window, it never resizes it.
@@ -3325,6 +3345,8 @@ impl App {
                 self.in_game_mode = false;
                 self.game_overlay_open = false;
                 self.game_mode_start_time = None;
+                self.game_hotkey_stop.store(true, Relaxed);
+                self.art.set_budget_bytes(self.saved.perf_art_cache_mb * 1024 * 1024);
                 self.title_bar.restore_decorations();
                 // Reset the restore geometry first so un-maximizing later has
                 // something sane to come back to, then return maximized —
@@ -3340,6 +3362,8 @@ impl App {
                 self.in_game_mode = false;
                 self.game_overlay_open = false;
                 self.game_mode_start_time = None;
+                self.game_hotkey_stop.store(true, Relaxed);
+                self.art.set_budget_bytes(self.saved.perf_art_cache_mb * 1024 * 1024);
                 self.title_bar.restore_decorations();
                 self.saved.mini_mode = true;
                 let (w, h) = self.saved.mini_variant.size(self.mini_queue_open);
@@ -3353,21 +3377,19 @@ impl App {
             Action::ToggleGameOverlay => {
                 if self.in_game_mode {
                     self.game_overlay_open = !self.game_overlay_open;
-                    let (sw, sh) = screen_size();
-                    let ppp = self.ctx.pixels_per_point().max(0.5);
                     if self.game_overlay_open {
-                        // Size and place the overlay per the user's variant.
-                        // No focus is stolen so the game keeps its foreground.
-                        let (w, h, x, y) = overlay_geometry(self.saved.game_overlay_size, sw, sh, ppp);
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
+                        // Move-only: the window already sits at full screen size
+                        // while parked. Size variants crop the drawn UI, never
+                        // the window, so no swapchain resize happens here.
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
                         self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+                        self.ctx.request_repaint();
                     } else {
-                        // Re-park at full off-screen size so the next toggle
-                        // starts from a stable geometry.
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(sw / ppp, sh / ppp)));
                         self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-32000.0, -32000.0)));
                         self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                        // Drop back to a minimal working set once the overlay
+                        // closes; the next open re-faults what it needs.
+                        self.apply(Action::PurgeMemory);
                     }
                 }
             }
@@ -3379,20 +3401,16 @@ impl App {
             }
             Action::SetGameOverlayHotkey(hk) => {
                 self.saved.game_overlay_hotkey = hk;
+                if self.in_game_mode {
+                    // Restart the polling thread with the new binding.
+                    self.start_game_hotkey();
+                }
             }
             Action::SetGameOverlayOpacity(op) => {
                 self.saved.game_overlay_opacity = op.clamp(0.15, 0.95);
             }
             Action::SetGameOverlaySize(size) => {
                 self.saved.game_overlay_size = size;
-                // Live-apply while the overlay is already open.
-                if self.in_game_mode && self.game_overlay_open {
-                    let (sw, sh) = screen_size();
-                    let ppp = self.ctx.pixels_per_point().max(0.5);
-                    let (w, h, x, y) = overlay_geometry(size, sw, sh, ppp);
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
-                }
             }
             Action::ToggleGameMusicWidget => {
                 self.saved.game_show_music_widget = !self.saved.game_show_music_widget;
@@ -3693,20 +3711,12 @@ impl eframe::App for App {
                 }
             }
         }
-        if !minimized && !self.saved.mini_mode && (size.x < WINDOW_MIN[0] - 1.0 || size.y < WINDOW_MIN[1] - 1.0) {
+        if !minimized && !self.in_game_mode && !self.saved.mini_mode && (size.x < WINDOW_MIN[0] - 1.0 || size.y < WINDOW_MIN[1] - 1.0) {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
         }
         self.art.begin_frame(ctx);
         self.drain(ctx);
         let mut actions = if self.record(ctx) { Vec::new() } else { self.shortcuts(ctx) };
-        #[cfg(windows)]
-        if self.in_game_mode {
-            let down = is_overlay_hotkey_pressed(self.saved.game_overlay_hotkey);
-            if down && !self.hotkey_was_down {
-                actions.push(Action::ToggleGameOverlay);
-            }
-            self.hotkey_was_down = down;
-        }
 
         if self.in_game_mode {
             if self.game_overlay_open {
@@ -3714,8 +3724,18 @@ impl eframe::App for App {
                     actions.push(Action::ToggleGameOverlay);
                 }
                 actions.extend(ui::draw_game_overlay(self, ctx));
+                // Light idle tick for the clock and scrubber; input events
+                // repaint on their own. When the overlay is closed there is no
+                // fast repaint loop at all: the hotkey thread and player events
+                // wake the UI, so idle CPU/GPU stay near zero. The slow 1s tick
+                // only services auto game detection and the idle RAM trim.
+                ctx.request_repaint_after(Duration::from_millis(250));
             } else {
-                ctx.request_repaint_after(Duration::from_millis(50));
+                ctx.request_repaint_after(Duration::from_millis(1000));
+                if self.last_purge.elapsed() >= Duration::from_secs(15) {
+                    self.apply(Action::PurgeMemory);
+                    self.last_purge = Instant::now();
+                }
             }
         } else if self.saved.mini_mode {
             let is_maximized = ctx.input(|input| input.viewport().maximized == Some(true));
