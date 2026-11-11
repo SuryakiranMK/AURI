@@ -453,7 +453,6 @@ struct Scrub {
     played: f32,
     buffered: f32,
     hover: f32,
-    aim: Option<(f32, u64)>,
 }
 
 #[cfg(windows)]
@@ -8333,7 +8332,6 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
             played: frac,
             buffered: if item.is_some() { app.player.buffered() } else { 0.0 },
             hover: scrub_resp.hovered() as i32 as f32,
-            aim: None,
         };
     }
 
@@ -8342,14 +8340,19 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         out.push(Action::Expand(!app.expanded));
     }
 
-    let (track_rect, zone) = if app.saved.bar_layout == BarLayout::FloatingPill {
-        let margin = rounding + 8.0;
-        let track = Rect::from_min_size(pos2(deck.left() + margin, deck.bottom() - 4.5), vec2(deck.width() - 2.0 * margin, 3.0));
-        let zone = track.expand2(vec2(0.0, 7.0));
-        (track, zone)
-    } else {
-        let track = Rect::from_min_size(pos2(bar.left(), bar.top()), vec2(bar.width(), 3.0));
-        let zone = Rect::from_min_size(pos2(bar.left(), bar.top() - 2.0), vec2(bar.width(), 12.0));
+    // YouTube-Music-style center block: the transport row sits slightly above
+    // center with an always-visible scrubber and time labels below it.
+    let (row_y, scrub_y) = match app.saved.bar_layout {
+        BarLayout::FloatingPill => (mid - 15.0, mid + 15.0),
+        _ => (mid - 16.0, mid + 22.0),
+    };
+    let half = (deck.width() * 0.30).clamp(120.0, 320.0);
+    let (track_rect, zone) = {
+        let track = Rect::from_min_max(
+            pos2(deck.center().x - half, scrub_y - 1.5),
+            pos2(deck.center().x + half, scrub_y + 1.5),
+        );
+        let zone = track.expand2(vec2(4.0, 8.0));
         (track, zone)
     };
     let sense = if duration > 0 { Sense::click_and_drag() } else { Sense::hover() };
@@ -8359,7 +8362,6 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     }
     let fraction_at = |pointer: Pos2| ((pointer.x - track_rect.left()) / track_rect.width()).clamp(0.0, 1.0);
     let pointed = scrubber.interact_pointer_pos().map(fraction_at);
-    let aimed = pointed.or(scrubber.hover_pos().map(fraction_at)).filter(|_| duration > 0);
     let mut position = cur_pos;
     if let (true, Some(fraction)) = (scrubber.dragged() || scrubber.is_pointer_button_down_on(), pointed) {
         position = (fraction * duration as f32) as u64;
@@ -8375,7 +8377,6 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         hover: ui
             .ctx()
             .animate_bool_with_time(scrubber.id, scrubber.hovered() || scrubber.dragged(), HOVER_TIME),
-        aim: aimed.map(|fraction| (fraction, (fraction * duration as f32) as u64)),
     };
 
     let scrub_h = 3.0 + 1.0 * scrub.hover;
@@ -8384,11 +8385,35 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     let track_bg = if app.saved.bar_layout == BarLayout::Docked { veil(0.12) } else { veil(0.18) };
     ui.painter().rect_filled(track, 1.5, track_bg);
     ui.painter().rect_filled(span(scrub.buffered), 1.5, veil(0.28));
-    ui.painter().rect_filled(span(scrub.played), 1.5, pal_color);
+    let played = span(scrub.played);
+    // Dark under-edge so a light accent (Monochrome Glass) fill stays readable
+    // over glass decks and light artwork bleed-through.
+    if is_light_color(pal_color) && played.width() > 0.5 {
+        ui.painter().rect_filled(played.expand(1.0), 1.5, Color32::from_black_alpha(80));
+    }
+    ui.painter().rect_filled(played, 1.5, pal_color);
     let thumb_x = track.left() + track.width() * scrub.played;
     let thumb_r = 4.0 + 1.5 * scrub.hover;
     ui.painter().circle_filled(pos2(thumb_x, track.center().y), thumb_r, pal_color);
     ui.painter().circle_filled(pos2(thumb_x, track.center().y), thumb_r * 0.45, Color32::WHITE);
+    label(
+        ui,
+        pos2(track_rect.left() - 8.0, scrub_y),
+        Align2::RIGHT_CENTER,
+        &clock(position.min(duration)),
+        sans(11.0),
+        MUTED,
+        46.0,
+    );
+    label(
+        ui,
+        pos2(track_rect.right() + 8.0, scrub_y),
+        Align2::LEFT_CENTER,
+        &clock(duration),
+        sans(11.0),
+        MUTED,
+        46.0,
+    );
 
     match item {
         Some(item) => {
@@ -8461,7 +8486,7 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         }
     }
 
-    let center = pos2(deck.center().x, mid);
+    let center = pos2(deck.center().x, row_y);
     let active = item.is_some();
     let play = Rect::from_center_size(center, Vec2::splat(42.0));
     let toggle = ui.interact(play, Id::new("bar-play"), Sense::click());
@@ -8640,34 +8665,6 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     }
     let _ = right;
     scrub
-}
-
-#[allow(dead_code)]
-fn paint_scrubber(ctx: &egui::Context, scrub: &Scrub, accent_color: Color32) {
-    let painter = ctx.layer_painter(egui::LayerId::background());
-    let height = 2.0 + 2.0 * scrub.hover;
-    let span = |fraction: f32| Rect::from_min_size(scrub.bar.min - vec2(0.0, height / 2.0), vec2(scrub.bar.width() * fraction, height));
-    painter.rect_filled(span(1.0), 0.0, rgb(0x26272C));
-    painter.rect_filled(span(scrub.buffered), 0.0, rgb(0x45474E));
-    let played = span(scrub.played);
-    // Dark under-edge so a light accent (Monochrome Glass) fill stays readable
-    // over glass decks and light artwork bleed-through.
-    if is_light_color(accent_color) && played.width() > 0.5 {
-        painter.rect_filled(played.expand(1.0), 0.0, Color32::from_black_alpha(80));
-    }
-    painter.rect_filled(played, 0.0, accent_color);
-    painter.circle_filled(pos2(span(scrub.played).right(), scrub.bar.top()), 6.0 * scrub.hover, TEXT);
-
-    let Some((fraction, ms)) = scrub.aim else { return };
-    let mut painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("scrub-time")));
-    painter.set_opacity(scrub.hover);
-    let text = painter.layout_no_wrap(clock(ms), medium(12.5), TEXT);
-    let size = text.size() + vec2(20.0, 12.0);
-    let reach = (scrub.bar.width() - size.x) / 2.0 - 8.0;
-    let x = scrub.bar.center().x + (scrub.bar.width() * (fraction - 0.5)).clamp(-reach, reach);
-    let bubble = Rect::from_center_size(pos2(x, scrub.bar.top() - 14.0 - size.y / 2.0), size);
-    painter.rect(bubble, 9.0, FLOATING, Stroke::new(1.0_f32, veil(0.1)), StrokeKind::Inside);
-    painter.galley(bubble.center() - text.size() / 2.0, text, TEXT);
 }
 
 fn notice(app: &App, ctx: &egui::Context, out: &mut Vec<Action>) {
