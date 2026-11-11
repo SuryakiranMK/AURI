@@ -360,6 +360,7 @@ pub enum PerfProfile {
     Custom,
 }
 
+#[allow(dead_code)]
 impl PerfProfile {
     pub const ALL: [PerfProfile; 4] = [
         PerfProfile::CompetitiveGaming,
@@ -388,6 +389,7 @@ pub enum ArtworkBgVariant {
     MinimalEdgeGlow,
 }
 
+#[allow(dead_code)]
 impl ArtworkBgVariant {
     pub const ALL: [ArtworkBgVariant; 4] = [
         ArtworkBgVariant::CanvasTint,
@@ -414,6 +416,7 @@ pub enum MiniVariant {
     StudioCard,
 }
 
+#[allow(dead_code)]
 impl MiniVariant {
     pub const ALL: [MiniVariant; 3] = [
         MiniVariant::ClassicHud,
@@ -766,8 +769,6 @@ pub struct Saved {
     #[serde(default = "default_true")]
     pub perf_aggressive_ram: bool,
     #[serde(default = "default_true")]
-    pub perf_suspend_animations: bool,
-    #[serde(default = "default_true")]
     pub perf_disable_blurs: bool,
     #[serde(default = "default_true")]
     pub perf_compact_buffers: bool,
@@ -789,10 +790,6 @@ pub struct Saved {
     pub discord_line2: DiscordLineContent,
     #[serde(default = "default_discord_line3")]
     pub discord_line3: DiscordLineContent,
-    #[serde(default = "default_true")]
-    pub discord_button_listen: bool,
-    #[serde(default = "default_true")]
-    pub discord_button_app: bool,
     #[serde(default = "default_false")]
     pub discord_show_when_paused: bool,
     #[serde(default = "default_false")]
@@ -1123,7 +1120,6 @@ impl Default for Saved {
             auto_game_mode: false,
             performance_mode: false,
             perf_aggressive_ram: true,
-            perf_suspend_animations: true,
             perf_disable_blurs: true,
             perf_compact_buffers: true,
             perf_placeholder_mood_art: false,
@@ -1135,8 +1131,6 @@ impl Default for Saved {
             discord_line1: DiscordLineContent::Title,
             discord_line2: DiscordLineContent::Artist,
             discord_line3: DiscordLineContent::Album,
-            discord_button_listen: true,
-            discord_button_app: true,
             discord_show_when_paused: false,
             discord_hide_details: false,
             discord_status_text: DiscordStatusField::Line2Artist,
@@ -1304,12 +1298,9 @@ pub enum Action {
     GlobalHotkeys(bool),
     Record(Option<Command>),
     ResetHotkeys,
-    #[allow(dead_code)]
     AutoPurgeRam(bool),
     TogglePerformanceMode,
     SetPerfAggressiveRam(bool),
-    #[allow(dead_code)]
-    SetPerfSuspendAnimations(bool),
     SetPerfDisableBlurs(bool),
     SetPerfCompactBuffers(bool),
     SetPerfPlaceholderMoodArt(bool),
@@ -1322,10 +1313,6 @@ pub enum Action {
     SetDiscordLine1(DiscordLineContent),
     SetDiscordLine2(DiscordLineContent),
     SetDiscordLine3(DiscordLineContent),
-    #[allow(dead_code)]
-    SetDiscordButtonListen(bool),
-    #[allow(dead_code)]
-    SetDiscordButtonApp(bool),
     #[allow(dead_code)]
     SetSettingsTab(SettingsTab),
     SetMiniPalette(MiniPalette),
@@ -2812,7 +2799,6 @@ impl App {
                 }
             }
             Action::SetPerfAggressiveRam(enabled) => self.saved.perf_aggressive_ram = enabled,
-            Action::SetPerfSuspendAnimations(enabled) => self.saved.perf_suspend_animations = enabled,
             Action::SetPerfDisableBlurs(enabled) => self.saved.perf_disable_blurs = enabled,
             Action::SetPerfCompactBuffers(enabled) => self.saved.perf_compact_buffers = enabled,
             Action::SetPerfPlaceholderMoodArt(enabled) => self.saved.perf_placeholder_mood_art = enabled,
@@ -2857,8 +2843,6 @@ impl App {
             Action::SetDiscordLine1(c) => self.saved.discord_line1 = c,
             Action::SetDiscordLine2(c) => self.saved.discord_line2 = c,
             Action::SetDiscordLine3(c) => self.saved.discord_line3 = c,
-            Action::SetDiscordButtonListen(b) => self.saved.discord_button_listen = b,
-            Action::SetDiscordButtonApp(b) => self.saved.discord_button_app = b,
             Action::SetSettingsTab(tab) => {
                 self.expanded = false;
                 self.go(Route::Settings(tab));

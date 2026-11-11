@@ -60,8 +60,6 @@ const SETTING_ROW: f32 = 52.0;
 const HOTKEY_ROW: f32 = 56.0;
 #[allow(dead_code)]
 const STATUS_ROW: f32 = 26.0;
-const SECTION_GAP: f32 = 32.0;
-const CARD_PAD: f32 = 6.0;
 const CARD_RADIUS: f32 = 12.0;
 
 const fn rgb(hex: u32) -> Color32 {
@@ -1819,19 +1817,6 @@ fn wide_row(ui: &mut Ui, size: Vec2, symbol: &str, font: FontId, tint: Color32, 
     response
 }
 
-fn switch_row(ui: &mut Ui, size: Vec2, symbol: &str, text: &str, on: bool) -> bool {
-    let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
-    let response = wide_row(ui, size, symbol, glyph(17.0), MUTED, text);
-    let lit = ui.ctx().animate_bool_with_time(response.id.with("switch"), on, HOVER_TIME);
-    let track = Rect::from_center_size(pos2(response.rect.right() - 27.0, response.rect.center().y), vec2(30.0, 18.0));
-    ui.painter().rect_filled(track, 9.0, veil(0.16).lerp_to_gamma(accent, lit));
-    let knob = pos2(egui::lerp(track.left() + 9.0..=track.right() - 9.0, lit), track.center().y);
-    let knob_on_color = contrast_text_for(accent);
-    ui.painter().circle_filled(knob, 6.0, TEXT.lerp_to_gamma(knob_on_color, lit));
-    response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, true, on, text));
-    response.clicked()
-}
-
 fn menu_divider(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(vec2(MENU_WIDTH, 11.0), Sense::hover());
     ui.painter().hline(
@@ -3389,20 +3374,6 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     });
 }
 
-fn section(ui: &mut Ui, title: &str, height: f32, body: impl FnOnce(&mut Ui)) -> Rect {
-    let full = ui.available_width();
-    let width = full.min(SETTINGS_WIDTH);
-    eyebrow(ui, title, (full - width) / 2.0 + 4.0);
-    let (slot, _) = ui.allocate_exact_size(vec2(full, height), Sense::hover());
-    let card = Rect::from_center_size(slot.center(), vec2(width, height));
-    ui.painter().rect_filled(card, CARD_RADIUS, veil(0.05));
-    let mut inner = ui.new_child(UiBuilder::new().id_salt(title).max_rect(card.shrink(CARD_PAD)));
-    inner.set_clip_rect(card.intersect(ui.clip_rect()));
-    body(&mut inner);
-    ui.add_space(SECTION_GAP);
-    card
-}
-
 fn keycaps(ui: &Ui, right_center: Pos2, parts: &[String], tint: Color32) -> f32 {
     let mut right = right_center.x;
     for part in parts.iter().rev() {
@@ -3471,94 +3442,6 @@ fn hotkey_row(ui: &mut Ui, app: &App, command: Command, enabled: bool, out: &mut
             out.push(Action::Record((!recording).then_some(command)));
         }
     }
-}
-
-fn combo_selector<T: Copy + PartialEq>(
-    ui: &mut Ui,
-    id_salt: &str,
-    label_text: &str,
-    desc_text: &str,
-    current: T,
-    options: &[(T, &str)],
-    mut on_change: impl FnMut(T),
-) {
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(label_text).font(medium(13.0)).color(TEXT));
-        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-            egui::ComboBox::from_id_salt(id_salt)
-                .selected_text(RichText::new(options.iter().find(|(val, _)| *val == current).map(|(_, l)| *l).unwrap_or("")).font(sans(12.0)).color(TEXT))
-                .width(190.0)
-                .show_ui(ui, |ui| {
-                    for &(val, opt_label) in options {
-                        let is_selected = val == current;
-                        if ui.selectable_label(is_selected, opt_label).clicked() {
-                            on_change(val);
-                        }
-                    }
-                });
-        });
-    });
-    if !desc_text.is_empty() {
-        ui.label(RichText::new(desc_text).font(sans(11.0)).color(MUTED));
-    }
-    ui.add_space(8.0);
-}
-
-/// Slider row for settings cards: label left, always-visible track + value right.
-/// Returns the new value while it is being changed.
-fn card_slider_row(
-    ui: &mut Ui,
-    id_salt: &str,
-    label_text: &str,
-    desc_text: &str,
-    value: f32,
-    range: std::ops::RangeInclusive<f32>,
-    format: impl Fn(f32) -> String,
-) -> Option<f32> {
-    let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
-    let min = *range.start();
-    let max = *range.end();
-    let mut changed = None;
-    ui.push_id(id_salt, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(label_text).font(medium(13.0)).color(TEXT));
-            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                let (val_slot, _) = ui.allocate_exact_size(vec2(58.0, 18.0), Sense::hover());
-                let galley = ui.painter().layout_no_wrap(format(value), bold(12.5), accent);
-                ui.painter().galley(
-                    pos2(val_slot.right() - galley.size().x, val_slot.center().y - galley.size().y / 2.0),
-                    galley,
-                    accent,
-                );
-                ui.add_space(10.0);
-                let track_w = ui.available_width().min(220.0);
-                let (slot, resp) = ui.allocate_exact_size(vec2(track_w, 22.0), Sense::click_and_drag());
-                point_at(&resp);
-                let cy = slot.center().y;
-                let line = Rect::from_min_max(pos2(slot.left(), cy - 3.0), pos2(slot.right(), cy + 3.0));
-                ui.painter().rect_filled(line, 3.0, Color32::from_rgb(52, 54, 66));
-                let frac = if max > min { ((value - min) / (max - min)).clamp(0.0, 1.0) } else { 0.0 };
-                let fill = Rect::from_min_max(line.min, pos2(line.left() + line.width() * frac, line.max.y));
-                ui.painter().rect_filled(fill, 3.0, accent);
-                let thumb = pos2(line.left() + line.width() * frac, cy);
-                ui.painter().circle_filled(thumb, 7.0, Color32::WHITE);
-                ui.painter().circle_filled(thumb, 3.5, accent);
-                describe(&resp, label_text);
-                if let (true, Some(pointer)) = ((resp.clicked() || resp.dragged()), resp.interact_pointer_pos()) {
-                    let new_frac = ((pointer.x - line.left()) / line.width().max(1.0)).clamp(0.0, 1.0);
-                    let new_value = min + new_frac * (max - min);
-                    if (new_value - value).abs() > f32::EPSILON {
-                        changed = Some(new_value);
-                    }
-                }
-            });
-        });
-        if !desc_text.is_empty() {
-            ui.label(RichText::new(desc_text).font(sans(11.0)).color(MUTED));
-        }
-        ui.add_space(6.0);
-    });
-    changed
 }
 
 // ---------- Unified settings kit: icon-first rows inside auto-height cards ----------
@@ -3821,19 +3704,6 @@ fn input_row(
     None
 }
 
-fn discord_toggle_row(ui: &mut Ui, label_text: &str, desc_text: &str, on: bool) -> bool {
-    let size = vec2(ui.available_width(), 38.0);
-    let clicked = switch_row(ui, size, "", label_text, on);
-    if !desc_text.is_empty() {
-        ui.add_space(-4.0);
-        let pad = 12.0;
-        let at = pos2(ui.cursor().left() + pad, ui.cursor().top());
-        label(ui, at, Align2::LEFT_TOP, desc_text, sans(11.0), MUTED, size.x - 24.0);
-        ui.add_space(18.0);
-    }
-    clicked
-}
-
 fn settings_card_panel(ui: &mut Ui, id_salt: &str, title: &str, subtitle: &str, body: impl FnOnce(&mut Ui)) {
     if !title.is_empty() {
         ui.label(RichText::new(title).font(bold(12.5)).color(TEXT));
@@ -4045,9 +3915,9 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
         ui.set_width(w);
 
         // Header Preview Toggle Pill
-        let (toggle_row, _) = ui.allocate_exact_size(vec2(w, 28.0), Sense::hover());
+        let (preview_pill, _) = ui.allocate_exact_size(vec2(w, 28.0), Sense::hover());
         let btn_w = 140.0;
-        let btn_rect = Rect::from_min_size(pos2(toggle_row.right() - btn_w, toggle_row.center().y - 13.0), vec2(btn_w, 26.0));
+        let btn_rect = Rect::from_min_size(pos2(preview_pill.right() - btn_w, preview_pill.center().y - 13.0), vec2(btn_w, 26.0));
         let btn_resp = ui.interact(btn_rect, Id::new("settings-discord-toggle-preview-btn"), Sense::click());
         let hov = hover_of(ui, &btn_resp);
         let preview_active = app.settings_preview_open && !app.saved.queue_open;
@@ -4061,7 +3931,7 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
         ui.add_space(6.0);
 
         // Card 1: RICH PRESENCE & PRIVACY
-        settings_card_panel(ui, "disc-card-presence", "RICH PRESENCE & PRIVACY", "Control how music activity is shared with Discord.", |ui| {
+        settings_card_panel(ui, "disc-card-presence", "Rich presence & privacy", "Control how music activity is shared with Discord.", |ui| {
             let (status_text, stat_color) = match app.discord_linked {
                 Some(true) if app.playing() => ("Connected · Showing active track", Color32::from_rgb(34, 197, 94)),
                 Some(true) => ("Connected · Shows while track plays", Color32::from_rgb(34, 197, 94)),
@@ -4075,22 +3945,44 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
             });
             ui.add_space(6.0);
 
-            if discord_toggle_row(ui, "Rich Presence", "Show currently playing song on your Discord profile.", app.saved.discord) {
+            if toggle_row(
+                ui,
+                "disc-rich",
+                icon::DISCORD_LOGO,
+                "Rich presence",
+                "Show the currently playing song on your Discord profile.",
+                app.saved.discord,
+            ) {
                 out.push(Action::ShowOnDiscord(!app.saved.discord));
             }
-            if discord_toggle_row(ui, "Show when paused", "Keep card up while track is paused without running progress bar.", app.saved.discord_show_when_paused) {
+            if toggle_row(
+                ui,
+                "disc-paused",
+                icon::PAUSE,
+                "Show when paused",
+                "Keep the card up while the track is paused without a running progress bar.",
+                app.saved.discord_show_when_paused,
+            ) {
                 out.push(Action::SetDiscordShowWhenPaused(!app.saved.discord_show_when_paused));
             }
-            if discord_toggle_row(ui, "Hide details", "Stealth mode: say only that music is playing without song title, artist, or artwork.", app.saved.discord_hide_details) {
+            if toggle_row(
+                ui,
+                "disc-hide",
+                icon::EYE_SLASH,
+                "Hide details",
+                "Stealth mode: say only that music is playing, without song title, artist or artwork.",
+                app.saved.discord_hide_details,
+            ) {
                 out.push(Action::SetDiscordHideDetails(!app.saved.discord_hide_details));
             }
         });
 
         // Card 2: STATUS & APP NAME
-        settings_card_panel(ui, "disc-card-status", "STATUS & APP NAME", "Configure status line shown next to your name in member lists.", |ui| {
-            combo_selector(
+        settings_card_panel(ui, "disc-card-status", "Status & app name", "Configure the status line shown next to your name in member lists.", |ui| {
+            if let Some(st) = combo_row(
                 ui,
                 "disc-status-text",
+                icon::USER,
                 "Status text",
                 "What Discord shows next to your name in the member list.",
                 app.saved.discord_status_text,
@@ -4102,32 +3994,33 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
                     (crate::app::DiscordStatusField::Custom, "Custom"),
                     (crate::app::DiscordStatusField::None, "None"),
                 ],
-                |val| out.push(Action::SetDiscordStatusText(val)),
-            );
+            ) {
+                out.push(Action::SetDiscordStatusText(st));
+            }
 
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("App name").font(medium(13.0)).color(TEXT));
-                ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                    let mut name = app.saved.discord_app_name.clone();
-                    let edit = egui::TextEdit::singleline(&mut name)
-                        .hint_text("AURI")
-                        .desired_width(190.0)
-                        .font(sans(12.5));
-                    if ui.add(edit).changed() {
-                        out.push(Action::SetDiscordAppName(name));
-                    }
-                });
-            });
-            ui.label(RichText::new("Replaces \"AURI\" wherever the app name appears. Leave empty for default.").font(sans(10.5)).color(MUTED));
+            if let Some(name) = input_row(
+                ui,
+                "disc-app-name",
+                icon::TEXT_T,
+                "App name",
+                "Replaces \"AURI\" wherever the app name appears. Leave empty for default.",
+                "AURI",
+                false,
+                200.0,
+                &app.saved.discord_app_name,
+            ) {
+                out.push(Action::SetDiscordAppName(name));
+            }
         });
 
         // Card 3: CARD CONTENT & BUTTONS
-        settings_card_panel(ui, "disc-card-content", "PROFILE CARD CONTENT", "Lines and action buttons shown on your Discord profile card.", |ui| {
-            combo_selector(
+        settings_card_panel(ui, "disc-card-content", "Profile card content", "Lines and action buttons shown on your Discord profile card.", |ui| {
+            if let Some(line) = combo_row(
                 ui,
                 "disc-line-1",
-                "Line 1 (Bold)",
-                "Header line below app title.",
+                icon::TEXT_T,
+                "Line 1 (bold)",
+                "Header line below the app title.",
                 app.saved.discord_line1,
                 &[
                     (crate::app::DiscordLineContent::Title, "Song title"),
@@ -4135,13 +4028,15 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
                     (crate::app::DiscordLineContent::Album, "Album"),
                     (crate::app::DiscordLineContent::Off, "None"),
                 ],
-                |val| out.push(Action::SetDiscordLine1(val)),
-            );
-            combo_selector(
+            ) {
+                out.push(Action::SetDiscordLine1(line));
+            }
+            if let Some(line) = combo_row(
                 ui,
                 "disc-line-2",
+                icon::TEXT_T,
                 "Line 2",
-                "Secondary line below title.",
+                "Secondary line below the title.",
                 app.saved.discord_line2,
                 &[
                     (crate::app::DiscordLineContent::Artist, "Artist"),
@@ -4150,13 +4045,15 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
                     (crate::app::DiscordLineContent::Album, "Album"),
                     (crate::app::DiscordLineContent::Off, "None"),
                 ],
-                |val| out.push(Action::SetDiscordLine2(val)),
-            );
-            combo_selector(
+            ) {
+                out.push(Action::SetDiscordLine2(line));
+            }
+            if let Some(line) = combo_row(
                 ui,
                 "disc-line-3",
+                icon::TEXT_T,
                 "Line 3",
-                "Artwork hover text / album details.",
+                "Album details shown on artwork hover.",
                 app.saved.discord_line3,
                 &[
                     (crate::app::DiscordLineContent::Album, "Album"),
@@ -4164,31 +4061,33 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
                     (crate::app::DiscordLineContent::Title, "Song title"),
                     (crate::app::DiscordLineContent::Off, "None"),
                 ],
-                |val| out.push(Action::SetDiscordLine3(val)),
-            );
+            ) {
+                out.push(Action::SetDiscordLine3(line));
+            }
 
-            if discord_toggle_row(ui, "Clickable Line 1", "Make line 1 link directly to track on YouTube Music.", app.saved.discord_line1_clickable) {
+            if toggle_row(ui, "disc-l1-click", icon::LINK, "Clickable line 1", "Make line 1 link directly to the track on YouTube Music.", app.saved.discord_line1_clickable) {
                 out.push(Action::SetDiscordLine1Clickable(!app.saved.discord_line1_clickable));
             }
-            if discord_toggle_row(ui, "Clickable Line 2", "Make line 2 link directly to artist on YouTube Music.", app.saved.discord_line2_clickable) {
+            if toggle_row(ui, "disc-l2-click", icon::LINK, "Clickable line 2", "Make line 2 link directly to the artist on YouTube Music.", app.saved.discord_line2_clickable) {
                 out.push(Action::SetDiscordLine2Clickable(!app.saved.discord_line2_clickable));
             }
-            if discord_toggle_row(ui, "Album art", "Show cover artwork next to track.", app.saved.discord_album_art) {
+            if toggle_row(ui, "disc-album-art", icon::IMAGE, "Album art", "Show cover artwork next to the track.", app.saved.discord_album_art) {
                 out.push(Action::SetDiscordAlbumArt(!app.saved.discord_album_art));
             }
-            if discord_toggle_row(ui, "Clickable artwork", "Make cover art link directly to song on YouTube Music.", app.saved.discord_art_clickable) {
+            if toggle_row(ui, "disc-art-click", icon::LINK, "Clickable artwork", "Make the cover art link directly to the song on YouTube Music.", app.saved.discord_art_clickable) {
                 out.push(Action::SetDiscordArtClickable(!app.saved.discord_art_clickable));
             }
-            if discord_toggle_row(ui, "Provider badge", "Mark artwork with small AURI icon.", app.saved.discord_provider_badge) {
+            if toggle_row(ui, "disc-badge", icon::STAR, "Provider badge", "Mark the artwork with a small AURI icon.", app.saved.discord_provider_badge) {
                 out.push(Action::SetDiscordProviderBadge(!app.saved.discord_provider_badge));
             }
-            if discord_toggle_row(ui, "Progress bar", "Show track elapsed scrubber bar.", app.saved.discord_progress_bar) {
+            if toggle_row(ui, "disc-progress", icon::TIMER, "Progress bar", "Show the track elapsed scrubber bar.", app.saved.discord_progress_bar) {
                 out.push(Action::SetDiscordProgressBar(!app.saved.discord_progress_bar));
             }
 
-            combo_selector(
+            if let Some(button) = combo_row(
                 ui,
                 "disc-btn-1",
+                icon::PLAY,
                 "First button",
                 "",
                 app.saved.discord_button1,
@@ -4197,11 +4096,13 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
                     (crate::app::DiscordButtonOption::GetApp, "Get AURI"),
                     (crate::app::DiscordButtonOption::None, "None"),
                 ],
-                |val| out.push(Action::SetDiscordButton1(val)),
-            );
-            combo_selector(
+            ) {
+                out.push(Action::SetDiscordButton1(button));
+            }
+            if let Some(button) = combo_row(
                 ui,
                 "disc-btn-2",
+                icon::PLAY,
                 "Second button",
                 "",
                 app.saved.discord_button2,
@@ -4210,8 +4111,9 @@ fn render_discord_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32
                     (crate::app::DiscordButtonOption::ListenOnYtm, "Listen on YouTube Music"),
                     (crate::app::DiscordButtonOption::None, "None"),
                 ],
-                |val| out.push(Action::SetDiscordButton2(val)),
-            );
+            ) {
+                out.push(Action::SetDiscordButton2(button));
+            }
         });
     });
 }
@@ -4388,9 +4290,9 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
         ui.set_width(w);
 
         // Header Preview Toggle Pill
-        let (toggle_row, _) = ui.allocate_exact_size(vec2(w, 28.0), Sense::hover());
+        let (preview_pill, _) = ui.allocate_exact_size(vec2(w, 28.0), Sense::hover());
         let btn_w = 140.0;
-        let btn_rect = Rect::from_min_size(pos2(toggle_row.right() - btn_w, toggle_row.center().y - 13.0), vec2(btn_w, 26.0));
+        let btn_rect = Rect::from_min_size(pos2(preview_pill.right() - btn_w, preview_pill.center().y - 13.0), vec2(btn_w, 26.0));
         let btn_resp = ui.interact(btn_rect, Id::new("settings-gaming-toggle-preview-btn"), Sense::click());
         let hov = hover_of(ui, &btn_resp);
         let preview_active = app.settings_preview_open && !app.saved.queue_open;
@@ -4404,7 +4306,7 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
         ui.add_space(6.0);
 
         // Card 1: INSTANT ACTIVATION & CONTROLS
-        settings_card_panel(ui, "game-card-activation", "INSTANT GAMING MODE", "Zero-overhead background music mode designed for competitive gaming.", |ui| {
+        settings_card_panel(ui, "game-card-activation", "Instant gaming mode", "Zero-overhead background music mode designed for competitive gaming.", |ui| {
             let btn_rect = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), 38.0));
             let btn_resp = ui.interact(btn_rect, Id::new("enter-gaming-mode-cta"), Sense::click());
             let b_hov = hover_of(ui, &btn_resp);
@@ -4415,13 +4317,14 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
                 out.push(Action::ToggleGameMode);
             }
             ui.add_space(6.0);
-            ui.label(RichText::new("Minimizes AURI and detaches from taskbar. Music continues in background with ~0% CPU. Press hotkey in-game to access HUD.").font(sans(11.0)).color(MUTED));
+            ui.label(RichText::new("Minimizes AURI and detaches from the taskbar. Music continues in the background with ~0% CPU. Press the hotkey in-game to access the HUD.").font(sans(11.0)).color(MUTED));
             ui.add_space(10.0);
 
-            combo_selector(
+            if let Some(hotkey) = combo_row(
                 ui,
                 "game-overlay-hotkey-sel",
-                "Overlay Hotkey",
+                icon::KEYBOARD,
+                "Overlay hotkey",
                 "System hotkey that toggles the translucent overlay in-game.",
                 app.saved.game_overlay_hotkey,
                 &[
@@ -4431,14 +4334,16 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
                     (crate::app::GameOverlayHotkey::F12, "F12"),
                     (crate::app::GameOverlayHotkey::CtrlF1, "Ctrl + F1"),
                 ],
-                |val| out.push(Action::SetGameOverlayHotkey(val)),
-            );
+            ) {
+                out.push(Action::SetGameOverlayHotkey(hotkey));
+            }
 
-            if let Some(op) = card_slider_row(
+            if let Some(op) = slider_row(
                 ui,
                 "game-overlay-opacity",
-                "Backdrop Opacity",
-                "Darkness of translucent game backdrop when overlay is active.",
+                icon::EYEDROPPER,
+                "Backdrop opacity",
+                "Darkness of the translucent game backdrop when the overlay is active.",
                 app.saved.game_overlay_opacity,
                 0.15..=0.90,
                 |v| format!("{:.0}%", v * 100.0),
@@ -4448,11 +4353,13 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
         });
 
         // Card 2: AUTO GAME DETECTION, WHITELIST & BLACKLIST
-        settings_card_panel(ui, "game-card-detection", "AUTO GAME DETECTION & LISTS", "Automatically activates Gaming Mode when you launch a game.", |ui| {
-            if discord_toggle_row(
+        settings_card_panel(ui, "game-card-detection", "Auto game detection & lists", "Automatically activates Gaming Mode when you launch a game.", |ui| {
+            if toggle_row(
                 ui,
+                "game-auto-detect",
+                icon::GAME_CONTROLLER,
                 "Auto-detect full-screen games",
-                "Automatically enters zero-overhead mode when a game is in foreground and restores AURI when done.",
+                "Enters zero-overhead mode when a game is in the foreground and restores AURI when done.",
                 app.saved.auto_game_mode,
             ) {
                 out.push(Action::SetAutoGameMode(!app.saved.auto_game_mode));
@@ -4536,27 +4443,33 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
         });
 
         // Card 3: FLOATING OVERLAY WIDGETS
-        settings_card_panel(ui, "game-card-widgets", "FLOATING OVERLAY WIDGETS", "Enable or disable individual movable HUD widgets.", |ui| {
-            if discord_toggle_row(
+        settings_card_panel(ui, "game-card-widgets", "Floating overlay widgets", "Enable or disable the individual movable HUD widgets.", |ui| {
+            if toggle_row(
                 ui,
-                "Now Playing Music Widget",
-                "Draggable floating card with song cover art, title, seek scrubber, and media controls.",
+                "game-widget-music",
+                icon::MUSIC_NOTE,
+                "Now Playing music widget",
+                "Draggable floating card with song cover art, title, seek scrubber and media controls.",
                 app.saved.game_show_music_widget,
             ) {
                 out.push(Action::ToggleGameMusicWidget);
             }
-            if discord_toggle_row(
+            if toggle_row(
                 ui,
-                "Upcoming Queue Widget",
-                "Draggable floating card with upcoming songs in the queue and one-click track jumping.",
+                "game-widget-queue",
+                icon::LIST,
+                "Upcoming queue widget",
+                "Draggable floating card with upcoming songs and one-click track jumping.",
                 app.saved.game_show_queue_widget,
             ) {
                 out.push(Action::ToggleGameQueueWidget);
             }
-            if discord_toggle_row(
+            if toggle_row(
                 ui,
-                "Audio & Performance Controls Widget",
-                "Draggable floating card with master volume slider and instant working-set RAM purge button.",
+                "game-widget-audio",
+                icon::SPEAKER_HIGH,
+                "Audio & performance widget",
+                "Draggable floating card with the master volume slider and an instant RAM purge button.",
                 app.saved.game_show_audio_widget,
             ) {
                 out.push(Action::ToggleGameAudioWidget);
@@ -5008,8 +4921,8 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 
     // 1. Live Preview Card
     let prev_height = if app.saved.mini_variant == MiniVariant::StudioCard { 230.0 } else { 160.0 };
-    let card1 = section(ui, "Live Mini Mode Preview", prev_height, |ui| {
-        let size = vec2(ui.available_width(), prev_height - 2.0 * CARD_PAD);
+    settings_card_panel(ui, "mini-preview", "Live mini mode preview", "Dynamically reflects your opacity, tint, accent, grain and tools.", |ui| {
+        let size = vec2(ui.available_width(), prev_height);
         let (slot, _) = ui.allocate_exact_size(size, Sense::hover());
 
         match app.saved.mini_variant {
@@ -5188,35 +5101,30 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             }
         }
     });
-    let text = "Live interactive preview dynamically reflects your active opacity, background tint, accent palette, grain, and tools.";
-    label(ui, pos2(card1.left() + 4.0, card1.bottom() + SECTION_GAP / 2.0), Align2::LEFT_CENTER, text, sans(12.0), FAINT, card1.width());
 
-    // 2. Customization & Theme Section
-    let cust_height = 2.0 * CARD_PAD + 9.0 * SETTING_ROW + 220.0;
-    let card2 = section(ui, "Appearance, Color Themes & Features", cust_height, |ui| {
-        let size = vec2(ui.available_width(), SETTING_ROW);
+    settings_card_panel(
+        ui,
+        "mini-customize",
+        "Variant, theme & features",
+        "Pick the HUD layout, accent, background tint and which tools it shows.",
+        |ui| {
+            let size = vec2(ui.available_width(), SETTING_ROW);
 
-        // Mini Variant Layout Selector
-        eyebrow(ui, "Mini Player Variant & Layout", 0.0);
-        let (var_row, _) = ui.allocate_exact_size(vec2(size.x, 34.0), Sense::hover());
-        let var_w = (size.x - 10.0) / 3.0;
-        for (i, &variant) in MiniVariant::ALL.iter().enumerate() {
-            let active = app.saved.mini_variant == variant;
-            let slot = Rect::from_min_size(
-                pos2(var_row.left() + i as f32 * (var_w + 5.0), var_row.top()),
-                vec2(var_w, 32.0),
-            );
-            let resp = ui.interact(slot, Id::new(("mini-var-btn", i)), Sense::click());
-            let hover = hover_of(ui, &resp);
-            ui.painter().rect_filled(slot, 8.0, veil(0.06 + 0.05 * hover));
-            if active {
-                ui.painter().rect_stroke(slot, 8.0, Stroke::new(1.5_f32, pal_color), StrokeKind::Inside);
-            }
-            ui.painter().text(slot.center(), Align2::CENTER_CENTER, variant.name(), medium(12.0), if active { TEXT } else { MUTED });
-            if resp.clicked() {
+            if let Some(variant) = segmented_row(
+                ui,
+                "mini-variant-seg",
+                icon::PICTURE_IN_PICTURE,
+                "Mini player variant",
+                "",
+                app.saved.mini_variant,
+                &[
+                    (MiniVariant::ClassicHud, "Classic HUD"),
+                    (MiniVariant::CapsulePill, "Capsule Pill"),
+                    (MiniVariant::StudioCard, "Studio Card"),
+                ],
+            ) {
                 out.push(Action::SetMiniVariant(variant));
             }
-        }
         ui.add_space(8.0);
 
         // Theme Palette Swatches
@@ -5278,140 +5186,96 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         ui.add_space(8.0);
 
         // Glass Opacity Slider
-        let (op_row, _) = ui.allocate_exact_size(size, Sense::hover());
-        ui.painter().text(pos2(op_row.left() + 22.0, op_row.center().y), Align2::CENTER_CENTER, icon::EYEDROPPER, glyph(16.0), MUTED);
-        label(ui, pos2(op_row.left() + 46.0, op_row.center().y), Align2::LEFT_CENTER, "Glass Card Opacity", medium(13.5), TEXT, 170.0);
-        let op_text = format!("{:.0}%", app.saved.mini_opacity * 100.0);
-        let (changed, new_op) = settings_slider(
-            ui,
-            op_row,
-            Id::new("mini-opacity-slider"),
-            app.saved.mini_opacity,
-            0.55..=1.0,
-            &op_text,
-            pal_color,
-        );
-        if changed {
-            out.push(Action::SetMiniOpacity(new_op));
-        }
-        ui.add_space(8.0);
-
-        // Frosted Grain Effect Toggle & Slider
-        if switch_row(ui, size, icon::SPARKLE, "Frosted Acrylic Grain Effect", app.saved.mini_grain) {
-            out.push(Action::SetMiniGrain(!app.saved.mini_grain));
-        }
-        if app.saved.mini_grain {
-            let (grain_row, _) = ui.allocate_exact_size(size, Sense::hover());
-            ui.painter().text(pos2(grain_row.left() + 22.0, grain_row.center().y), Align2::CENTER_CENTER, icon::WAVEFORM, glyph(16.0), MUTED);
-            label(ui, pos2(grain_row.left() + 46.0, grain_row.center().y), Align2::LEFT_CENTER, "Grain Intensity", medium(13.5), TEXT, 170.0);
-            let g_text = format!("{:.0}%", app.saved.mini_grain_strength * 100.0);
-            let (changed, new_g) = settings_slider(
+            if let Some(op) = slider_row(
                 ui,
-                grain_row,
-                Id::new("mini-grain-slider"),
-                app.saved.mini_grain_strength,
-                0.05..=0.35,
-                &g_text,
-                pal_color,
-            );
-            if changed {
-                out.push(Action::SetMiniGrainStrength(new_g));
+                "mini-opacity",
+                icon::EYEDROPPER,
+                "Glass card opacity",
+                "",
+                app.saved.mini_opacity,
+                0.55..=1.0,
+                |v| format!("{:.0}%", v * 100.0),
+            ) {
+                out.push(Action::SetMiniOpacity(op));
             }
-            ui.add_space(6.0);
-        }
-
-        // Feature Toggles
-        if switch_row(ui, size, icon::SHUFFLE, "Show Shuffle & Repeat Controls", app.saved.mini_show_shuffle_repeat) {
-            out.push(Action::SetMiniShowShuffleRepeat(!app.saved.mini_show_shuffle_repeat));
-        }
-        if switch_row(ui, size, icon::LIST, "Show Upcoming Queue Drawer Button", app.saved.mini_show_queue) {
-            out.push(Action::SetMiniShowQueue(!app.saved.mini_show_queue));
-        }
-        if switch_row(ui, size, icon::SPEAKER_HIGH, "Show Mini Volume Slider", app.saved.mini_show_volume) {
-            out.push(Action::SetMiniShowVolume(!app.saved.mini_show_volume));
-        }
-        if switch_row(ui, size, icon::CLOCK, "Show Track Clock & Elapsed Time", app.saved.mini_show_clock) {
-            out.push(Action::SetMiniShowClock(!app.saved.mini_show_clock));
-        }
-        if switch_row(ui, size, icon::PUSH_PIN, "Always On Top Window Overlay", app.saved.mini_always_on_top) {
-            out.push(Action::SetMiniAlwaysOnTop(!app.saved.mini_always_on_top));
-        }
-        if switch_row(ui, size, icon::PUSH_PIN, "Lock Mini Player Position (Disable Dragging)", app.saved.mini_locked) {
-            out.push(Action::ToggleMiniLock);
-        }
-        if app.saved.mini_variant == MiniVariant::CapsulePill {
-            if switch_row(ui, size, icon::ARROWS_IN_SIMPLE, "Retractable Orb Sub-Mode (Circle to Pill on Hover)", app.saved.mini_capsule_retractable) {
-                out.push(Action::ToggleMiniCapsuleRetractable);
+            if toggle_row(
+                ui,
+                "mini-grain",
+                icon::SPARKLE,
+                "Frosted acrylic grain effect",
+                "Adds a subtle procedural noise texture to the glass card.",
+                app.saved.mini_grain,
+            ) {
+                out.push(Action::SetMiniGrain(!app.saved.mini_grain));
             }
-            let orb_desc = "Pill rests as a compact spinning vinyl circle; expands on hover and auto-retracts 5s after mouse leaves.";
-            let (orb_desc_row, _) = ui.allocate_exact_size(vec2(size.x, 20.0), Sense::hover());
-            label(ui, pos2(orb_desc_row.left() + 46.0, orb_desc_row.center().y), Align2::LEFT_CENTER, orb_desc, sans(11.5), MUTED, size.x - 58.0);
-            ui.add_space(6.0);
-        }
-        ui.add_space(8.0);
+            if app.saved.mini_grain {
+                if let Some(strength) = slider_row(
+                    ui,
+                    "mini-grain-strength",
+                    icon::WAVEFORM,
+                    "Grain intensity",
+                    "",
+                    app.saved.mini_grain_strength,
+                    0.05..=0.35,
+                    |v| format!("{:.0}%", v * 100.0),
+                ) {
+                    out.push(Action::SetMiniGrainStrength(strength));
+                }
+            }
 
-        // Launch Mini Mode Button
-        let (launch_row, resp) = ui.allocate_exact_size(size, Sense::click());
-        let hover = hover_of(ui, &resp);
-        ui.painter().rect_filled(launch_row, 7.0, pal_color.gamma_multiply(0.18 + 0.12 * hover));
-        ui.painter().rect_stroke(launch_row, 7.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.5)), StrokeKind::Inside);
-        ui.painter().text(pos2(launch_row.left() + 22.0, launch_row.center().y), Align2::CENTER_CENTER, icon::PICTURE_IN_PICTURE, glyph(17.0), pal_color);
-        label(ui, pos2(launch_row.left() + 46.0, launch_row.center().y), Align2::LEFT_CENTER, "Switch To Floating Glass Mini Player", medium(13.5), TEXT, size.x - 180.0);
-        let right_center = pos2(launch_row.right() - 14.0, launch_row.center().y);
-        let _ = keycaps(ui, right_center, &["Open Mini".to_owned()], pal_color);
-        if resp.clicked() {
-            out.push(Action::ToggleMiniMode);
-        }
-    });
-    let text = "Mini Mode floats seamlessly over games and applications with zero window borders and full transparency.";
-    let at = pos2(card2.left() + 4.0, card2.bottom() + SECTION_GAP / 2.0);
-    label(ui, at, Align2::LEFT_CENTER, text, sans(12.0), FAINT, card2.width());
-}
+            // Feature toggles
+            if toggle_row(ui, "mini-shuffle-repeat", icon::SHUFFLE, "Show shuffle & repeat controls", "", app.saved.mini_show_shuffle_repeat) {
+                out.push(Action::SetMiniShowShuffleRepeat(!app.saved.mini_show_shuffle_repeat));
+            }
+            if toggle_row(ui, "mini-queue", icon::LIST, "Show upcoming queue drawer button", "", app.saved.mini_show_queue) {
+                out.push(Action::SetMiniShowQueue(!app.saved.mini_show_queue));
+            }
+            if toggle_row(ui, "mini-volume", icon::SPEAKER_HIGH, "Show mini volume slider", "", app.saved.mini_show_volume) {
+                out.push(Action::SetMiniShowVolume(!app.saved.mini_show_volume));
+            }
+            if toggle_row(ui, "mini-clock", icon::CLOCK, "Show track clock & elapsed time", "", app.saved.mini_show_clock) {
+                out.push(Action::SetMiniShowClock(!app.saved.mini_show_clock));
+            }
+            if toggle_row(ui, "mini-always-top", icon::PUSH_PIN, "Always on top window overlay", "", app.saved.mini_always_on_top) {
+                out.push(Action::SetMiniAlwaysOnTop(!app.saved.mini_always_on_top));
+            }
+            if toggle_row(
+                ui,
+                "mini-locked",
+                icon::LOCK,
+                "Lock mini player position",
+                "Disables dragging the floating HUD.",
+                app.saved.mini_locked,
+            ) {
+                out.push(Action::ToggleMiniLock);
+            }
+            if app.saved.mini_variant == MiniVariant::CapsulePill {
+                if toggle_row(
+                    ui,
+                    "mini-orb",
+                    icon::ARROWS_IN_SIMPLE,
+                    "Retractable orb sub-mode",
+                    "Rests as a compact spinning vinyl circle; expands on hover and auto-retracts 5s after the mouse leaves.",
+                    app.saved.mini_capsule_retractable,
+                ) {
+                    out.push(Action::ToggleMiniCapsuleRetractable);
+                }
+            }
+            ui.add_space(4.0);
 
-fn settings_slider(
-    ui: &Ui,
-    row: Rect,
-    id: Id,
-    value: f32,
-    range: std::ops::RangeInclusive<f32>,
-    val_str: &str,
-    pal_color: Color32,
-) -> (bool, f32) {
-    let label_w = 76.0;
-    label(ui, pos2(row.right() - 16.0, row.center().y), Align2::RIGHT_CENTER, val_str, bold(12.5), pal_color, label_w);
-
-    let track_right = row.right() - 16.0 - label_w - 12.0;
-    let track_left = (row.left() + 220.0).min(track_right - 90.0);
-    let track = Rect::from_min_max(pos2(track_left, row.center().y - 2.5), pos2(track_right, row.center().y + 2.5));
-
-    let resp = ui.interact(track.expand(8.0), id, Sense::click_and_drag());
-    point_at(&resp);
-
-    let min = *range.start();
-    let max = *range.end();
-    let mut new_val = value;
-    let mut changed = false;
-
-    if let (true, Some(pointer)) = (resp.dragged() || resp.clicked(), resp.interact_pointer_pos()) {
-        let frac = ((pointer.x - track.left()) / track.width()).clamp(0.0, 1.0);
-        new_val = min + frac * (max - min);
-        changed = true;
-    }
-
-    let cur_frac = if max > min { ((value - min) / (max - min)).clamp(0.0, 1.0) } else { 0.0 };
-
-    // High-contrast, clearly visible track
-    ui.painter().rect_filled(track, 2.5, Color32::from_rgb(52, 54, 66));
-    // Filled accent bar
-    let fill = Rect::from_min_max(track.min, pos2(track.left() + track.width() * cur_frac, track.max.y));
-    ui.painter().rect_filled(fill, 2.5, pal_color);
-    // Thumb circle
-    let thumb_x = track.left() + track.width() * cur_frac;
-    let thumb_center = pos2(thumb_x, track.center().y);
-    ui.painter().circle_filled(thumb_center, 7.5, Color32::WHITE);
-    ui.painter().circle_stroke(thumb_center, 7.5, Stroke::new(1.0_f32, Color32::from_black_alpha(50)));
-
-    (changed, new_val)
+            if button_row(
+                ui,
+                "mini-launch",
+                icon::PICTURE_IN_PICTURE,
+                "Switch to the floating glass mini player",
+                "Mini Mode floats over games and apps with zero window borders.",
+                "Open mini",
+                false,
+            ) {
+                out.push(Action::ToggleMiniMode);
+            }
+        },
+    );
 }
 
 fn render_appearance_preview(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32) {
@@ -5521,9 +5385,9 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
         ui.set_width(w);
 
         // Header Preview Toggle Pill
-        let (toggle_row, _) = ui.allocate_exact_size(vec2(w, 28.0), Sense::hover());
+        let (preview_pill, _) = ui.allocate_exact_size(vec2(w, 28.0), Sense::hover());
         let btn_w = 140.0;
-        let btn_rect = Rect::from_min_size(pos2(toggle_row.right() - btn_w, toggle_row.center().y - 13.0), vec2(btn_w, 26.0));
+        let btn_rect = Rect::from_min_size(pos2(preview_pill.right() - btn_w, preview_pill.center().y - 13.0), vec2(btn_w, 26.0));
         let btn_resp = ui.interact(btn_rect, Id::new("settings-appearance-toggle-preview-btn"), Sense::click());
         let hov = hover_of(ui, &btn_resp);
         let preview_active = app.settings_preview_open && !app.saved.queue_open;
@@ -5537,7 +5401,7 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
         ui.add_space(6.0);
 
         // Card 1: THEME PRESETS & ACCENT
-        settings_card_panel(ui, "app-card-presets", "THEME PRESETS & ACCENT", "Base aesthetic palettes and primary highlight accent color.", |ui| {
+        settings_card_panel(ui, "app-card-presets", "Theme presets & accent", "Base aesthetic palettes and the primary highlight accent color.", |ui| {
             let presets: [ThemePreset; 7] = [
                 ThemePreset::Default,
                 ThemePreset::Catppuccin,
@@ -5664,22 +5528,13 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
                     out.push(Action::SetThemePalette(pal));
                 }
             }
-
-            let custom_cx = swatch_row.left() + dot_radius + palettes.len() as f32 * (dot_radius * 2.0 + spacing);
-            let custom_center = pos2(custom_cx, swatch_row.center().y);
-            let custom_rect = Rect::from_center_size(custom_center, Vec2::splat(dot_radius * 2.2));
-            let custom_resp = ui.interact(custom_rect, Id::new("custom-accent-color-btn"), Sense::click());
-            ui.painter().circle_filled(custom_center, dot_radius, Color32::from_rgb(168, 85, 247));
-            ui.painter().text(custom_center, Align2::CENTER_CENTER, "+", bold(13.0), Color32::WHITE);
-            if custom_resp.clicked() {
-                out.push(Action::SetThemePalette(MiniPalette::CyberViolet));
-            }
             ui.add_space(8.0);
 
             // Background tint slider
-            if let Some(tint) = card_slider_row(
+            if let Some(tint) = slider_row(
                 ui,
                 "background-tint",
+                icon::EYEDROPPER,
                 "Background tint",
                 "Shades the greys across background panels.",
                 app.saved.background_tint_shade,
@@ -5691,9 +5546,11 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
         });
 
         // Card 2: EFFECTS & AMBIENT
-        settings_card_panel(ui, "app-card-effects", "EFFECTS & AMBIENT", "Glows, adaptive artwork tinting, and element roundness.", |ui| {
-            if discord_toggle_row(
+        settings_card_panel(ui, "app-card-effects", "Effects & ambient", "Glows, adaptive artwork tinting and element roundness.", |ui| {
+            if toggle_row(
                 ui,
+                "app-adapt-artwork",
+                icon::IMAGE,
                 "Adapt colors to artwork",
                 "Uses the current album cover to tint the app's background canvas.",
                 app.saved.ambient_artwork_blur,
@@ -5702,33 +5559,29 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
             }
 
             if app.saved.ambient_artwork_blur {
-                ui.add_space(6.0);
-                ui.label(RichText::new("Artwork Backdrop Style").font(medium(12.0)).color(TEXT));
-                let variants = crate::app::ArtworkBgVariant::ALL;
-                let var_count = variants.len() as f32;
-                let (var_row, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-                let pill_w = (ui.available_width() - (var_count - 1.0) * 6.0) / var_count;
-                for (v_idx, &var) in variants.iter().enumerate() {
-                    let v_rect = Rect::from_min_size(pos2(var_row.left() + v_idx as f32 * (pill_w + 6.0), var_row.top()), vec2(pill_w, 28.0));
-                    let resp = ui.interact(v_rect, Id::new(("art-bg-var-pill", v_idx)), Sense::click());
-                    let hov = hover_of(ui, &resp);
-                    let is_active = app.saved.artwork_bg_variant == var;
-                    ui.painter().rect_filled(v_rect, 14.0, if is_active { pal_color.gamma_multiply(0.25) } else { veil(0.04 + 0.04 * hov) });
-                    if is_active {
-                        ui.painter().rect_stroke(v_rect, 14.0, Stroke::new(1.0_f32, pal_color), StrokeKind::Inside);
-                    }
-                    ui.painter().text(v_rect.center(), Align2::CENTER_CENTER, var.name(), if is_active { bold(11.0) } else { sans(11.0) }, if is_active { pal_color } else { MUTED });
-                    if resp.clicked() {
-                        out.push(Action::SetArtworkBgVariant(var));
-                    }
+                if let Some(variant) = segmented_row(
+                    ui,
+                    "artwork-bg-variant",
+                    icon::IMAGE,
+                    "Artwork backdrop style",
+                    "",
+                    app.saved.artwork_bg_variant,
+                    &[
+                        (crate::app::ArtworkBgVariant::CanvasTint, "Canvas Tint"),
+                        (crate::app::ArtworkBgVariant::BlurredBackdrop, "Frosted Blur"),
+                        (crate::app::ArtworkBgVariant::AmbientRadialGlow, "Radial Glow"),
+                        (crate::app::ArtworkBgVariant::MinimalEdgeGlow, "Edge Glow"),
+                    ],
+                ) {
+                    out.push(Action::SetArtworkBgVariant(variant));
                 }
-                ui.add_space(8.0);
 
                 // Backdrop Opacity slider
-                if let Some(op) = card_slider_row(
+                if let Some(op) = slider_row(
                     ui,
                     "artwork-bg-opacity",
-                    "Backdrop Opacity",
+                    icon::EYEDROPPER,
+                    "Backdrop opacity",
                     "",
                     app.saved.artwork_bg_opacity,
                     0.05..=0.60,
@@ -5738,10 +5591,11 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
                 }
 
                 // Backdrop Blur Radius slider
-                if let Some(blur) = card_slider_row(
+                if let Some(blur) = slider_row(
                     ui,
                     "artwork-bg-blur",
-                    "Backdrop Blur Radius",
+                    icon::DROP,
+                    "Backdrop blur radius",
                     "",
                     app.saved.artwork_bg_blur,
                     0.1..=1.0,
@@ -5749,31 +5603,34 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
                 ) {
                     out.push(Action::SetArtworkBgBlur(blur));
                 }
-                ui.add_space(4.0);
             }
 
-            if discord_toggle_row(
+            if toggle_row(
                 ui,
-                "Dynamic Ambient Cover Glow",
-                "Projects subtle, diffused ambient backlights matching active song artwork.",
+                "app-ambient-glow",
+                icon::SPARKLE,
+                "Dynamic ambient cover glow",
+                "Projects subtle, diffused ambient backlights matching the active song artwork.",
                 app.saved.ambient_glow,
             ) {
                 out.push(Action::SetAmbientGlow(!app.saved.ambient_glow));
             }
 
-            if discord_toggle_row(
+            if toggle_row(
                 ui,
-                "Selection Outline & Glow",
+                "app-selection-glow",
+                icon::CURSOR,
+                "Selection outline & glow",
                 "Adds a luminous accent border around active navigation tabs and selections.",
                 app.saved.selection_glow,
             ) {
                 out.push(Action::SetSelectionGlow(!app.saved.selection_glow));
             }
-            ui.add_space(8.0);
 
-            if let Some(cr) = card_slider_row(
+            if let Some(cr) = slider_row(
                 ui,
                 "corner-roundness",
+                icon::SQUARES_FOUR,
                 "Corner radius",
                 "Controls roundness of cards, buttons, and capsules throughout AURI.",
                 app.saved.corner_roundness,
@@ -5785,34 +5642,24 @@ fn render_appearance_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: 
         });
 
         // Card 3: PLAYER VIEW & NAVIGATION
-        settings_card_panel(ui, "app-card-layout", "PLAYER VIEW & NAVIGATION", "Layout of the player deck and side navigation panels.", |ui| {
-            combo_selector(
+        settings_card_panel(ui, "app-card-layout", "Player view & navigation", "Layout of the player deck and side navigation panels.", |ui| {
+            if toggle_row(
                 ui,
-                "player-bar-layout-sel",
-                "Player Bar Layout",
-                "Choose between classic docked bottom deck, floating island capsule, or mini capsule.",
-                app.saved.bar_layout,
-                &[
-                    (BarLayout::Docked, "Classic Docked Bottom Deck"),
-                    (BarLayout::FloatingPill, "Floating Island Capsule"),
-                    (BarLayout::MiniCapsule, "Trim Mini Capsule"),
-                ],
-                |val| out.push(Action::SetBarLayout(val)),
-            );
-
-            if discord_toggle_row(
-                ui,
-                "Navigation Sidebar",
-                "Shows or hides the left navigation panel with your playlists, home, and library.",
+                "app-sidebar",
+                icon::LIST,
+                "Navigation sidebar",
+                "Shows the left navigation panel with your playlists, home, and library.",
                 app.saved.sidebar_open,
             ) {
                 out.push(Action::ToggleSidebar);
             }
 
-            if discord_toggle_row(
+            if toggle_row(
                 ui,
-                "Song Queue Sidebar",
-                "Shows or hides the right side panel with upcoming tracks and current track artwork.",
+                "app-queue",
+                icon::QUEUE,
+                "Song queue sidebar",
+                "Shows the right side panel with upcoming tracks and current track artwork.",
                 app.saved.queue_open,
             ) {
                 out.push(Action::ToggleQueue);
@@ -6454,7 +6301,7 @@ fn settings_body(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<
             });
         }
         SettingsTab::Appearance => {
-            appearance_section(ui, app, out);
+            settings_column(ui, |ui| appearance_section(ui, app, out));
         }
         SettingsTab::Playback => {
             settings_column(ui, |ui| {
@@ -6469,13 +6316,13 @@ fn settings_body(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<
             settings_column(ui, |ui| performance_settings_section(ui, app, out));
         }
         SettingsTab::GamingMode => {
-            gaming_mode_section(ui, app, out);
+            settings_column(ui, |ui| gaming_mode_section(ui, app, out));
         }
         SettingsTab::MiniMode => {
-            mini_mode_settings_section(ui, app, out);
+            settings_column(ui, |ui| mini_mode_settings_section(ui, app, out));
         }
         SettingsTab::Discord => {
-            discord_section(ui, app, out);
+            settings_column(ui, |ui| discord_section(ui, app, out));
         }
         SettingsTab::GlobalHotkeys => {
             settings_column(ui, |ui| hotkey_section(ui, app, out));

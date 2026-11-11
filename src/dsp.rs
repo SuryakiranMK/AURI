@@ -136,6 +136,7 @@ pub enum AutoEqHeadphone {
     BeyerDt770,
 }
 
+#[allow(dead_code)]
 impl AutoEqHeadphone {
     pub const ALL: [AutoEqHeadphone; 7] = [
         AutoEqHeadphone::None,
@@ -172,6 +173,7 @@ impl AutoEqHeadphone {
     }
 }
 
+#[allow(dead_code)]
 impl EqPreset {
     pub const ALL: [EqPreset; 6] = [
         EqPreset::Flat,
