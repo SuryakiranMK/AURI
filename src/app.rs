@@ -1558,6 +1558,9 @@ impl App {
             .unwrap_or_default();
         saved.theme_mode = ThemeMode::Dark;
         saved.queue_open = true;
+        // Readability floor: a nearly transparent glass HUD hides its controls
+        // over light wallpapers, so lift older low-opacity configs once.
+        saved.mini_opacity = saved.mini_opacity.clamp(0.55, 1.0);
         let yt = Arc::new(Client::new(saved.visitor.clone()));
         yt.set_session(auth::load());
         if !yt.signed_in() {
@@ -2840,7 +2843,7 @@ impl App {
                 self.go(Route::Settings(tab));
             }
             Action::SetMiniPalette(p) => self.saved.mini_palette = p,
-            Action::SetMiniOpacity(o) => self.saved.mini_opacity = o.clamp(0.40, 1.0),
+            Action::SetMiniOpacity(o) => self.saved.mini_opacity = o.clamp(0.55, 1.0),
             Action::SetMiniShowShuffleRepeat(v) => self.saved.mini_show_shuffle_repeat = v,
             Action::SetMiniShowQueue(v) => self.saved.mini_show_queue = v,
             Action::SetMiniShowVolume(v) => self.saved.mini_show_volume = v,

@@ -85,6 +85,10 @@ fn contrast_text_for(bg: Color32) -> Color32 {
     }
 }
 
+fn is_light_color(color: Color32) -> bool {
+    0.299 * color.r() as f32 + 0.587 * color.g() as f32 + 0.114 * color.b() as f32 > 155.0
+}
+
 static FAMILIES: LazyLock<[FontFamily; 5]> =
     LazyLock::new(|| ["medium", "bold", "display", "icons", "icons-fill"].map(|name| FontFamily::Name(name.into())));
 
@@ -5066,7 +5070,7 @@ fn mini_mode_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             op_row,
             Id::new("mini-opacity-slider"),
             app.saved.mini_opacity,
-            0.05..=1.0,
+            0.55..=1.0,
             &op_text,
             pal_color,
         );
@@ -8116,7 +8120,11 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
         Color32::from_rgba_unmultiplied(PANEL.r(), PANEL.g(), PANEL.b(), (opacity * 255.0) as u8)
     };
     ui.painter().rect_filled(deck, rounding, bg_color);
-    let active_tint = tint.or_else(|| Some(pal_color));
+    // Light accents (e.g. Monochrome Glass) would wash the whole deck out and
+    // hide the white transport controls, so dim light glow tints back down.
+    let active_tint = tint
+        .or_else(|| Some(pal_color))
+        .map(|c| if is_light_color(c) { c.gamma_multiply(0.45) } else { c });
     let glow_left = mood(ui, "bar-glow-left", active_tint, PANEL, 0.42 * opacity);
     let glow_mid = mood(ui, "bar-glow-mid", active_tint, PANEL, 0.14 * opacity);
     let glow_right = mood(ui, "bar-glow-right", active_tint, PANEL, 0.03 * opacity);
@@ -8363,6 +8371,9 @@ fn player_bar(app: &App, ui: &mut Ui, out: &mut Vec<Action>) -> Scrub {
     let toggle = ui.interact(play, Id::new("bar-play"), Sense::click());
     let lift = hover_of(ui, &toggle);
     let pressed = if toggle.is_pointer_button_down_on() { 1.0 } else { 0.0 };
+    // Thin dark halo keeps the white play button cleanly visible over glass
+    // decks and light artwork bleeding through (light accent themes).
+    ui.painter().circle_filled(center, 21.5 + lift - pressed, Color32::from_black_alpha(70));
     ui.painter()
         .circle_filled(center, 20.0 + lift - pressed, if active { TEXT } else { veil(0.14) });
     if app.player.loading() {
@@ -8542,7 +8553,13 @@ fn paint_scrubber(ctx: &egui::Context, scrub: &Scrub, accent_color: Color32) {
     let span = |fraction: f32| Rect::from_min_size(scrub.bar.min - vec2(0.0, height / 2.0), vec2(scrub.bar.width() * fraction, height));
     painter.rect_filled(span(1.0), 0.0, rgb(0x26272C));
     painter.rect_filled(span(scrub.buffered), 0.0, rgb(0x45474E));
-    painter.rect_filled(span(scrub.played), 0.0, accent_color);
+    let played = span(scrub.played);
+    // Dark under-edge so a light accent (Monochrome Glass) fill stays readable
+    // over glass decks and light artwork bleed-through.
+    if is_light_color(accent_color) && played.width() > 0.5 {
+        painter.rect_filled(played.expand(1.0), 0.0, Color32::from_black_alpha(80));
+    }
+    painter.rect_filled(played, 0.0, accent_color);
     painter.circle_filled(pos2(span(scrub.played).right(), scrub.bar.top()), 6.0 * scrub.hover, TEXT);
 
     let Some((fraction, ms)) = scrub.aim else { return };
