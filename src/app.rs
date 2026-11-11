@@ -703,6 +703,11 @@ impl DiscordButtonOption {
     }
 }
 
+/// Feature freeze: Gaming Mode is too buggy right now, so all entry points
+/// (top-bar button, settings tab, manual toggle, auto detection) are disabled.
+/// The implementation stays in the codebase, dormant, until it returns.
+pub const GAMING_MODE_FROZEN: bool = true;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GameOverlayHotkey {
     #[default]
@@ -3318,7 +3323,9 @@ impl App {
                 self.notify(format!("Disliked and removed: {}", item.title));
             }
             Action::ToggleGameMode => {
-                if self.in_game_mode {
+                if GAMING_MODE_FROZEN {
+                    self.notify("Gaming Mode is temporarily disabled in this build");
+                } else if self.in_game_mode {
                     self.apply(Action::ExitGameMode);
                 } else {
                     self.in_game_mode = true;
@@ -3684,7 +3691,7 @@ impl eframe::App for App {
             self.last_purge = Instant::now();
         }
         #[cfg(windows)]
-        if self.saved.auto_game_mode && self.last_game_check.elapsed() >= Duration::from_millis(2500) {
+        if !GAMING_MODE_FROZEN && self.saved.auto_game_mode && self.last_game_check.elapsed() >= Duration::from_millis(2500) {
             self.last_game_check = Instant::now();
             let is_gaming = detect_fullscreen_game(&self.saved.game_whitelist, &self.saved.game_blacklist);
             if is_gaming && !self.in_game_mode {

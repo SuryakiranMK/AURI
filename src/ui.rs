@@ -866,18 +866,6 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
 
     let mut tool_right = sep_x - 8.0;
 
-    // Game Mode Icon Button
-    let game_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
-    let game_resp = ui.interact(game_rect, Id::new("win-tool-gamemode"), Sense::click());
-    let game_hov = hover_of(ui, &game_resp);
-    ui.painter().rect_filled(game_rect, 6.0, if app.in_game_mode { pal_color.gamma_multiply(0.25) } else { veil(0.04 * game_hov) });
-    ui.painter().text(game_rect.center(), Align2::CENTER_CENTER, icon::GAME_CONTROLLER, solid(16.0), if app.in_game_mode || game_hov > 0.1 { pal_color } else { m_color });
-    describe(&game_resp, "Gaming Mode (Zero-Overhead Player & HUD)");
-    if game_resp.clicked() {
-        out.push(Action::ToggleGameMode);
-    }
-    tool_right -= 34.0;
-
     // Mini Mode Icon Button
     let mini_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
     let mini_resp = ui.interact(mini_rect, Id::new("win-tool-mini"), Sense::click());
@@ -6402,14 +6390,13 @@ fn settings_header_and_tabs(ui: &mut Ui, app: &App, active_tab: SettingsTab, out
     label(ui, at, Align2::LEFT_BOTTOM, "Settings", display(38.0), TEXT, width);
     ui.add_space(10.0);
 
-    // All 11 Tab Switchers in 2 clean rows
-    let tab_items: [(SettingsTab, &str, &str); 11] = [
+    // Tab switchers in 2 clean rows (Gaming Mode is hidden while frozen).
+    let tab_items: [(SettingsTab, &str, &str); 10] = [
         (SettingsTab::General, "General", icon::GEAR_SIX),
         (SettingsTab::Appearance, "Appearance", icon::PALETTE),
         (SettingsTab::Playback, "Playback", icon::PLAY),
         (SettingsTab::Equalizer, "Equalizer", icon::SLIDERS),
         (SettingsTab::Performance, "Performance", icon::LIGHTNING),
-        (SettingsTab::GamingMode, "Gaming Mode", icon::GAME_CONTROLLER),
         (SettingsTab::MiniMode, "Mini Mode", icon::PICTURE_IN_PICTURE),
         (SettingsTab::Discord, "Discord", icon::DISCORD_LOGO),
         (SettingsTab::GlobalHotkeys, "Hotkeys", icon::KEYBOARD),
