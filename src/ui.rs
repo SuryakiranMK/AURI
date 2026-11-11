@@ -3971,9 +3971,9 @@ fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         }
 
         if has_preview {
-            render_discord_preview(ui, app, out, prev_w);
-            ui.add_space(24.0);
             render_discord_controls(ui, app, out, ctrl_w);
+            ui.add_space(24.0);
+            render_discord_preview(ui, app, out, prev_w);
         } else {
             render_discord_controls(ui, app, out, content_w);
         }
@@ -4320,9 +4320,9 @@ fn gaming_mode_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         }
 
         if has_preview {
-            render_gaming_preview(ui, app, out, prev_w);
-            ui.add_space(24.0);
             render_gaming_controls(ui, app, out, ctrl_w);
+            ui.add_space(24.0);
+            render_gaming_preview(ui, app, out, prev_w);
         } else {
             render_gaming_controls(ui, app, out, content_w);
         }
@@ -5619,9 +5619,9 @@ fn appearance_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
         }
 
         if has_preview {
-            render_appearance_preview(ui, app, out, prev_w);
-            ui.add_space(24.0);
             render_appearance_controls(ui, app, out, ctrl_w);
+            ui.add_space(24.0);
+            render_appearance_preview(ui, app, out, prev_w);
         } else {
             render_appearance_controls(ui, app, out, content_w);
         }

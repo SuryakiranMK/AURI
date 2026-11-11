@@ -1546,6 +1546,9 @@ pub struct App {
     pub auto_game_detected: bool,
     pub original_queue: Option<Vec<Item>>,
     pub settings_preview_open: bool,
+    /// Queue dock state before the settings live preview opened, restored when
+    /// the preview session ends so the user's layout immersion persists.
+    pub queue_was_open: bool,
     restart: Option<PathBuf>,
 }
 
@@ -1656,6 +1659,7 @@ impl App {
             auto_game_detected: false,
             original_queue: None,
             settings_preview_open: false,
+            queue_was_open: false,
             restart: None,
         };
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
@@ -1956,10 +1960,6 @@ impl App {
         if *self.route() == route {
             return;
         }
-        if matches!(route, Route::Settings(SettingsTab::Discord | SettingsTab::Appearance | SettingsTab::GamingMode)) && self.saved.queue_open {
-            self.saved.queue_open = false;
-            self.notify("Queue docked to expand view");
-        }
         if matches!((self.route(), &route), (Route::Search(_), Route::Search(_))) {
             self.history[self.at] = route;
         } else {
@@ -2202,6 +2202,21 @@ impl App {
     }
 
     fn drain(&mut self, ctx: &egui::Context) {
+        // Leaving a live-preview settings page (tab switch, back navigation,
+        // leaving Settings) ends the preview session and restores the queue dock
+        // if it was open before, so the user's layout immersion persists.
+        if self.settings_preview_open
+            && !matches!(
+                self.route(),
+                Route::Settings(SettingsTab::Discord | SettingsTab::Appearance | SettingsTab::GamingMode)
+            )
+        {
+            self.settings_preview_open = false;
+            if self.queue_was_open && !self.saved.queue_open {
+                self.saved.queue_open = true;
+            }
+            self.queue_was_open = false;
+        }
         while let Ok(event) = self.events.try_recv() {
             match event {
                 Event::Part(load, order, sections) if load == self.home_load => {
@@ -2597,6 +2612,11 @@ impl App {
                 self.saved.queue_open ^= true;
                 if self.saved.queue_open {
                     self.settings_preview_open = false;
+                }
+                // The user re-docked the queue manually while the live preview
+                // was open, so the remembered state is no longer theirs to restore.
+                if self.settings_preview_open {
+                    self.queue_was_open = false;
                 }
             }
             Action::ToggleSidebar => self.saved.sidebar_open ^= true,
@@ -3396,9 +3416,18 @@ impl App {
                 self.notify("Appearance reset to preset defaults");
             }
             Action::ToggleSettingsPreview => {
-                self.settings_preview_open = !self.settings_preview_open;
-                if self.settings_preview_open {
+                if !self.settings_preview_open {
+                    // Opening the live preview stows the queue dock; remember its
+                    // previous state so leaving the preview can restore it.
+                    self.queue_was_open = self.saved.queue_open;
+                    self.settings_preview_open = true;
                     self.saved.queue_open = false;
+                } else {
+                    self.settings_preview_open = false;
+                    if self.queue_was_open && !self.saved.queue_open {
+                        self.saved.queue_open = true;
+                    }
+                    self.queue_was_open = false;
                 }
             }
             Action::SetArtworkBgVariant(v) => self.saved.artwork_bg_variant = v,
