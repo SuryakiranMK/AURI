@@ -499,6 +499,20 @@ impl TitleBar {
         }
     }
 
+    /// While Gaming Mode keeps the window on-screen but idle, this makes it
+    /// ignore mouse input so the game beneath stays playable. Flipping an
+    /// extended style is instant: no move, resize, z-order or repaint churn.
+    pub fn set_click_through(&self, through: bool) {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TRANSPARENT};
+        if self.window != 0 {
+            unsafe {
+                let style = GetWindowLongPtrW(self.window as _, GWL_EXSTYLE);
+                let next = if through { style | WS_EX_TRANSPARENT as isize } else { style & !(WS_EX_TRANSPARENT as isize) };
+                SetWindowLongPtrW(self.window as _, GWL_EXSTYLE, next);
+            }
+        }
+    }
+
     pub fn enable_transparency(&self) {
         #[link(name = "dwmapi")]
         unsafe extern "system" {
@@ -719,6 +733,8 @@ impl TitleBar {
     fn paint(&mut self, _color: Color32) {}
 
     pub fn enable_transparency(&self) {}
+
+    pub fn set_click_through(&self, _through: bool) {}
 
     pub fn restore_decorations(&self) {}
 }

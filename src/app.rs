@@ -3330,14 +3330,22 @@ impl App {
                     self.art.set_budget_bytes(1024 * 1024);
                     self.start_game_hotkey();
                     self.title_bar.enable_transparency();
-                    // Park the window at FULL off-screen size: toggling the
-                    // overlay later only moves the window, it never resizes it.
-                    // Resize-driven surface churn was making the overlay flicker.
-                    let (sw, sh) = screen_size();
-                    let ppp = self.ctx.pixels_per_point().max(0.5);
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(sw / ppp, sh / ppp)));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-32000.0, -32000.0)));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
+                    // The window STAYS on-screen for the whole game session:
+                    // transparent and click-through while the overlay is closed,
+                    // painted only while it is open. Toggling never moves,
+                    // resizes or restacks the window — those DWM / swapchain
+                    // occlusion transitions were behind the black flashes.
+                    let maximized = self.ctx.input(|i| i.viewport().maximized == Some(true));
+                    if !maximized {
+                        // An already-maximized window needs no geometry change,
+                        // so entering game mode causes no surface reconfigure.
+                        let (sw, sh) = screen_size();
+                        let ppp = self.ctx.pixels_per_point().max(0.5);
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(sw / ppp, sh / ppp)));
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
+                    }
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+                    self.title_bar.set_click_through(true);
                     self.notify(format!("⚡ Gaming Mode Active ({})", self.saved.game_overlay_hotkey.label()));
                 }
             }
@@ -3347,6 +3355,7 @@ impl App {
                 self.game_mode_start_time = None;
                 self.game_hotkey_stop.store(true, Relaxed);
                 self.art.set_budget_bytes(self.saved.perf_art_cache_mb * 1024 * 1024);
+                self.title_bar.set_click_through(false);
                 self.title_bar.restore_decorations();
                 // Reset the restore geometry first so un-maximizing later has
                 // something sane to come back to, then return maximized —
@@ -3364,6 +3373,7 @@ impl App {
                 self.game_mode_start_time = None;
                 self.game_hotkey_stop.store(true, Relaxed);
                 self.art.set_budget_bytes(self.saved.perf_art_cache_mb * 1024 * 1024);
+                self.title_bar.set_click_through(false);
                 self.title_bar.restore_decorations();
                 self.saved.mini_mode = true;
                 let (w, h) = self.saved.mini_variant.size(self.mini_queue_open);
@@ -3377,16 +3387,13 @@ impl App {
             Action::ToggleGameOverlay => {
                 if self.in_game_mode {
                     self.game_overlay_open = !self.game_overlay_open;
+                    // Only the hit-testing style and the paint state flip:
+                    // geometry, size and z-order are untouched, so the overlay
+                    // appears instantly with no DWM occlusion transition.
+                    self.title_bar.set_click_through(!self.game_overlay_open);
                     if self.game_overlay_open {
-                        // Move-only: the window already sits at full screen size
-                        // while parked. Size variants crop the drawn UI, never
-                        // the window, so no swapchain resize happens here.
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
                         self.ctx.request_repaint();
                     } else {
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(-32000.0, -32000.0)));
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
                         // Drop back to a minimal working set once the overlay
                         // closes; the next open re-faults what it needs.
                         self.apply(Action::PurgeMemory);
