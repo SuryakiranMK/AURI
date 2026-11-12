@@ -2813,6 +2813,11 @@ fn search_discovery_view(query: &mut String, focus_search: &mut bool, saved: &cr
     if std::mem::take(focus_search) {
         response.request_focus();
     }
+    // Live search: every edit arms the debounce timer; the debounce block in
+    // drain() then navigates to the results after a short typing pause.
+    if response.changed() {
+        cx.out.push(Action::TypeSearch);
+    }
     let query_trimmed = query.trim();
     if response.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !query_trimmed.is_empty() {
         cx.out.push(Action::Go(Route::Search(query_trimmed.to_owned())));
@@ -5985,9 +5990,10 @@ fn sync_together_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
     settings_card_panel(ui, "sync-card", "Listen Together", "Synchronized playback with friends through instant room codes.", |ui| {
         // 1. Session status with Host / Leave button
         let connected = app.sync_mode != crate::sync::SyncMode::Disconnected;
+        let listeners = app.sync_listeners.values().filter(|seen| seen.elapsed() < Duration::from_secs(45)).count();
         let status_desc = match app.sync_mode {
             crate::sync::SyncMode::Disconnected => "Disconnected. Host a room or join a friend's code.".to_owned(),
-            crate::sync::SyncMode::Host => format!("Hosting room {}. Broadcasting playback.", app.sync_room),
+            crate::sync::SyncMode::Host => format!("Hosting room {} · {} listening. Broadcasting playback.", app.sync_room, listeners + 1),
             crate::sync::SyncMode::Guest => format!("Syncing in room {}. Listening along.", app.sync_room),
         };
         let row = row_base(ui, icon::HEADPHONES, "Session status", &status_desc);
@@ -6013,87 +6019,74 @@ fn sync_together_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             if connected {
                 out.push(Action::StopSync);
             } else {
-                let code = format!(
-                    "AURI-{:04}",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map_or(0, |elapsed| elapsed.as_millis() % 10000)
-                );
-                out.push(Action::StartSyncHost(code));
+                out.push(Action::StartSyncHost(crate::sync::new_room_code()));
             }
         }
 
-        // 2. Join row: room code input + Join button
-        let join_id = Id::new("sync-join-code");
-        let join_code: String = ui
-            .data(|d| d.get_temp(join_id))
-            .unwrap_or_else(|| app.saved.sync_room_code.clone());
-        let row = row_base(ui, icon::LINK, "Join a friend's room", "");
-        let field = Rect::from_min_size(pos2(row.right() - 330.0, row.center().y - 15.0), vec2(216.0, 30.0));
-        ui.painter().rect_filled(field, 7.0, veil(0.07));
-        ui.painter().rect_stroke(field, 7.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-        let mut buffer = join_code.clone();
-        let edit = egui::TextEdit::singleline(&mut buffer)
-            .hint_text("Room code (e.g. AURI-1234)")
-            .desired_width(204.0)
-            .font(sans(12.5))
-            .frame(false);
-        let edit_resp = ui.put(field.shrink2(vec2(5.0, 2.0)), edit);
-        if edit_resp.changed() {
-            ui.data_mut(|d| d.insert_temp(join_id, buffer.clone()));
+        if connected {
+            // 2. Room code with a copy button + the Discord invite hint.
+            let row = row_base(ui, icon::LINK, "Room code", &app.sync_room);
+            let copy_btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(104.0, 28.0));
+            let copy_resp = ui.interact(copy_btn, Id::new("sync-copy-code"), Sense::click());
+            let copy_hov = hover_of(ui, &copy_resp);
+            ui.painter().rect_filled(copy_btn, 14.0, veil(0.10 + 0.10 * copy_hov));
+            ui.painter().rect_stroke(copy_btn, 14.0, Stroke::new(1.0_f32, veil(0.18)), StrokeKind::Inside);
+            ui.painter().text(
+                copy_btn.center(),
+                Align2::CENTER_CENTER,
+                "Copy code",
+                bold(12.0),
+                if copy_hov > 0.1 { TEXT } else { MUTED },
+            );
+            describe(&copy_resp, "Copy the room code to share with friends");
+            if copy_resp.clicked() {
+                ui.ctx().copy_text(app.sync_room.clone());
+            }
+            ui.label(
+                RichText::new("Friends on Discord can also click Join on your profile while you share a room.")
+                    .font(sans(10.5))
+                    .color(MUTED),
+            );
         }
-        let join_btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(104.0, 28.0));
-        let join_resp = ui.interact(join_btn, Id::new("sync-join-btn"), Sense::click());
-        let join_hov = hover_of(ui, &join_resp);
-        ui.painter().rect_filled(join_btn, 14.0, veil(0.10 + 0.10 * join_hov));
-        ui.painter().rect_stroke(join_btn, 14.0, Stroke::new(1.0_f32, veil(0.18)), StrokeKind::Inside);
-        ui.painter().text(
-            join_btn.center(),
-            Align2::CENTER_CENTER,
-            "Join",
-            bold(12.0),
-            if join_hov > 0.1 { TEXT } else { MUTED },
-        );
-        describe(&join_resp, "Join");
-        if join_resp.clicked() && !buffer.trim().is_empty() {
-            out.push(Action::StartSyncJoin(buffer.trim().to_uppercase()));
+
+        if !connected {
+            // 3. Join row: room code input + Join button
+            let join_id = Id::new("sync-join-code");
+            let join_code: String = ui
+                .data(|d| d.get_temp(join_id))
+                .unwrap_or_else(|| app.saved.sync_room_code.clone());
+            let row = row_base(ui, icon::LINK, "Join a friend's room", "");
+            let field = Rect::from_min_size(pos2(row.right() - 330.0, row.center().y - 15.0), vec2(216.0, 30.0));
+            ui.painter().rect_filled(field, 7.0, veil(0.07));
+            ui.painter().rect_stroke(field, 7.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+            let mut buffer = join_code.clone();
+            let edit = egui::TextEdit::singleline(&mut buffer)
+                .hint_text("Room code (e.g. K7QX-9M2T-B4)")
+                .desired_width(204.0)
+                .font(sans(12.5))
+                .frame(false);
+            let edit_resp = ui.put(field.shrink2(vec2(5.0, 2.0)), edit);
+            if edit_resp.changed() {
+                ui.data_mut(|d| d.insert_temp(join_id, buffer.clone()));
+            }
+            let join_btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(104.0, 28.0));
+            let join_resp = ui.interact(join_btn, Id::new("sync-join-btn"), Sense::click());
+            let join_hov = hover_of(ui, &join_resp);
+            ui.painter().rect_filled(join_btn, 14.0, veil(0.10 + 0.10 * join_hov));
+            ui.painter().rect_stroke(join_btn, 14.0, Stroke::new(1.0_f32, veil(0.18)), StrokeKind::Inside);
+            ui.painter().text(
+                join_btn.center(),
+                Align2::CENTER_CENTER,
+                "Join",
+                bold(12.0),
+                if join_hov > 0.1 { TEXT } else { MUTED },
+            );
+            describe(&join_resp, "Join");
+            if join_resp.clicked() && !buffer.trim().is_empty() {
+                out.push(Action::StartSyncJoin(buffer.trim().to_uppercase()));
+            }
         }
     });
-
-    settings_card_panel(
-        ui,
-        "sync-github",
-        "Persistent GitHub Gist sync",
-        "Keep room sessions and playback state in sync through a private GitHub Gist.",
-        |ui| {
-            if let Some(token) = input_row(
-                ui,
-                "sync-token",
-                icon::GITHUB_LOGO,
-                "GitHub token (PAT)",
-                "Personal access token with the 'gist' scope.",
-                "ghp_...",
-                true,
-                340.0,
-                &app.saved.sync_github_token,
-            ) {
-                out.push(Action::SetSyncGithubToken(token));
-            }
-            if let Some(gist) = input_row(
-                ui,
-                "sync-gist",
-                icon::DATABASE,
-                "Gist ID",
-                "Leave empty to create one automatically.",
-                "Gist ID",
-                false,
-                340.0,
-                &app.saved.sync_gist_id,
-            ) {
-                out.push(Action::SetSyncGistId(gist));
-            }
-        },
-    );
 }
 
 fn lyrics_settings_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {

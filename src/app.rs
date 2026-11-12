@@ -995,10 +995,6 @@ pub struct Saved {
     #[serde(default = "default_perf_tick_fps")]
     pub perf_tick_fps: u32,
     #[serde(default)]
-    pub sync_github_token: String,
-    #[serde(default)]
-    pub sync_gist_id: String,
-    #[serde(default)]
     pub sync_room_code: String,
 
     #[serde(default)]
@@ -1268,8 +1264,6 @@ impl Default for Saved {
             perf_audio_buffer_mb: 1.5,
             perf_art_cache_mb: 4,
             perf_tick_fps: 1,
-            sync_github_token: String::new(),
-            sync_gist_id: String::new(),
             sync_room_code: String::new(),
             stats_filter: StatsPeriod::ThirtyDays,
             stats_daily: Vec::new(),
@@ -1437,8 +1431,7 @@ pub enum Action {
     StartSyncHost(String),
     StartSyncJoin(String),
     StopSync,
-    SetSyncGithubToken(String),
-    SetSyncGistId(String),
+    TypeSearch,
     SetLyricsSyncedMode(bool),
     SetLyricsFontSize(f32),
     SetLyricsAlignCenter(bool),
@@ -1600,6 +1593,9 @@ pub struct App {
     pub sync_mode: crate::sync::SyncMode,
     pub sync_room: String,
     pub sync_last_publish: Option<Instant>,
+    pub sync_last_state: Option<(String, bool)>,
+    pub sync_listeners: std::collections::HashMap<String, Instant>,
+    pub sync_skew: crate::sync::SkewEstimator,
     pub last_listen_tick: Option<Instant>,
     pub in_game_mode: bool,
     #[allow(dead_code)]
@@ -1714,6 +1710,9 @@ impl App {
             sync_mode: crate::sync::SyncMode::Disconnected,
             sync_room: String::new(),
             sync_last_publish: None,
+            sync_last_state: None,
+            sync_listeners: std::collections::HashMap::new(),
+            sync_skew: crate::sync::SkewEstimator::default(),
             last_listen_tick: None,
             in_game_mode: false,
             game_hud_visible: false,
@@ -2266,6 +2265,11 @@ impl App {
         }
     }
 
+    /// Guests heard from within the last 45s (they heartbeat every 15s).
+    pub fn sync_listener_count(&self) -> usize {
+        self.sync_listeners.values().filter(|seen| seen.elapsed() < Duration::from_secs(45)).count()
+    }
+
     /// Polls the overlay hotkey on a dedicated thread while Gaming Mode is
     /// active, so the UI never needs a repaint loop just to watch the keyboard.
     /// Only a rising edge sends the toggle action and wakes the UI.
@@ -2444,29 +2448,68 @@ impl App {
                     self.ctx.request_repaint();
                 }
                 Event::SyncPacket(pkt) => {
-                    if self.sync_mode == crate::sync::SyncMode::Guest {
-                        let current_id = self.saved.current.and_then(|c| self.saved.queue.get(c)).map(|it| it.video_id.clone());
-                        if current_id.as_deref() != Some(&pkt.video_id) && !pkt.video_id.is_empty() {
-                            let item = Item {
-                                video_id: pkt.video_id.clone(),
-                                title: pkt.title.clone(),
-                                subtitle: pkt.subtitle.clone(),
-                                ..Default::default()
-                            };
-                            self.apply(Action::Play(vec![item], 0));
-                        }
-                        if pkt.playing != self.playing() {
-                            self.apply(Action::Pause(!pkt.playing));
-                        }
-                        if pkt.playing {
-                            let now_ms = crate::sync::now_timestamp_ms();
-                            let drift = now_ms.saturating_sub(pkt.timestamp_ms);
-                            let target_pos = pkt.position_ms + drift;
-                            let cur_pos = self.player.position_ms();
-                            if (target_pos as i64 - cur_pos as i64).abs() > 2500 {
-                                self.player.seek(target_pos);
+                    match self.sync_mode {
+                        crate::sync::SyncMode::Guest if pkt.kind == "state" => {
+                            // Shared queue: rebuild when the host's queue changed.
+                            let items: Vec<Item> = pkt
+                                .queue
+                                .iter()
+                                .map(|t| Item {
+                                    video_id: t.id.clone(),
+                                    title: t.title.clone(),
+                                    subtitle: t.artist.clone(),
+                                    ..Default::default()
+                                })
+                                .collect();
+                            let queue_changed = !items.is_empty()
+                                && (items.len() != self.saved.queue.len()
+                                    || items.iter().zip(self.saved.queue.iter()).any(|(a, b)| a.video_id != b.video_id));
+                            let current_id = self.saved.current.and_then(|c| self.saved.queue.get(c)).map(|it| it.video_id.clone());
+                            if current_id.as_deref() != Some(&pkt.video_id) && !pkt.video_id.is_empty() {
+                                if !items.is_empty() {
+                                    let index = pkt.index.min(items.len() - 1);
+                                    self.apply(Action::Play(items, index));
+                                } else {
+                                    let item = Item {
+                                        video_id: pkt.video_id.clone(),
+                                        title: pkt.title.clone(),
+                                        subtitle: pkt.subtitle.clone(),
+                                        ..Default::default()
+                                    };
+                                    self.apply(Action::Play(vec![item], 0));
+                                }
+                            } else if queue_changed {
+                                self.saved.current = Some(pkt.index.min(items.len().saturating_sub(1)));
+                                self.saved.queue = items;
+                            }
+                            if pkt.playing != self.playing() {
+                                self.apply(Action::Pause(!pkt.playing));
+                            }
+                            if pkt.playing {
+                                // Skew-corrected seek: cancels clock offset and
+                                // latency jitter between the two machines.
+                                let target = self.sync_skew.target_position(pkt.position_ms, pkt.timestamp_ms, crate::sync::now_timestamp_ms());
+                                let cur_pos = self.player.position_ms();
+                                if (target as i64 - cur_pos as i64).abs() > 2500 {
+                                    self.player.seek(target);
+                                }
                             }
                         }
+                        crate::sync::SyncMode::Host => match pkt.kind.as_str() {
+                            "hello" => {
+                                let is_new = !self.sync_listeners.contains_key(&pkt.sender);
+                                self.sync_listeners.insert(pkt.sender, Instant::now());
+                                self.sync_listeners.retain(|_, seen| seen.elapsed() < Duration::from_secs(45));
+                                if is_new {
+                                    self.notify("🎧 Someone joined your Listen Together room");
+                                }
+                            }
+                            "bye" => {
+                                self.sync_listeners.remove(&pkt.sender);
+                            }
+                            _ => {}
+                        },
+                        _ => {}
                     }
                 }
             }
@@ -2491,7 +2534,9 @@ impl App {
             if typed.elapsed() >= SEARCH_DEBOUNCE {
                 self.typed = None;
                 let query = self.query.trim().to_owned();
-                if !query.is_empty() {
+                // Only live-search while on the search page, and never yank
+                // the user back after they navigated away mid-typing.
+                if !query.is_empty() && matches!(self.route(), Route::Search(_)) {
                     self.go(Route::Search(query));
                 }
             } else {
@@ -3194,33 +3239,36 @@ impl App {
                 self.sync_mode = crate::sync::SyncMode::Host;
                 self.sync_room = room.clone();
                 self.saved.sync_room_code = room.clone();
-                let token = if self.saved.sync_github_token.is_empty() { None } else { Some(self.saved.sync_github_token.clone()) };
-                let gist = if self.saved.sync_gist_id.is_empty() { None } else { Some(self.saved.sync_gist_id.clone()) };
+                self.sync_last_state = None;
+                self.sync_listeners.clear();
                 if let Some(s) = &self.sync {
-                    s.host(room, token, gist);
+                    s.host(room);
                 }
-                self.notify("🎧 Started Listen Together Session (Hosting)");
+                self.notify("🎧 Hosting Listen Together — share the code, or friends can click Join on your Discord profile");
             }
             Action::StartSyncJoin(room) => {
                 self.sync_mode = crate::sync::SyncMode::Guest;
                 self.sync_room = room.clone();
                 self.saved.sync_room_code = room.clone();
-                let gist = if self.saved.sync_gist_id.is_empty() { None } else { Some(self.saved.sync_gist_id.clone()) };
+                self.sync_skew = crate::sync::SkewEstimator::default();
                 if let Some(s) = &self.sync {
-                    s.join(room, gist);
+                    s.join(room);
                 }
                 self.notify("🎧 Joined Listen Together Session (Syncing)");
             }
             Action::StopSync => {
                 self.sync_mode = crate::sync::SyncMode::Disconnected;
                 self.sync_room.clear();
+                self.sync_listeners.clear();
+                self.sync_last_state = None;
                 if let Some(s) = &self.sync {
                     s.disconnect();
                 }
                 self.notify("Disconnected from Listen Together Session");
             }
-            Action::SetSyncGithubToken(tok) => self.saved.sync_github_token = tok,
-            Action::SetSyncGistId(gist) => self.saved.sync_gist_id = gist,
+            Action::TypeSearch => {
+                self.typed = Some(Instant::now());
+            }
             Action::SetLyricsSyncedMode(v) => self.saved.lyrics_synced_mode = v,
             Action::SetLyricsFontSize(sz) => self.saved.lyrics_font_size = sz,
             Action::SetLyricsAlignCenter(v) => self.saved.lyrics_align_center = v,
@@ -3703,24 +3751,44 @@ impl eframe::App for App {
             }
         }
         if self.sync_mode == crate::sync::SyncMode::Host {
-            let should_pub = match self.sync_last_publish {
-                Some(last) => last.elapsed() > Duration::from_millis(1500),
-                None => true,
-            };
-            if should_pub {
+            let state = self
+                .saved
+                .current
+                .and_then(|c| self.saved.queue.get(c))
+                .map(|cur| (cur.video_id.clone(), self.playing()));
+            // Publish instantly on track/play-pause changes, else every 1.5s.
+            let changed = state.is_some() && state != self.sync_last_state;
+            let due = self.sync_last_publish.map_or(true, |last| last.elapsed() > Duration::from_millis(1500));
+            if let (Some((video_id, playing)), true) = (state.clone(), changed || due) {
                 self.sync_last_publish = Some(Instant::now());
-                if let Some(cur) = self.saved.current.and_then(|c| self.saved.queue.get(c)) {
-                    let pkt = crate::sync::SyncPacket {
-                        room: self.sync_room.clone(),
-                        video_id: cur.video_id.clone(),
-                        title: cur.title.clone(),
-                        subtitle: cur.subtitle.clone(),
-                        position_ms: self.player.position_ms(),
-                        playing: self.playing(),
-                        timestamp_ms: crate::sync::now_timestamp_ms(),
-                    };
-                    if let Some(s) = &self.sync {
-                        s.publish(pkt);
+                self.sync_last_state = state;
+                if let Some(cur_index) = self.saved.current {
+                    if let Some(cur) = self.saved.queue.get(cur_index) {
+                        // Share a window of the queue around the current track
+                        // (relays cap message sizes, so 24 tracks is plenty).
+                        let len = self.saved.queue.len();
+                        let start = cur_index.saturating_sub(12).min(len.saturating_sub(24));
+                        let queue: Vec<crate::sync::SyncTrack> = self.saved.queue[start..(start + 24).min(len)]
+                            .iter()
+                            .map(|it| crate::sync::SyncTrack {
+                                id: it.video_id.clone(),
+                                title: it.title.clone(),
+                                artist: it.subtitle.clone(),
+                            })
+                            .collect();
+                        let pkt = crate::sync::SyncPacket {
+                            video_id,
+                            title: cur.title.clone(),
+                            subtitle: cur.subtitle.clone(),
+                            position_ms: self.player.position_ms(),
+                            playing,
+                            queue,
+                            index: cur_index - start,
+                            ..Default::default()
+                        };
+                        if let Some(s) = &self.sync {
+                            s.publish(pkt);
+                        }
                     }
                 }
             }
@@ -3846,6 +3914,7 @@ impl eframe::App for App {
         if let Some(media) = &mut self.media {
             media.show(item, playing, position_ms, duration_ms);
         }
+        let sync_party_size = if self.sync_mode == crate::sync::SyncMode::Host { self.sync_listener_count() + 1 } else { 1 };
         if let Some(discord) = self.discord.as_mut() {
             let track = item.filter(|_| playing || self.saved.discord_show_when_paused).map(|item| (item, self.saved.covers.of(item)));
             let (headline, name) = (self.saved.discord_headline, &self.saved.discord_name);
@@ -3866,7 +3935,12 @@ impl eframe::App for App {
                 button1: self.saved.discord_button1,
                 button2: self.saved.discord_button2,
             };
-            discord.show(track, headline, name, position_ms, duration_ms, fmt, playing);
+            let party = if self.sync_mode == crate::sync::SyncMode::Disconnected {
+                None
+            } else {
+                Some((self.sync_room.as_str(), sync_party_size))
+            };
+            discord.show(track, headline, name, position_ms, duration_ms, fmt, playing, party);
         }
     }
 
@@ -3900,11 +3974,20 @@ impl eframe::App for App {
 }
 
 fn link_discord(sender: &Sender<Event>, ctx: &egui::Context) -> Discord {
-    let (sender, ctx) = (sender.clone(), ctx.clone());
-    Discord::start(move |linked| {
-        let _ = sender.send(Event::Discord(linked));
-        ctx.request_repaint();
-    })
+    let (report_sender, report_ctx) = (sender.clone(), ctx.clone());
+    let (join_sender, join_ctx) = (sender.clone(), ctx.clone());
+    Discord::start(
+        move |linked| {
+            let _ = report_sender.send(Event::Discord(linked));
+            report_ctx.request_repaint();
+        },
+        move |secret| {
+            // A friend clicked Join on this user's Discord profile: join their
+            // Listen Together room with the delivered room code.
+            let _ = join_sender.send(Event::Pressed(Action::StartSyncJoin(secret)));
+            join_ctx.request_repaint();
+        },
+    )
 }
 
 fn newer_version(release_url: &str, current: &str) -> Option<String> {

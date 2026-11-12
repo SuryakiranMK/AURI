@@ -2,6 +2,7 @@ use crate::ytm::{self, Item};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::io::{self, Read, Write};
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -72,16 +73,17 @@ impl Default for DiscordFormat {
 
 pub struct Discord {
     updates: Sender<Option<Value>>,
-    shown: Option<(String, String, Headline, String, u64, DiscordFormat, bool)>,
+    shown: Option<(String, String, Headline, String, u64, DiscordFormat, bool, Option<(String, usize)>)>,
 }
 
 impl Discord {
-    pub fn start(report: impl Fn(bool) + Send + 'static) -> Self {
+    pub fn start(report: impl Fn(bool) + Send + 'static, on_join: impl Fn(String) + Send + Sync + 'static) -> Self {
         let (updates, inbox) = mpsc::channel();
-        std::thread::spawn(move || run(inbox, report));
+        std::thread::spawn(move || run(inbox, report, on_join));
         Self { updates, shown: None }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn show(
         &mut self,
         track: Option<(&Item, &str)>,
@@ -91,20 +93,23 @@ impl Discord {
         duration_ms: u64,
         fmt: DiscordFormat,
         playing: bool,
+        party: Option<(&str, usize)>,
     ) {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |elapsed| elapsed.as_millis() as u64);
         let started = now.saturating_sub(position_ms);
         let name = if headline == Headline::Custom { name } else { "" };
+        let party_owned = party.map(|(room, size)| (room.to_owned(), size));
         let unchanged = match (&self.shown, track) {
-            (Some((video_id, art, lead, named, shown, old_fmt, was_playing)), Some((item, cover))) => {
+            (Some((video_id, art, lead, named, shown, old_fmt, was_playing, old_party)), Some((item, cover))) => {
                 *video_id == item.video_id
                     && art == cover
                     && *lead == headline
                     && named == name
                     && *old_fmt == fmt
                     && *was_playing == playing
+                    && *old_party == party_owned
                     && shown.abs_diff(started) < SEEK_TOLERANCE_MS
             }
             (None, None) => true,
@@ -113,29 +118,32 @@ impl Discord {
         if unchanged {
             return;
         }
-        self.shown = track.map(|(item, cover)| (item.video_id.clone(), cover.to_owned(), headline, name.to_owned(), started, fmt.clone(), playing));
+        self.shown = track.map(|(item, cover)| {
+            (item.video_id.clone(), cover.to_owned(), headline, name.to_owned(), started, fmt.clone(), playing, party_owned.clone())
+        });
         let _ = self
             .updates
-            .send(track.map(|(item, cover)| activity(item, cover, headline, name, started, duration_ms, fmt, playing)));
+            .send(track.map(|(item, cover)| activity(item, cover, headline, name, started, duration_ms, fmt, playing, party)));
     }
 }
 
-fn run(updates: Receiver<Option<Value>>, report: impl Fn(bool)) {
+fn run(updates: Receiver<Option<Value>>, report: impl Fn(bool), on_join: impl Fn(String) + Send + Sync + 'static) {
+    let on_join: Arc<dyn Fn(String) + Send + Sync> = Arc::new(on_join);
     let (mut pipe, mut activity, mut delivered, mut nonce) = (None, None, false, 0u64);
     let mut linked = None;
     loop {
         if pipe.is_none() {
-            (pipe, delivered) = (connect(), false);
+            (pipe, delivered) = (connect(&on_join), false);
         }
         if let Some(open) = &mut pipe {
             if !delivered {
                 nonce += 1;
                 let args = json!({ "pid": std::process::id(), "activity": activity });
-                let sent = exchange(
-                    open,
+                // Write-only: the event reader thread owns all inbound frames.
+                let sent = open.write_all(&frame(
                     FRAME,
                     &json!({ "cmd": "SET_ACTIVITY", "args": args, "nonce": nonce.to_string() }),
-                );
+                ));
                 delivered = sent.is_ok();
                 if !delivered {
                     pipe = None;
@@ -159,12 +167,42 @@ fn run(updates: Receiver<Option<Value>>, report: impl Fn(bool)) {
     }
 }
 
-fn connect() -> Option<Pipe> {
+fn connect(on_join: &Arc<dyn Fn(String) + Send + Sync>) -> Option<Pipe> {
     (0..PIPES).find_map(|number| {
         let mut pipe = open(number)?;
         exchange(&mut pipe, HANDSHAKE, &json!({ "v": 1, "client_id": APPLICATION_ID })).ok()?;
+        // Listen Together invites: subscribe to joins, then hand all inbound
+        // frames to a dedicated reader so SET_ACTIVITY stays write-only.
+        pipe.write_all(&frame(FRAME, &json!({ "cmd": "SUBSCRIBE", "evt": "ACTIVITY_JOIN", "nonce": "join-sub" })))
+            .ok()?;
+        let mut reader = pipe.try_clone().ok()?;
+        let on_join = on_join.clone();
+        std::thread::spawn(move || read_events(&mut reader, on_join));
         Some(pipe)
     })
+}
+
+fn read_events(pipe: &mut impl Read, on_join: Arc<dyn Fn(String) + Send + Sync>) {
+    loop {
+        let mut header = [0u8; 8];
+        if pipe.read_exact(&mut header).is_err() {
+            return;
+        }
+        let length = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
+        if length > 1024 * 1024 {
+            return;
+        }
+        let mut body = vec![0u8; length];
+        if pipe.read_exact(&mut body).is_err() {
+            return;
+        }
+        let Ok(value) = serde_json::from_slice::<Value>(&body) else { continue };
+        if value["evt"] == "ACTIVITY_JOIN" {
+            if let Some(secret) = value["data"]["secret"].as_str().filter(|s| !s.is_empty()) {
+                on_join(secret.to_owned());
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -256,6 +294,7 @@ fn activity(
     duration_ms: u64,
     fmt: DiscordFormat,
     playing: bool,
+    party: Option<(&str, usize)>,
 ) -> Value {
     let app_name = if !fmt.app_name.is_empty() {
         fmt.app_name.as_str()
@@ -274,6 +313,7 @@ fn activity(
         act["assets"] = json!({
             "large_text": app_name,
         });
+        apply_party(&mut act, party);
         return act;
     }
 
@@ -351,7 +391,17 @@ fn activity(
         activity["buttons"] = json!(buttons);
     }
 
+    apply_party(&mut activity, party);
     activity
+}
+
+/// The Listen Together invite: friends see a Join button on the user's Discord
+/// profile, and clicking it hands the room code back via ACTIVITY_JOIN.
+fn apply_party(activity: &mut Value, party: Option<(&str, usize)>) {
+    if let Some((room, size)) = party {
+        activity["party"] = json!({ "id": room, "size": [size.max(1), 20] });
+        activity["secrets"] = json!({ "join": room });
+    }
 }
 
 fn artist(item: &Item) -> &str {
@@ -433,12 +483,12 @@ mod tests {
         let lucky = song("Get Lucky", "Daft Punk • Random Access Memories", &[]);
         let mut fmt = DiscordFormat::default();
         fmt.status_text = crate::app::DiscordStatusField::ListeningToApp;
-        let shown = activity(&lucky, cover, Headline::App, "", 1000, 248_000, fmt.clone(), true);
+        let shown = activity(&lucky, cover, Headline::App, "", 1000, 248_000, fmt.clone(), true, None);
         assert_eq!(shown["type"], 2);
         assert_eq!(shown["status_display_type"], 0);
         assert_eq!(shown["name"], "AURI");
-        assert_eq!(activity(&lucky, cover, Headline::Artist, "", 0, 1, fmt.clone(), true)["status_display_type"], 1);
-        assert_eq!(activity(&lucky, cover, Headline::Song, "", 0, 1, fmt.clone(), true)["status_display_type"], 2);
+        assert_eq!(activity(&lucky, cover, Headline::Artist, "", 0, 1, fmt.clone(), true, None)["status_display_type"], 1);
+        assert_eq!(activity(&lucky, cover, Headline::Song, "", 0, 1, fmt.clone(), true, None)["status_display_type"], 2);
         assert_eq!(shown["details"], "Get Lucky");
         assert_eq!(shown["state"], "Daft Punk");
         assert_eq!(shown["timestamps"], json!({ "start": 1, "end": 249 }));
@@ -448,27 +498,27 @@ mod tests {
         );
         assert_eq!(shown["assets"]["large_text"], "Random Access Memories");
 
-        let video = activity(&song("7", "Video • Prince • 12M views", &["Prince"]), "", Headline::App, "", 0, 1, fmt.clone(), true);
+        let video = activity(&song("7", "Video • Prince • 12M views", &["Prince"]), "", Headline::App, "", 0, 1, fmt.clone(), true, None);
         assert_eq!(video["details"], "7 ");
         assert_eq!(video["state"], "Prince");
         assert_eq!(video["assets"]["large_text"], "Prince");
 
         let mut fmt_off = fmt.clone();
         fmt_off.line3 = crate::app::DiscordLineContent::Off;
-        let video_off = activity(&song("7", "Video • Prince • 12M views", &["Prince"]), "", Headline::App, "", 0, 1, fmt_off, true);
+        let video_off = activity(&song("7", "Video • Prince • 12M views", &["Prince"]), "", Headline::App, "", 0, 1, fmt_off, true, None);
         assert_eq!(video_off["assets"]["large_text"], "AURI");
 
-        let unnamed = activity(&song(&"é😀".repeat(100), "", &[]), "", Headline::App, "", 0, 1, fmt.clone(), true);
+        let unnamed = activity(&song(&"é😀".repeat(100), "", &[]), "", Headline::App, "", 0, 1, fmt.clone(), true, None);
         assert_eq!(unnamed["details"].as_str().unwrap().encode_utf16().count(), 127);
         assert!(unnamed["state"].is_null());
 
         let (updates, inbox) = mpsc::channel();
         let mut discord = Discord { updates, shown: None };
-        discord.show(Some((&lucky, cover)), Headline::App, "", 0, 248_000, fmt.clone(), true);
-        discord.show(Some((&lucky, cover)), Headline::App, "", 0, 248_000, fmt.clone(), true);
-        discord.show(Some((&lucky, cover)), Headline::Artist, "mine", 0, 248_000, fmt.clone(), true);
-        discord.show(Some((&lucky, cover)), Headline::Custom, "mine", 0, 248_000, fmt.clone(), true);
-        discord.show(Some((&lucky, cover)), Headline::Custom, "m", 0, 248_000, fmt.clone(), true);
+        discord.show(Some((&lucky, cover)), Headline::App, "", 0, 248_000, fmt.clone(), true, None);
+        discord.show(Some((&lucky, cover)), Headline::App, "", 0, 248_000, fmt.clone(), true, None);
+        discord.show(Some((&lucky, cover)), Headline::Artist, "mine", 0, 248_000, fmt.clone(), true, None);
+        discord.show(Some((&lucky, cover)), Headline::Custom, "mine", 0, 248_000, fmt.clone(), true, None);
+        discord.show(Some((&lucky, cover)), Headline::Custom, "m", 0, 248_000, fmt.clone(), true, None);
         let sent: Vec<_> = inbox
             .try_iter()
             .flatten()
@@ -481,5 +531,22 @@ mod tests {
             (json!(0), json!("m")),
         ];
         assert_eq!(sent, expected);
+    }
+
+    #[test]
+    fn listen_together_party_adds_a_join_invite() {
+        let fmt = DiscordFormat::default();
+        let lucky = Item {
+            title: "Get Lucky".to_owned(),
+            subtitle: "Daft Punk • Random Access Memories".to_owned(),
+            ..Item::default()
+        };
+        let act = activity(&lucky, "", Headline::App, "", 0, 248_000, fmt, true, Some(("K7QX-9M2T-B4", 3)));
+        assert_eq!(act["party"]["id"], "K7QX-9M2T-B4");
+        assert_eq!(act["party"]["size"][0], 3);
+        assert_eq!(act["secrets"]["join"], "K7QX-9M2T-B4");
+        let without = activity(&lucky, "", Headline::App, "", 0, 248_000, DiscordFormat::default(), true, None);
+        assert!(without["party"].is_null());
+        assert!(without["secrets"].is_null());
     }
 }
