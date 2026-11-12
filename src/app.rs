@@ -1451,6 +1451,9 @@ pub enum Action {
     SetSongNotifications(bool),
     #[allow(dead_code)]
     SetLaunchOnStartup(bool),
+    RestoreFromTray,
+    HideToTray,
+    QuitApp,
     #[allow(dead_code)]
     SetHistoryEnabled(bool),
     SetHomeFilter(String),
@@ -1599,6 +1602,11 @@ pub struct App {
     pub sync_last_state: Option<(String, bool)>,
     pub sync_listeners: std::collections::HashMap<String, Instant>,
     pub sync_skew: crate::sync::SkewEstimator,
+    /// Set when the user really wants to exit (tray Quit), so the
+    /// close-to-tray interception lets the close through.
+    pub force_quit: bool,
+    /// Last track a song notification was shown for.
+    pub last_notified_track: Option<String>,
     pub last_listen_tick: Option<Instant>,
     pub in_game_mode: bool,
     #[allow(dead_code)]
@@ -1654,6 +1662,25 @@ impl App {
             }
         });
         let discord = saved.discord.then(|| link_discord(&sender, &ctx));
+        #[cfg(windows)]
+        {
+            // Trust the registry over the config: the launch-at-startup entry
+            // is machine state, and the exe path may have moved.
+            saved.launch_on_startup = startup_registered();
+            crate::tray::set_visible(saved.close_to_tray || saved.song_notifications);
+            let (tray_sender, tray_ctx) = (sender.clone(), ctx.clone());
+            crate::tray::start(std::sync::Arc::new(move |action| {
+                match action {
+                    crate::tray::TrayAction::Restore => {
+                        let _ = tray_sender.send(Event::Pressed(Action::RestoreFromTray));
+                    }
+                    crate::tray::TrayAction::Quit => {
+                        let _ = tray_sender.send(Event::Pressed(Action::QuitApp));
+                    }
+                }
+                tray_ctx.request_repaint();
+            }));
+        }
         let mut app = Self {
             art: Art::new(ctx.clone(), yt.agent.clone()),
             ctx: ctx.clone(),
@@ -1716,6 +1743,8 @@ impl App {
             sync_last_state: None,
             sync_listeners: std::collections::HashMap::new(),
             sync_skew: crate::sync::SkewEstimator::default(),
+            force_quit: false,
+            last_notified_track: None,
             last_listen_tick: None,
             in_game_mode: false,
             game_hud_visible: false,
@@ -2279,6 +2308,11 @@ impl App {
     /// Guests heard from within the last 45s (they heartbeat every 15s).
     pub fn sync_listener_count(&self) -> usize {
         self.sync_listeners.values().filter(|seen| seen.elapsed() < Duration::from_secs(45)).count()
+    }
+
+    /// The tray icon exists while close-to-tray or song notifications need it.
+    fn refresh_tray_visibility(&self) {
+        crate::tray::set_visible(self.saved.close_to_tray || self.saved.song_notifications);
     }
 
     /// Polls the overlay hotkey on a dedicated thread while Gaming Mode is
@@ -3306,12 +3340,28 @@ impl App {
             }
             Action::SetCloseToTray(val) => {
                 self.saved.close_to_tray = val;
+                self.refresh_tray_visibility();
             }
             Action::SetSongNotifications(val) => {
                 self.saved.song_notifications = val;
+                self.refresh_tray_visibility();
             }
             Action::SetLaunchOnStartup(val) => {
                 self.saved.launch_on_startup = val;
+                apply_startup_registration(val);
+            }
+            Action::RestoreFromTray => {
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            Action::HideToTray => {
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            }
+            Action::QuitApp => {
+                self.force_quit = true;
+                crate::tray::shutdown();
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             Action::SetHistoryEnabled(val) => {
                 self.saved.history_enabled = val;
@@ -3741,6 +3791,15 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Close-to-tray: OS-level close requests (Alt+F4, taskbar) hide the
+        // window instead of quitting, unless the user chose to really quit.
+        if self.saved.close_to_tray
+            && !self.force_quit
+            && ctx.input(|input| input.viewport().close_requested())
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
         let (size, minimized) = ctx.input(|input| (input.content_rect().size(), input.viewport().minimized == Some(true)));
         if minimized && (self.saved.auto_purge_ram || (self.saved.performance_mode && self.saved.perf_aggressive_ram)) {
             self.apply(Action::PurgeMemory);
@@ -3953,9 +4012,23 @@ impl eframe::App for App {
             };
             discord.show(track, headline, name, position_ms, duration_ms, fmt, playing, party);
         }
+        // Song-change balloon via the tray icon.
+        #[cfg(windows)]
+        if self.saved.song_notifications {
+            let id = item.map(|it| it.video_id.clone());
+            if playing && id.is_some() && id != self.last_notified_track {
+                if let Some(it) = item {
+                    crate::tray::notify_song(&it.title, &it.subtitle);
+                }
+                self.last_notified_track = id;
+            }
+        } else if self.last_notified_track.is_some() {
+            self.last_notified_track = None;
+        }
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        crate::tray::shutdown();
         if let Some(program) = &self.restart {
             update::restart(program, &crate::profile_arguments());
         }
@@ -3982,6 +4055,44 @@ impl eframe::App for App {
         }
         eframe::set_value(storage, eframe::APP_KEY, &self.saved);
     }
+}
+
+/// Registers/unregisters AURI in the current user's Windows startup entries.
+#[cfg(windows)]
+fn apply_startup_registration(enabled: bool) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+    let Some(exe) = std::env::current_exe().ok().map(|path| path.to_string_lossy().into_owned()) else {
+        return;
+    };
+    let mut command = std::process::Command::new("reg");
+    if enabled {
+        command.args(["add", RUN_KEY, "/v", "AURI", "/t", "REG_SZ", "/d", &format!("\"{exe}\""), "/f"]);
+    } else {
+        command.args(["delete", RUN_KEY, "/v", "AURI", "/f"]);
+    }
+    let _ = command.creation_flags(CREATE_NO_WINDOW).status();
+}
+
+#[cfg(not(windows))]
+fn apply_startup_registration(_enabled: bool) {}
+
+/// Whether the startup entry currently exists in the registry.
+#[cfg(windows)]
+fn startup_registered() -> bool {
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("reg")
+        .args(["query", r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run", "/v", "AURI"])
+        .creation_flags(0x0800_0000)
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(windows))]
+fn startup_registered() -> bool {
+    false
 }
 
 fn link_discord(sender: &Sender<Event>, ctx: &egui::Context) -> Discord {

@@ -833,7 +833,12 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     }
     describe(&close_resp, "Close");
     if close_resp.clicked() {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        if app.saved.close_to_tray {
+            // Closing hides to the tray instead of quitting.
+            out.push(Action::HideToTray);
+        } else {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
     }
 
     // Maximize / Restore button
