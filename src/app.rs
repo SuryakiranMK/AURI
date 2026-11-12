@@ -22,9 +22,6 @@ const RECENT_LIMIT: usize = 100;
 const CACHED_PAGES: usize = 6;
 const PAGES_KEPT_ON_TRIM: usize = 3;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
-/// Suggestions are much lighter than a full search, so they fire sooner and
-/// make the dropdown feel instant while the full results load lazily behind.
-const SEARCH_SUGGEST_DEBOUNCE: Duration = Duration::from_millis(150);
 const RESTART_AFTER_MS: u64 = 3000;
 const NOTICE_TIME: Duration = Duration::from_secs(6);
 const UPDATE_NOTICE_TIME: Duration = Duration::from_secs(20);
@@ -2592,33 +2589,17 @@ impl App {
             }
         }
         if let Some(typed) = self.typed {
-            let elapsed = typed.elapsed();
-            let query = self.query.trim().to_owned();
-            // Stage 1: instant suggestions after a very short pause.
-            if elapsed >= SEARCH_SUGGEST_DEBOUNCE && !query.is_empty() && self.suggestions_query != query {
-                self.suggestions_query = query.clone();
-                self.suggestions.clear();
-                let (yt, sender, ctx, fetch_query) = (self.yt.clone(), self.sender.clone(), self.ctx.clone(), query.clone());
-                std::thread::spawn(move || {
-                    let list = yt.suggestions(&fetch_query).unwrap_or_default();
-                    let _ = sender.send(Event::Suggestions { query: fetch_query, list });
-                    ctx.request_repaint();
-                });
-            }
-            // Stage 2: the full results page prefetches lazily for the
-            // dropdown's rich rows and for Enter. The user stays put.
-            if elapsed >= SEARCH_DEBOUNCE {
+            if typed.elapsed() >= SEARCH_DEBOUNCE {
                 self.typed = None;
+                let query = self.query.trim().to_owned();
+                // The full results page prefetches lazily for the dropdown's
+                // rich rows and for Enter. The user stays put; suggestions
+                // already covered the instant feel on every keystroke.
                 if !query.is_empty() && matches!(self.route(), Route::Search(_)) {
                     self.ensure(&Route::Search(query));
                 }
             } else {
-                let next = if elapsed < SEARCH_SUGGEST_DEBOUNCE {
-                    SEARCH_SUGGEST_DEBOUNCE - elapsed
-                } else {
-                    SEARCH_DEBOUNCE - elapsed
-                };
-                ctx.request_repaint_after(next);
+                ctx.request_repaint_after(SEARCH_DEBOUNCE - typed.elapsed());
             }
         }
         if let Some(notice) = &self.notice {
@@ -3346,6 +3327,19 @@ impl App {
             }
             Action::TypeSearch => {
                 self.typed = Some(Instant::now());
+                // Suggestions fire on every keystroke (latest-wins: stale
+                // replies are dropped), so the dropdown feels instant.
+                let query = self.query.trim().to_owned();
+                if !query.is_empty() && self.suggestions_query != query {
+                    self.suggestions_query = query.clone();
+                    self.suggestions.clear();
+                    let (yt, sender, ctx, fetch_query) = (self.yt.clone(), self.sender.clone(), self.ctx.clone(), query);
+                    std::thread::spawn(move || {
+                        let list = yt.suggestions(&fetch_query).unwrap_or_default();
+                        let _ = sender.send(Event::Suggestions { query: fetch_query, list });
+                        ctx.request_repaint();
+                    });
+                }
             }
             Action::SetLyricsSyncedMode(v) => self.saved.lyrics_synced_mode = v,
             Action::SetLyricsFontSize(sz) => self.saved.lyrics_font_size = sz,

@@ -2874,6 +2874,7 @@ fn search_bar_with_live_results(
     let mut drop_rect = Rect::NOTHING;
     let show = open && if query_trimmed.is_empty() { !saved.recent_searches.is_empty() } else { true };
     if show {
+        let (drop_width, row_width) = (bar_rect.width() - 4.0, bar_rect.width() - 24.0);
         let area = egui::Area::new(Id::new("search-live-drop"))
             .order(egui::Order::Foreground)
             .fixed_pos(pos2(bar_rect.left(), bar_rect.bottom() + 6.0))
@@ -2885,14 +2886,16 @@ fn search_bar_with_live_results(
                     .inner_margin(Margin::same(10))
                     .shadow(egui::Shadow { offset: [0, 10], blur: 26, spread: 0, color: Color32::from_black_alpha(130) })
                     .show(ui, |ui| {
-                        ui.set_min_width(width - 20.0);
-                        ui.set_max_width(width - 20.0);
-                        egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| {
+                        ui.set_min_width(drop_width);
+                        ui.set_max_width(drop_width);
+                        // Width spans the search bar; height grows with the
+                        // content up to the cap, so the box is fully dynamic.
+                        egui::ScrollArea::vertical().auto_shrink([false, true]).max_height(380.0).show(ui, |ui| {
                             if query_trimmed.is_empty() {
                                 ui.label(RichText::new("Recent searches").font(bold(12.5)).color(m_color));
                                 ui.add_space(4.0);
                                 for recent in &saved.recent_searches {
-                                    let row = wide_row(ui, vec2(ui.available_width(), 34.0), icon::MAGNIFYING_GLASS, glyph(13.0), m_color, recent);
+                                    let row = wide_row(ui, vec2(row_width, 34.0), icon::MAGNIFYING_GLASS, glyph(13.0), m_color, recent);
                                     if row.clicked() {
                                         *query = recent.clone();
                                         cx.out.push(Action::Go(Route::Search(recent.clone())));
@@ -2900,7 +2903,7 @@ fn search_bar_with_live_results(
                                     }
                                 }
                             } else {
-                                let search_row = wide_row(ui, vec2(ui.available_width(), 34.0), icon::MAGNIFYING_GLASS, glyph(13.0), pal_color, &format!("Search \u{201C}{query_trimmed}\u{201D}"));
+                                let search_row = wide_row(ui, vec2(row_width, 34.0), icon::MAGNIFYING_GLASS, glyph(13.0), pal_color, &format!("Search \u{201C}{query_trimmed}\u{201D}"));
                                 if search_row.clicked() {
                                     cx.out.push(Action::Go(Route::Search(query_trimmed.clone())));
                                     open = false;
@@ -2912,7 +2915,7 @@ fn search_bar_with_live_results(
                                         if suggestion == &query_trimmed {
                                             continue;
                                         }
-                                        let row = wide_row(ui, vec2(ui.available_width(), 32.0), icon::MAGNIFYING_GLASS, glyph(12.5), m_color, suggestion);
+                                        let row = wide_row(ui, vec2(row_width, 32.0), icon::MAGNIFYING_GLASS, glyph(12.5), m_color, suggestion);
                                         if row.clicked() {
                                             *query = suggestion.clone();
                                             cx.out.push(Action::Go(Route::Search(suggestion.clone())));
@@ -2935,7 +2938,7 @@ fn search_bar_with_live_results(
                                                 ui.add_space(4.0);
                                             }
                                             for item in items {
-                                                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::click());
+                                                let (rect, resp) = ui.allocate_exact_size(vec2(row_width, 46.0), Sense::click());
                                                 let hov = hover_of(ui, &resp);
                                                 ui.painter().rect_filled(rect, 8.0, veil(0.08 * hov));
                                                 let art_rect = Rect::from_min_size(rect.min + vec2(4.0, 4.0), Vec2::splat(38.0));
@@ -6613,10 +6616,7 @@ fn settings_header_and_tabs(ui: &mut Ui, app: &App, active_tab: SettingsTab, out
 fn settings_body(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<Action>) {
     match active_tab {
         SettingsTab::General => {
-            settings_column(ui, |ui| {
-                general_section(ui, app, out);
-                sync_together_section(ui, app, out);
-            });
+            settings_column(ui, |ui| general_section(ui, app, out));
         }
         SettingsTab::Appearance => {
             settings_column(ui, |ui| appearance_section(ui, app, out));
@@ -6646,7 +6646,10 @@ fn settings_body(ui: &mut Ui, app: &App, active_tab: SettingsTab, out: &mut Vec<
             settings_column(ui, |ui| hotkey_section(ui, app, out));
         }
         SettingsTab::DataStorage => {
-            settings_column(ui, |ui| storage_section(ui, app, out));
+            settings_column(ui, |ui| {
+                storage_section(ui, app, out);
+                sync_together_section(ui, app, out);
+            });
         }
         SettingsTab::About => {
             settings_column(ui, |ui| about_section(ui, app, out));
