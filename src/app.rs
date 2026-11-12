@@ -996,6 +996,8 @@ pub struct Saved {
     pub perf_tick_fps: u32,
     #[serde(default)]
     pub sync_room_code: String,
+    #[serde(default)]
+    pub recent_searches: Vec<String>,
 
     #[serde(default)]
     pub stats_filter: StatsPeriod,
@@ -1265,6 +1267,7 @@ impl Default for Saved {
             perf_art_cache_mb: 4,
             perf_tick_fps: 1,
             sync_room_code: String::new(),
+            recent_searches: Vec::new(),
             stats_filter: StatsPeriod::ThirtyDays,
             stats_daily: Vec::new(),
             stats_total_listen_ms: 0,
@@ -2024,6 +2027,14 @@ impl App {
         if *self.route() == route {
             return;
         }
+        if let Route::Search(query) = &route {
+            let query = query.trim();
+            if !query.is_empty() {
+                self.saved.recent_searches.retain(|previous| previous != query);
+                self.saved.recent_searches.insert(0, query.to_owned());
+                self.saved.recent_searches.truncate(8);
+            }
+        }
         if matches!((self.route(), &route), (Route::Search(_), Route::Search(_))) {
             self.history[self.at] = route;
         } else {
@@ -2534,10 +2545,10 @@ impl App {
             if typed.elapsed() >= SEARCH_DEBOUNCE {
                 self.typed = None;
                 let query = self.query.trim().to_owned();
-                // Only live-search while on the search page, and never yank
-                // the user back after they navigated away mid-typing.
+                // Live search = silent prefetch for the dropdown. The user
+                // stays on the page; only Enter opens the full results view.
                 if !query.is_empty() && matches!(self.route(), Route::Search(_)) {
-                    self.go(Route::Search(query));
+                    self.ensure(&Route::Search(query));
                 }
             } else {
                 ctx.request_repaint_after(SEARCH_DEBOUNCE - typed.elapsed());
