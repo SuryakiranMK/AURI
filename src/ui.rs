@@ -2794,6 +2794,8 @@ fn search_bar_with_live_results(
     focus_search: &mut bool,
     saved: &crate::app::Saved,
     pages: &std::collections::HashMap<Route, Load>,
+    suggestions: &[String],
+    suggestions_for: &str,
     ui: &mut Ui,
     cx: &mut Cx,
 ) {
@@ -2824,6 +2826,12 @@ fn search_bar_with_live_results(
             .hint_text("Search songs, albums, artists, playlists...");
         ui.add(edit)
     }).inner;
+
+    // Clicking anywhere on the bar focuses the input (and opens the dropdown).
+    let bar_resp = ui.interact(bar_rect, Id::new("search-bar-hit"), Sense::click());
+    if bar_resp.clicked() {
+        response.request_focus();
+    }
 
     if std::mem::take(focus_search) {
         response.request_focus();
@@ -2897,37 +2905,64 @@ fn search_bar_with_live_results(
                                     cx.out.push(Action::Go(Route::Search(query_trimmed.clone())));
                                     open = false;
                                 }
-                                ui.add_space(4.0);
+                                // Stage 1: instant text suggestions.
+                                let mut shown_any = false;
+                                if suggestions_for == query_trimmed {
+                                    for suggestion in suggestions {
+                                        if suggestion == &query_trimmed {
+                                            continue;
+                                        }
+                                        let row = wide_row(ui, vec2(ui.available_width(), 32.0), icon::MAGNIFYING_GLASS, glyph(12.5), m_color, suggestion);
+                                        if row.clicked() {
+                                            *query = suggestion.clone();
+                                            cx.out.push(Action::Go(Route::Search(suggestion.clone())));
+                                            open = false;
+                                        }
+                                        shown_any = true;
+                                    }
+                                }
+                                // Stage 2: lazy rich rows — they stream in as
+                                // soon as the prefetched results page lands.
                                 match pages.get(&Route::Search(query_trimmed.clone())) {
                                     Some(Load::Ready(page)) => {
-                                        let items: Vec<&Item> = page.sections.iter().flat_map(|section| &section.items).take(8).collect();
+                                        let items: Vec<&Item> = page.sections.iter().flat_map(|section| &section.items).take(6).collect();
                                         if items.is_empty() {
-                                            ui.label(RichText::new("No quick results — press Enter for the full page.").font(sans(11.5)).color(m_color));
-                                        }
-                                        for item in items {
-                                            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::click());
-                                            let hov = hover_of(ui, &resp);
-                                            ui.painter().rect_filled(rect, 8.0, veil(0.08 * hov));
-                                            let art_rect = Rect::from_min_size(rect.min + vec2(4.0, 4.0), Vec2::splat(38.0));
-                                            artwork(ui, cx.art, &item.thumb, art_rect, 6.0);
-                                            label(ui, pos2(art_rect.right() + 10.0, rect.top() + 15.0), Align2::LEFT_CENTER, &item.title, medium(12.5), t_color, rect.width() - 66.0);
-                                            label(ui, pos2(art_rect.right() + 10.0, rect.top() + 31.0), Align2::LEFT_CENTER, &item.subtitle, sans(10.5), m_color, rect.width() - 66.0);
-                                            describe(&resp, &item.title);
-                                            if resp.clicked() {
-                                                if !item.video_id.is_empty() {
-                                                    cx.out.push(Action::Play(vec![item.clone()], 0));
-                                                } else if !item.browse_id.is_empty() {
-                                                    cx.out.push(Action::Go(Route::Browse(item.browse_id.clone())));
+                                            if !shown_any {
+                                                ui.label(RichText::new("No quick results — press Enter for the full page.").font(sans(11.5)).color(m_color));
+                                            }
+                                        } else {
+                                            if shown_any {
+                                                ui.add_space(4.0);
+                                            }
+                                            for item in items {
+                                                let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::click());
+                                                let hov = hover_of(ui, &resp);
+                                                ui.painter().rect_filled(rect, 8.0, veil(0.08 * hov));
+                                                let art_rect = Rect::from_min_size(rect.min + vec2(4.0, 4.0), Vec2::splat(38.0));
+                                                artwork(ui, cx.art, &item.thumb, art_rect, 6.0);
+                                                label(ui, pos2(art_rect.right() + 10.0, rect.top() + 15.0), Align2::LEFT_CENTER, &item.title, medium(12.5), t_color, rect.width() - 66.0);
+                                                label(ui, pos2(art_rect.right() + 10.0, rect.top() + 31.0), Align2::LEFT_CENTER, &item.subtitle, sans(10.5), m_color, rect.width() - 66.0);
+                                                describe(&resp, &item.title);
+                                                if resp.clicked() {
+                                                    if !item.video_id.is_empty() {
+                                                        cx.out.push(Action::Play(vec![item.clone()], 0));
+                                                    } else if !item.browse_id.is_empty() {
+                                                        cx.out.push(Action::Go(Route::Browse(item.browse_id.clone())));
+                                                    }
+                                                    open = false;
                                                 }
-                                                open = false;
                                             }
                                         }
                                     }
                                     Some(Load::Failed(_)) => {
-                                        ui.label(RichText::new("Search failed — check your connection.").font(sans(11.5)).color(m_color));
+                                        if !shown_any {
+                                            ui.label(RichText::new("Search failed — check your connection.").font(sans(11.5)).color(m_color));
+                                        }
                                     }
                                     _ => {
-                                        ui.label(RichText::new("Searching…").font(sans(11.5)).color(m_color));
+                                        if !shown_any {
+                                            ui.label(RichText::new("Searching…").font(sans(11.5)).color(m_color));
+                                        }
                                     }
                                 }
                             }
@@ -2937,10 +2972,10 @@ fn search_bar_with_live_results(
         drop_rect = area.response.rect;
     }
 
-    // Clicking anywhere outside the field or the dropdown dismisses it.
+    // Clicking anywhere outside the bar or the dropdown dismisses it.
     if open && ui.input(|i| i.pointer.any_pressed()) {
         if let Some(pointer) = ui.input(|i| i.pointer.latest_pos()) {
-            if !field.contains(pointer) && !drop_rect.contains(pointer) {
+            if !bar_rect.contains(pointer) && !drop_rect.contains(pointer) {
                 open = false;
             }
         }
@@ -2948,13 +2983,13 @@ fn search_bar_with_live_results(
     ui.data_mut(|d| d.insert_temp(drop_id, open));
 }
 
-fn search_discovery_view(query: &mut String, focus_search: &mut bool, saved: &crate::app::Saved, pages: &std::collections::HashMap<Route, Load>, ui: &mut Ui, cx: &mut Cx) {
+fn search_discovery_view(query: &mut String, focus_search: &mut bool, saved: &crate::app::Saved, pages: &std::collections::HashMap<Route, Load>, suggestions: &[String], suggestions_for: &str, ui: &mut Ui, cx: &mut Cx) {
     let width = ui.available_width();
     let is_light = saved.theme_mode == ThemeMode::Light;
     let t_color = if is_light { Color32::from_rgb(24, 28, 36) } else { TEXT };
     let pal_color = saved.theme_palette.color();
 
-    search_bar_with_live_results(query, focus_search, saved, pages, ui, cx);
+    search_bar_with_live_results(query, focus_search, saved, pages, suggestions, suggestions_for, ui, cx);
     ui.add_space(24.0);
 
     let (m_head, _) = ui.allocate_exact_size(vec2(width, 32.0), Sense::hover());
@@ -3578,6 +3613,8 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
         ref art,
         ref saved,
         ref pages,
+        ref suggestions,
+        ref suggestions_query,
         ..
     } = *app;
 
@@ -3636,9 +3673,9 @@ fn content(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                 Route::Settings(_) => unreachable!(),
                 Route::Search(q) => {
                     if q.trim().is_empty() {
-                        search_discovery_view(query, focus_search, saved, pages, ui, &mut cx);
+                        search_discovery_view(query, focus_search, saved, pages, suggestions, suggestions_query, ui, &mut cx);
                     } else {
-                        search_bar_with_live_results(query, focus_search, saved, pages, ui, &mut cx);
+                        search_bar_with_live_results(query, focus_search, saved, pages, suggestions, suggestions_query, ui, &mut cx);
                         page(ui, &mut cx, pages.get(&route), &saved.pinned, Some(q));
                     }
                 }

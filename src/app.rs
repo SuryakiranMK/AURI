@@ -22,6 +22,9 @@ const RECENT_LIMIT: usize = 100;
 const CACHED_PAGES: usize = 6;
 const PAGES_KEPT_ON_TRIM: usize = 3;
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(350);
+/// Suggestions are much lighter than a full search, so they fire sooner and
+/// make the dropdown feel instant while the full results load lazily behind.
+const SEARCH_SUGGEST_DEBOUNCE: Duration = Duration::from_millis(150);
 const RESTART_AFTER_MS: u64 = 3000;
 const NOTICE_TIME: Duration = Duration::from_secs(6);
 const UPDATE_NOTICE_TIME: Duration = Duration::from_secs(20);
@@ -1537,6 +1540,7 @@ enum Event {
     DownloadProgress { video_id: String, title: String, percent: f32 },
     DownloadDone { title: String, error: Option<String> },
     SyncPacket(crate::sync::SyncPacket),
+    Suggestions { query: String, list: Vec<String> },
 }
 
 #[derive(Clone, Debug)]
@@ -1607,6 +1611,10 @@ pub struct App {
     pub force_quit: bool,
     /// Last track a song notification was shown for.
     pub last_notified_track: Option<String>,
+    /// Instant search suggestions for the live dropdown.
+    pub suggestions: Vec<String>,
+    /// The query the current suggestions belong to (stale replies drop out).
+    pub suggestions_query: String,
     pub last_listen_tick: Option<Instant>,
     pub in_game_mode: bool,
     #[allow(dead_code)]
@@ -1745,6 +1753,8 @@ impl App {
             sync_skew: crate::sync::SkewEstimator::default(),
             force_quit: false,
             last_notified_track: None,
+            suggestions: Vec::new(),
+            suggestions_query: String::new(),
             last_listen_tick: None,
             in_game_mode: false,
             game_hud_visible: false,
@@ -2384,6 +2394,12 @@ impl App {
                     }
                 }
                 Event::Page(route, Err(message)) => drop(self.pages.insert(route, Load::Failed(message))),
+                Event::Suggestions { query, list } => {
+                    // Only the newest requested query may update the dropdown.
+                    if query == self.suggestions_query {
+                        self.suggestions = list;
+                    }
+                }
                 Event::Radio(seed, items) if seed == self.radio_seed => {
                     let upcoming = self.saved.current.map_or(0, |current| current + 1);
                     let had_next = upcoming < self.saved.queue.len();
@@ -2576,16 +2592,33 @@ impl App {
             }
         }
         if let Some(typed) = self.typed {
-            if typed.elapsed() >= SEARCH_DEBOUNCE {
+            let elapsed = typed.elapsed();
+            let query = self.query.trim().to_owned();
+            // Stage 1: instant suggestions after a very short pause.
+            if elapsed >= SEARCH_SUGGEST_DEBOUNCE && !query.is_empty() && self.suggestions_query != query {
+                self.suggestions_query = query.clone();
+                self.suggestions.clear();
+                let (yt, sender, ctx, fetch_query) = (self.yt.clone(), self.sender.clone(), self.ctx.clone(), query.clone());
+                std::thread::spawn(move || {
+                    let list = yt.suggestions(&fetch_query).unwrap_or_default();
+                    let _ = sender.send(Event::Suggestions { query: fetch_query, list });
+                    ctx.request_repaint();
+                });
+            }
+            // Stage 2: the full results page prefetches lazily for the
+            // dropdown's rich rows and for Enter. The user stays put.
+            if elapsed >= SEARCH_DEBOUNCE {
                 self.typed = None;
-                let query = self.query.trim().to_owned();
-                // Live search = silent prefetch for the dropdown. The user
-                // stays on the page; only Enter opens the full results view.
                 if !query.is_empty() && matches!(self.route(), Route::Search(_)) {
                     self.ensure(&Route::Search(query));
                 }
             } else {
-                ctx.request_repaint_after(SEARCH_DEBOUNCE - typed.elapsed());
+                let next = if elapsed < SEARCH_SUGGEST_DEBOUNCE {
+                    SEARCH_SUGGEST_DEBOUNCE - elapsed
+                } else {
+                    SEARCH_DEBOUNCE - elapsed
+                };
+                ctx.request_repaint_after(next);
             }
         }
         if let Some(notice) = &self.notice {

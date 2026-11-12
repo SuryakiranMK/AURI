@@ -449,6 +449,15 @@ impl Client {
         Ok(page)
     }
 
+    /// Instant search suggestions from the lightweight autocomplete endpoint.
+    pub fn suggestions(&self, query: &str) -> Result<Vec<String>, String> {
+        let response = self.music("music/get_search_suggestions", json!({ "input": query }), &[])?;
+        let mut list = Vec::new();
+        collect_suggestions(&response, &mut list);
+        list.truncate(8);
+        Ok(list)
+    }
+
     pub fn radio(&self, video_id: &str) -> Result<Vec<Item>, String> {
         let body = json!({
             "videoId": video_id,
@@ -652,6 +661,33 @@ fn find<'a>(node: &'a Value, key: &str) -> Option<&'a Value> {
         Value::Array(list) => list.iter().find_map(|child| find(child, key)),
         Value::Object(map) => map.get(key).or_else(|| map.values().find_map(|child| find(child, key))),
         _ => None,
+    }
+}
+
+/// Walks a search-suggestions response for suggestion strings. The endpoint
+/// has two shapes (a plain string array and a rendered-parts object), so the
+/// parser stays lenient and only descends the keys it knows.
+fn collect_suggestions(value: &Value, out: &mut Vec<String>) {
+    const KEYS: [&str; 5] = ["suggestions", "searchSuggestionsPartRendered", "contents", "query", "text"];
+    match value {
+        Value::Array(list) => {
+            for item in list {
+                collect_suggestions(item, out);
+            }
+        }
+        Value::Object(map) => {
+            for (key, item) in map {
+                if KEYS.contains(&key.as_str()) {
+                    collect_suggestions(item, out);
+                }
+            }
+        }
+        Value::String(text) => {
+            if !text.is_empty() && out.len() < 8 && !out.iter().any(|known| known == text) {
+                out.push(text.clone());
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1240,6 +1276,28 @@ fn thumb(node: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suggestions_parse_both_response_shapes() {
+        let plain = json!({ "suggestions": ["daft punk", "daft punk songs"] });
+        let mut list = Vec::new();
+        collect_suggestions(&plain, &mut list);
+        assert_eq!(list, vec!["daft punk".to_owned(), "daft punk songs".to_owned()]);
+
+        let rendered = json!({ "suggestions": [
+            { "from": "history", "query": "daft punk one more time" },
+            { "from": "you", "query": "daft punk alive" },
+        ]});
+        let mut list = Vec::new();
+        collect_suggestions(&rendered, &mut list);
+        assert_eq!(list.len(), 2);
+        assert!(list.contains(&"daft punk one more time".to_owned()));
+
+        let mut capped = Vec::new();
+        let many: Vec<String> = (0..20).map(|i| i.to_string()).collect();
+        collect_suggestions(&json!({ "suggestions": many }), &mut capped);
+        assert_eq!(capped.len(), 8);
+    }
 
     #[test]
     fn prefers_opus_and_falls_back_to_aac() {
