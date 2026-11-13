@@ -1435,6 +1435,7 @@ pub enum Action {
     StartSyncJoin(String),
     StopSync,
     TypeSearch,
+    Notify(String),
     SetLyricsSyncedMode(bool),
     SetLyricsFontSize(f32),
     SetLyricsAlignCenter(bool),
@@ -2954,10 +2955,12 @@ impl App {
                         self.apply(Action::PurgeMemory);
                     }
                 } else {
+                    // Restore without any intermediate size: maximize directly
+                    // so the expansion is a single smooth morph from the mini
+                    // window, never a small framed window in between.
                     self.title_bar.restore_decorations();
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                 }
@@ -3351,6 +3354,7 @@ impl App {
                     });
                 }
             }
+            Action::Notify(message) => self.notify(message),
             Action::SetLyricsSyncedMode(v) => self.saved.lyrics_synced_mode = v,
             Action::SetLyricsFontSize(sz) => self.saved.lyrics_font_size = sz,
             Action::SetLyricsAlignCenter(v) => self.saved.lyrics_align_center = v,
