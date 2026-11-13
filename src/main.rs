@@ -64,6 +64,38 @@ fn attach_console() {
 #[cfg(not(windows))]
 fn attach_console() {}
 
+/// One AURI per profile. A named mutex keyed by the profile id makes a plain
+/// double-click focus the running instance instead of stacking a second
+/// process — a leftover process left in Mini Mode would otherwise keep its
+/// always-on-top capsule floating over the window. Explicit `--profile`
+/// launches get their own mutex, so multi-instance testing still works.
+#[cfg(windows)]
+fn enforce_single_instance() {
+    use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
+    use windows_sys::Win32::System::Threading::CreateMutexW;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE};
+
+    let profile = app_id();
+    let name: Vec<u16> = format!("Local\\AURI.{profile}\0").encode_utf16().collect();
+    // The handle is intentionally never closed: the OS releases it on exit,
+    // keeping the mutex alive for this process's whole lifetime.
+    let _mutex = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
+    if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        let title: Vec<u16> = format!("{APP_NAME}\0").encode_utf16().collect();
+        let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) } as isize;
+        if window != 0 {
+            unsafe {
+                ShowWindow(window as _, SW_RESTORE);
+                SetForegroundWindow(window as _);
+            }
+        }
+        std::process::exit(0);
+    }
+}
+
+#[cfg(not(windows))]
+fn enforce_single_instance() {}
+
 fn log_crashes() {
     let Some(folder) = eframe::storage_dir(app_id()) else { return };
     std::panic::set_hook(Box::new(move |panic| {
@@ -109,6 +141,7 @@ fn main() -> eframe::Result {
         (Some(query), None) if !query.starts_with("--") => (Some(query), false),
         _ => (None, false),
     };
+    enforce_single_instance();
     let viewport = egui::ViewportBuilder::default()
         .with_title(APP_NAME)
         .with_app_id(app_id())

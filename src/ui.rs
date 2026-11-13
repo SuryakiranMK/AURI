@@ -663,6 +663,36 @@ impl TitleBar {
             }
         }
     }
+
+    /// Default resting spot for the mini HUD: the bottom-right of the
+    /// monitor's work area, clear of the taskbar. Entering mini mode from a
+    /// maximized window otherwise keeps the un-maximized top-left anchor,
+    /// which parks the HUD in the screen corner right over the main window.
+    /// `size` is in egui points, `points_per_pixel` converts to physical px.
+    pub fn mini_anchor(&self, size: egui::Vec2, points_per_pixel: f32) -> egui::Pos2 {
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::Foundation::RECT;
+            use windows_sys::Win32::Graphics::Gdi::{
+                GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+            };
+            if self.window != 0 && points_per_pixel > 0.0 {
+                let monitor = unsafe { MonitorFromWindow(self.window as _, MONITOR_DEFAULTTONEAREST) };
+                let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+                info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                if unsafe { GetMonitorInfoW(monitor, &mut info) } != 0 {
+                    let work: RECT = info.rcWork;
+                    let margin = (24.0 * points_per_pixel) as i32;
+                    let w_px = (size.x * points_per_pixel) as i32;
+                    let h_px = (size.y * points_per_pixel) as i32;
+                    let x = (work.right - w_px - margin).max(work.left + margin);
+                    let y = (work.bottom - h_px - margin).max(work.top + margin);
+                    return egui::pos2(x as f32 / points_per_pixel, y as f32 / points_per_pixel);
+                }
+            }
+        }
+        egui::pos2(120.0, 120.0)
+    }
 }
 
 fn paint_glass_grain(painter: &egui::Painter, rect: Rect, rounding: f32, strength: f32) {
@@ -756,6 +786,10 @@ impl TitleBar {
     pub fn set_click_through(&self, _through: bool) {}
 
     pub fn restore_decorations(&self) {}
+
+    pub fn mini_anchor(&self, _size: egui::Vec2, _points_per_pixel: f32) -> egui::Pos2 {
+        egui::pos2(120.0, 120.0)
+    }
 }
 
 fn panel_bg_color(saved: &crate::app::Saved) -> Color32 {
@@ -1034,8 +1068,12 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
         .show(|ui| {
             // Reuses the settings kit: `team_row` rows (the same composition
             // as settings rows) and the Listen Together card's button styling.
+            // The popup auto-sizes to its content, and content measured against
+            // the full available width balloons it, so clamp BOTH directions:
+            // rows then measure against exactly this width.
             ui.set_min_width(248.0);
-            let width = ui.available_width();
+            ui.set_max_width(248.0);
+            let width = ui.available_width().min(248.0);
             let accent = pal_color;
             let red = Color32::from_rgb(244, 63, 94);
             let (head, _) = ui.allocate_exact_size(vec2(width, 18.0), Sense::hover());

@@ -1777,6 +1777,8 @@ impl App {
             app.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
             let level = if app.saved.mini_always_on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
             app.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+            let ppp = app.ctx.input(|i| i.viewport().native_pixels_per_point.unwrap_or(1.0)) as f32;
+            app.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(app.title_bar.mini_anchor(egui::vec2(w, h), ppp)));
         }
         match query {
             Some(query) => {
@@ -2951,6 +2953,11 @@ impl App {
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
                     let level = if self.saved.mini_always_on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
+                    // Anchor the HUD at the bottom-right of the work area:
+                    // un-maximizing alone keeps the top-left corner, parking
+                    // the capsule over the main window.
+                    let ppp = self.ctx.input(|i| i.viewport().native_pixels_per_point.unwrap_or(1.0)) as f32;
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(self.title_bar.mini_anchor(egui::vec2(w, h), ppp)));
                     if self.saved.auto_purge_ram || (self.saved.performance_mode && self.saved.perf_aggressive_ram) {
                         self.apply(Action::PurgeMemory);
                     }
@@ -3534,7 +3541,8 @@ impl App {
                 self.title_bar.restore_decorations();
                 self.saved.mini_mode = true;
                 let (w, h) = self.saved.mini_variant.size(self.mini_queue_open);
-                self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(120.0, 120.0)));
+                let ppp = self.ctx.input(|i| i.viewport().native_pixels_per_point.unwrap_or(1.0)) as f32;
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(self.title_bar.mini_anchor(egui::vec2(w, h), ppp)));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
                 let level = if self.saved.mini_always_on_top { egui::WindowLevel::AlwaysOnTop } else { egui::WindowLevel::Normal };
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(level));
@@ -3938,6 +3946,10 @@ impl eframe::App for App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
                 let (w, h) = self.saved.mini_variant.size(self.mini_queue_open);
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+                // Back to the HUD anchor instead of staying stretched over
+                // the work area.
+                let ppp = ctx.input(|input| input.viewport().native_pixels_per_point.unwrap_or(1.0)) as f32;
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(self.title_bar.mini_anchor(egui::vec2(w, h), ppp)));
             }
             actions.extend(ui::draw_mini(self, ctx));
         } else {
