@@ -55,7 +55,7 @@ pub struct SyncPacket {
 
 pub enum SyncCmd {
     Host { room: String },
-    Join { room: String },
+    Join { room: String, name: String },
     Publish(SyncPacket),
     Disconnect,
 }
@@ -80,9 +80,9 @@ impl SyncSession {
         let _ = self.cmd_sender.send(SyncCmd::Host { room });
     }
 
-    pub fn join(&self, room: String) {
+    pub fn join(&self, room: String, name: String) {
         self.active.store(true, Ordering::Relaxed);
-        let _ = self.cmd_sender.send(SyncCmd::Join { room });
+        let _ = self.cmd_sender.send(SyncCmd::Join { room, name });
     }
 
     pub fn publish(&self, packet: SyncPacket) {
@@ -220,41 +220,55 @@ fn run_worker(
     let own_id = hex(&now_timestamp_ms().to_le_bytes()) + &hex(&[std::process::id() as u8]);
     let mut reader_stop: Option<Arc<AtomicBool>> = None;
     let mut pending: Option<SyncPacket> = None;
+    let mut guest_name = String::new();
     let mut last_hello = std::time::Instant::now() - Duration::from_secs(60);
 
     loop {
         while let Ok(cmd) = inbox.try_recv() {
-            let enter = match &cmd {
-                SyncCmd::Host { .. } => Some(SyncMode::Host),
-                SyncCmd::Join { .. } => Some(SyncMode::Guest),
-                _ => None,
-            };
             match cmd {
-                SyncCmd::Host { room: code } | SyncCmd::Join { room: code } => {
+                SyncCmd::Host { room: code } => {
                     if let Some(stop) = reader_stop.take() {
                         stop.store(true, Ordering::Relaxed);
                     }
-                    mode = enter.unwrap_or(SyncMode::Disconnected);
+                    mode = SyncMode::Host;
+                    guest_name.clear();
                     room = code;
                     topic = topic_for(&room);
                     let stop = Arc::new(AtomicBool::new(false));
                     reader_stop = Some(stop.clone());
                     let (t, s, id, cb, act) = (topic.clone(), room.clone(), own_id.clone(), on_packet.clone(), active.clone());
                     std::thread::spawn(move || reader_loop(t, s, id, cb, act, stop));
-                    if mode == SyncMode::Guest {
-                        last_hello = std::time::Instant::now() - Duration::from_secs(60);
+                }
+                SyncCmd::Join { room: code, name } => {
+                    if let Some(stop) = reader_stop.take() {
+                        stop.store(true, Ordering::Relaxed);
                     }
+                    mode = SyncMode::Guest;
+                    guest_name = name;
+                    room = code;
+                    topic = topic_for(&room);
+                    let stop = Arc::new(AtomicBool::new(false));
+                    reader_stop = Some(stop.clone());
+                    let (t, s, id, cb, act) = (topic.clone(), room.clone(), own_id.clone(), on_packet.clone(), active.clone());
+                    std::thread::spawn(move || reader_loop(t, s, id, cb, act, stop));
+                    last_hello = std::time::Instant::now() - Duration::from_secs(60);
                 }
                 SyncCmd::Publish(packet) => pending = Some(packet),
                 SyncCmd::Disconnect => {
                     if mode == SyncMode::Guest && !topic.is_empty() {
-                        let bye = SyncPacket { kind: "bye".into(), sender: own_id.clone(), ..Default::default() };
+                        let bye = SyncPacket {
+                            kind: "bye".into(),
+                            title: guest_name.clone(),
+                            sender: own_id.clone(),
+                            ..Default::default()
+                        };
                         post(&topic, signed_json(bye, &room));
                     }
                     if let Some(stop) = reader_stop.take() {
                         stop.store(true, Ordering::Relaxed);
                     }
                     mode = SyncMode::Disconnected;
+                    guest_name.clear();
                     room.clear();
                     topic.clear();
                     pending = None;
@@ -281,7 +295,12 @@ fn run_worker(
             SyncMode::Guest => {
                 if last_hello.elapsed() >= Duration::from_secs(15) {
                     last_hello = std::time::Instant::now();
-                    let hello = SyncPacket { kind: "hello".into(), sender: own_id.clone(), ..Default::default() };
+                    let hello = SyncPacket {
+                        kind: "hello".into(),
+                        title: guest_name.clone(),
+                        sender: own_id.clone(),
+                        ..Default::default()
+                    };
                     post(&topic, signed_json(hello, &room));
                 }
                 let _ = inbox.recv_timeout(Duration::from_millis(250));

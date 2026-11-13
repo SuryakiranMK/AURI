@@ -1601,7 +1601,7 @@ pub struct App {
     pub sync_room: String,
     pub sync_last_publish: Option<Instant>,
     pub sync_last_state: Option<(String, bool)>,
-    pub sync_listeners: std::collections::HashMap<String, Instant>,
+    pub sync_listeners: std::collections::HashMap<String, (String, Instant)>,
     pub sync_skew: crate::sync::SkewEstimator,
     /// Set when the user really wants to exit (tray Quit), so the
     /// close-to-tray interception lets the close through.
@@ -2314,7 +2314,7 @@ impl App {
 
     /// Guests heard from within the last 45s (they heartbeat every 15s).
     pub fn sync_listener_count(&self) -> usize {
-        self.sync_listeners.values().filter(|seen| seen.elapsed() < Duration::from_secs(45)).count()
+        self.sync_listeners.values().filter(|(_, seen)| seen.elapsed() < Duration::from_secs(45)).count()
     }
 
     /// The tray icon exists while close-to-tray or song notifications need it.
@@ -2556,8 +2556,9 @@ impl App {
                         crate::sync::SyncMode::Host => match pkt.kind.as_str() {
                             "hello" => {
                                 let is_new = !self.sync_listeners.contains_key(&pkt.sender);
-                                self.sync_listeners.insert(pkt.sender, Instant::now());
-                                self.sync_listeners.retain(|_, seen| seen.elapsed() < Duration::from_secs(45));
+                                let name = if pkt.title.is_empty() { "Listener".to_owned() } else { pkt.title.clone() };
+                                self.sync_listeners.insert(pkt.sender, (name, Instant::now()));
+                                self.sync_listeners.retain(|_, (_, seen)| seen.elapsed() < Duration::from_secs(45));
                                 if is_new {
                                     self.notify("🎧 Someone joined your Listen Together room");
                                 }
@@ -3311,7 +3312,16 @@ impl App {
                 self.saved.sync_room_code = room.clone();
                 self.sync_skew = crate::sync::SkewEstimator::default();
                 if let Some(s) = &self.sync {
-                    s.join(room);
+                    // The display name travels in hello packets so hosts can
+                    // list who is listening.
+                    let name = self
+                        .saved
+                        .account
+                        .as_ref()
+                        .map(|account| account.name.clone())
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or_else(|| "Listener".to_owned());
+                    s.join(room, name);
                 }
                 self.notify("🎧 Joined Listen Together Session (Syncing)");
             }

@@ -908,6 +908,12 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let upd_sym = if has_upd { icon::CLOUD_ARROW_DOWN } else { icon::ARROW_FAT_LINES_DOWN };
     let upd_color = if has_upd { pal_color } else if upd_hov > 0.1 { pal_color } else { m_color };
     ui.painter().text(upd_rect.center(), Align2::CENTER_CENTER, upd_sym, glyph(16.0), upd_color);
+    // Blue attention dot when an update is available.
+    if has_upd {
+        let upd_dot = pos2(upd_rect.center().x + 7.0, upd_rect.center().y - 6.5);
+        ui.painter().circle_filled(upd_dot, 3.5, Color32::from_rgb(96, 165, 250));
+        ui.painter().circle_stroke(upd_dot, 3.5, Stroke::new(1.0_f32, Color32::from_rgb(20, 21, 26)));
+    }
     describe(&upd_resp, if has_upd { "Update Available (Click to view details)" } else { "Check for Updates" });
     if upd_resp.clicked() {
         if has_upd {
@@ -977,6 +983,97 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     if disc_resp.clicked() {
         out.push(Action::ShowOnDiscord(!disc_on));
     }
+    tool_right -= 34.0;
+
+    // Listen Together (Team) Button: hosts/joins a room; the blue dot shows
+    // an active session, just like the Discord status dot.
+    let in_room = app.sync_mode != crate::sync::SyncMode::Disconnected;
+    let team_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
+    let team_resp = ui.interact(team_rect, Id::new("win-tool-team"), Sense::click());
+    let team_hov = hover_of(ui, &team_resp);
+    if in_room {
+        ui.painter().rect_filled(team_rect, 6.0, pal_color.gamma_multiply(0.18));
+    } else if team_hov > 0.05 {
+        ui.painter().rect_filled(team_rect, 6.0, veil(0.06 * team_hov));
+    }
+    ui.painter().text(
+        team_rect.center(),
+        Align2::CENTER_CENTER,
+        icon::HEADPHONES,
+        if in_room { solid(16.0) } else { glyph(16.0) },
+        if in_room || team_hov > 0.1 { pal_color } else { m_color },
+    );
+    if in_room {
+        let team_dot = pos2(team_rect.center().x + 7.0, team_rect.center().y - 6.5);
+        ui.painter().circle_filled(team_dot, 3.5, Color32::from_rgb(96, 165, 250));
+        ui.painter().circle_stroke(team_dot, 3.5, Stroke::new(1.0_f32, Color32::from_rgb(20, 21, 26)));
+    }
+    describe(&team_resp, if in_room { "Listen Together (click for the room)" } else { "Listen Together (host or join a room)" });
+    egui::Popup::menu(&team_resp).gap(6.0).show(|ui| {
+        match app.sync_mode {
+            crate::sync::SyncMode::Host => {
+                let code_row = menu_row(ui, icon::LINK, glyph(13.0), pal_color, &format!("Room {}", app.sync_room));
+                if code_row.clicked() {
+                    ui.ctx().copy_text(app.sync_room.clone());
+                }
+                let mut names: Vec<&str> = app
+                    .sync_listeners
+                    .values()
+                    .filter(|(_, seen)| seen.elapsed() < Duration::from_secs(45))
+                    .map(|(name, _)| name.as_str())
+                    .collect();
+                names.sort_unstable();
+                if names.is_empty() {
+                    ui.label(RichText::new("Waiting for friends to join…").font(sans(11.0)).color(MUTED));
+                } else {
+                    ui.label(RichText::new(format!("Listening ({})", names.len())).font(bold(11.5)).color(MUTED));
+                    for name in names {
+                        menu_row(ui, icon::USER, glyph(12.0), TEXT, name);
+                    }
+                }
+                let leave = menu_row(ui, icon::X, glyph(13.0), Color32::from_rgb(239, 68, 68), "Leave room");
+                if leave.clicked() {
+                    out.push(Action::StopSync);
+                }
+            }
+            crate::sync::SyncMode::Guest => {
+                let code_row = menu_row(ui, icon::LINK, glyph(13.0), pal_color, &format!("In room {}", app.sync_room));
+                if code_row.clicked() {
+                    ui.ctx().copy_text(app.sync_room.clone());
+                }
+                let leave = menu_row(ui, icon::X, glyph(13.0), Color32::from_rgb(239, 68, 68), "Leave room");
+                if leave.clicked() {
+                    out.push(Action::StopSync);
+                }
+            }
+            crate::sync::SyncMode::Disconnected => {
+                let host = menu_row(ui, icon::HEADPHONES, solid(13.0), pal_color, "Host a room");
+                if host.clicked() {
+                    out.push(Action::StartSyncHost(crate::sync::new_room_code()));
+                }
+                let join_id = Id::new("topbar-team-join-code");
+                ui.horizontal(|ui| {
+                    let mut buffer = ui.data(|d| d.get_temp::<String>(join_id)).unwrap_or_default();
+                    let edit = egui::TextEdit::singleline(&mut buffer)
+                        .hint_text("Room code")
+                        .desired_width(140.0)
+                        .font(sans(12.0));
+                    let edit_resp = ui.add(edit);
+                    if edit_resp.changed() {
+                        ui.data_mut(|d| d.insert_temp(join_id, buffer.clone()));
+                    }
+                    if ui
+                        .add_sized([70.0, 26.0], egui::Button::new(RichText::new("Join").font(bold(12.0))))
+                        .clicked()
+                        && !buffer.trim().is_empty()
+                    {
+                        out.push(Action::StartSyncJoin(buffer.trim().to_uppercase()));
+                        ui.data_mut(|d| d.remove_temp::<String>(join_id));
+                    }
+                });
+            }
+        }
+    });
     tool_right -= 34.0;
 
     // Account Avatar Button (icon-only; opens the account & profiles menu)
@@ -6150,7 +6247,7 @@ fn sync_together_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
     settings_card_panel(ui, "sync-card", "Listen Together", "Synchronized playback with friends through instant room codes.", |ui| {
         // 1. Session status with Host / Leave button
         let connected = app.sync_mode != crate::sync::SyncMode::Disconnected;
-        let listeners = app.sync_listeners.values().filter(|seen| seen.elapsed() < Duration::from_secs(45)).count();
+        let listeners = app.sync_listeners.values().filter(|(_, seen)| seen.elapsed() < Duration::from_secs(45)).count();
         let status_desc = match app.sync_mode {
             crate::sync::SyncMode::Disconnected => "Disconnected. Host a room or join a friend's code.".to_owned(),
             crate::sync::SyncMode::Host => format!("Hosting room {} · {} listening. Broadcasting playback.", app.sync_room, listeners + 1),
