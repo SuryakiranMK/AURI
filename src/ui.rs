@@ -620,11 +620,13 @@ impl TitleBar {
 
                 SetWindowPos(self.window as _, HWND_NOTOPMOST as _, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
 
+                // NOTE: DWM non-client rendering (attribute 2) is intentionally
+                // left alone. Disabling it (the old code) made Windows fall
+                // back to the legacy classic frame — the "old Windows UI"
+                // users saw after leaving mini mode.
+
                 let border_color: u32 = 0xFFFFFFFF;
                 DwmSetWindowAttribute(self.window as _, 34, (&raw const border_color).cast(), 4);
-
-                let nc_policy: u32 = 0;
-                DwmSetWindowAttribute(self.window as _, 2, (&raw const nc_policy).cast(), 4);
 
                 let corner_pref: u32 = 0;
                 DwmSetWindowAttribute(self.window as _, 33, (&raw const corner_pref).cast(), 4);
@@ -1010,12 +1012,52 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     }
     describe(&team_resp, if in_room { "Listen Together (click for the room)" } else { "Listen Together (host or join a room)" });
     egui::Popup::menu(&team_resp).gap(6.0).show(|ui| {
+        let panel_w = 296.0;
+        ui.set_min_width(panel_w);
+        let hosting = app.sync_mode == crate::sync::SyncMode::Host;
+        let accent = pal_color;
+        let red = Color32::from_rgb(239, 68, 68);
+
+        // Header
+        let (head, _) = ui.allocate_exact_size(vec2(panel_w, 20.0), Sense::hover());
+        ui.painter().text(pos2(head.left() + 6.0, head.center().y), Align2::LEFT_CENTER, "LISTEN TOGETHER", bold(10.0), FAINT);
+        if in_room {
+            // Room code chip: one click copies it to the clipboard instantly,
+            // then confirms with a "Copied" state so it is never ambiguous.
+            let copied_id = Id::new("team-code-copied");
+            let copied_until = ui.ctx().data(|d| d.get_temp::<f64>(copied_id)).unwrap_or(0.0);
+            let now = ui.ctx().input(|i| i.time);
+            let copied = now < copied_until;
+            let (chip, chip_resp) = ui.allocate_exact_size(vec2(panel_w - 24.0, 42.0), Sense::click());
+            let chip_hov = hover_of(ui, &chip_resp);
+            let fill = if copied { accent.gamma_multiply(0.26) } else { accent.gamma_multiply(0.13 + 0.10 * chip_hov) };
+            ui.painter().rect_filled(chip, 11.0, fill);
+            ui.painter().rect_stroke(chip, 11.0, Stroke::new(1.0_f32, accent.gamma_multiply(if chip_hov > 0.1 { 1.0 } else { 0.55 })), StrokeKind::Inside);
+            if copied {
+                ui.painter().text(chip.center(), Align2::CENTER_CENTER, "Copied to clipboard", bold(12.5), TEXT);
+                ui.painter().text(pos2(chip.left() + 14.0, chip.center().y), Align2::LEFT_CENTER, icon::CHECK, solid(14.0), accent);
+            } else {
+                label(
+                    ui,
+                    pos2(chip.left() + 14.0, chip.top() + 11.0),
+                    Align2::LEFT_CENTER,
+                    if hosting { "You are hosting" } else { "Listening along in" },
+                    sans(9.5),
+                    MUTED,
+                    120.0,
+                );
+                label(ui, pos2(chip.left() + 14.0, chip.bottom() - 13.0), Align2::LEFT_CENTER, &app.sync_room, bold(14.0), TEXT, chip.width() - 58.0);
+                ui.painter().text(pos2(chip.right() - 18.0, chip.center().y), Align2::CENTER_CENTER, icon::COPY, glyph(13.0), accent);
+            }
+            if chip_resp.clicked() {
+                ui.ctx().copy_text(app.sync_room.clone());
+                ui.ctx().data_mut(|d| d.insert_temp(copied_id, now + 1.6));
+            }
+        }
+
         match app.sync_mode {
             crate::sync::SyncMode::Host => {
-                let code_row = menu_row(ui, icon::LINK, glyph(13.0), pal_color, &format!("Room {}", app.sync_room));
-                if code_row.clicked() {
-                    ui.ctx().copy_text(app.sync_room.clone());
-                }
+                // Live listener list by name.
                 let mut names: Vec<&str> = app
                     .sync_listeners
                     .values()
@@ -1023,54 +1065,85 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                     .map(|(name, _)| name.as_str())
                     .collect();
                 names.sort_unstable();
+                let (sec, _) = ui.allocate_exact_size(vec2(panel_w, 20.0), Sense::hover());
+                ui.painter().text(
+                    pos2(sec.left() + 6.0, sec.center().y),
+                    Align2::LEFT_CENTER,
+                    if names.is_empty() { "WAITING FOR FRIENDS…" } else { "IN YOUR ROOM" },
+                    bold(9.5),
+                    FAINT,
+                );
                 if names.is_empty() {
-                    ui.label(RichText::new("Waiting for friends to join…").font(sans(11.0)).color(MUTED));
+                    let (row, _) = ui.allocate_exact_size(vec2(panel_w, 24.0), Sense::hover());
+                    ui.painter().text(pos2(row.left() + 6.0, row.center().y), Align2::LEFT_CENTER, "Share the code — or friends can click Join on your Discord profile.", sans(10.5), MUTED);
                 } else {
-                    ui.label(RichText::new(format!("Listening ({})", names.len())).font(bold(11.5)).color(MUTED));
                     for name in names {
-                        menu_row(ui, icon::USER, glyph(12.0), TEXT, name);
+                        let (row, resp) = ui.allocate_exact_size(vec2(panel_w, 30.0), Sense::hover());
+                        let hov = hover_of(ui, &resp);
+                        if hov > 0.0 {
+                            ui.painter().rect_filled(row.shrink2(vec2(6.0, 1.0)), 8.0, veil(0.06 * hov));
+                        }
+                        let avatar = pos2(row.left() + 17.0, row.center().y);
+                        ui.painter().circle_filled(avatar, 9.0, accent.gamma_multiply(0.22));
+                        ui.painter().text(avatar, Align2::CENTER_CENTER, icon::USER, glyph(9.5), accent);
+                        label(ui, pos2(row.left() + 32.0, row.center().y), Align2::LEFT_CENTER, name, medium(12.0), TEXT, row.width() - 40.0);
                     }
                 }
-                let leave = menu_row(ui, icon::X, glyph(13.0), Color32::from_rgb(239, 68, 68), "Leave room");
-                if leave.clicked() {
-                    out.push(Action::StopSync);
-                }
             }
-            crate::sync::SyncMode::Guest => {
-                let code_row = menu_row(ui, icon::LINK, glyph(13.0), pal_color, &format!("In room {}", app.sync_room));
-                if code_row.clicked() {
-                    ui.ctx().copy_text(app.sync_room.clone());
-                }
-                let leave = menu_row(ui, icon::X, glyph(13.0), Color32::from_rgb(239, 68, 68), "Leave room");
-                if leave.clicked() {
-                    out.push(Action::StopSync);
-                }
-            }
+            crate::sync::SyncMode::Guest => {}
             crate::sync::SyncMode::Disconnected => {
-                let host = menu_row(ui, icon::HEADPHONES, solid(13.0), pal_color, "Host a room");
-                if host.clicked() {
+                // Host action: one accent button.
+                let (host_btn, host_resp) = ui.allocate_exact_size(vec2(panel_w - 24.0, 36.0), Sense::click());
+                let hov = hover_of(ui, &host_resp);
+                ui.painter().rect_filled(host_btn, 10.0, accent.gamma_multiply(0.15 + 0.12 * hov));
+                ui.painter().rect_stroke(host_btn, 10.0, Stroke::new(1.0_f32, accent.gamma_multiply(if hov > 0.1 { 1.0 } else { 0.55 })), StrokeKind::Inside);
+                ui.painter().text(pos2(host_btn.left() + 18.0, host_btn.center().y), Align2::CENTER_CENTER, icon::HEADPHONES, solid(14.0), if hov > 0.1 { TEXT } else { accent });
+                ui.painter().text(host_btn.center(), Align2::CENTER_CENTER, "Host a room", bold(12.5), if hov > 0.1 { TEXT } else { accent });
+                describe(&host_resp, "Create a room and get a shareable code");
+                if host_resp.clicked() {
                     out.push(Action::StartSyncHost(crate::sync::new_room_code()));
                 }
+                // Join row: themed code field + Join button.
+                let (join_row, _) = ui.allocate_exact_size(vec2(panel_w - 24.0, 36.0), Sense::hover());
+                let field = Rect::from_min_max(join_row.min, pos2(join_row.right() - 88.0, join_row.bottom()));
+                ui.painter().rect_filled(field, 9.0, veil(0.07));
+                ui.painter().rect_stroke(field, 9.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
                 let join_id = Id::new("topbar-team-join-code");
-                ui.horizontal(|ui| {
-                    let mut buffer = ui.data(|d| d.get_temp::<String>(join_id)).unwrap_or_default();
-                    let edit = egui::TextEdit::singleline(&mut buffer)
-                        .hint_text("Room code")
-                        .desired_width(140.0)
-                        .font(sans(12.0));
-                    let edit_resp = ui.add(edit);
-                    if edit_resp.changed() {
-                        ui.data_mut(|d| d.insert_temp(join_id, buffer.clone()));
-                    }
-                    if ui
-                        .add_sized([70.0, 26.0], egui::Button::new(RichText::new("Join").font(bold(12.0))))
-                        .clicked()
-                        && !buffer.trim().is_empty()
-                    {
-                        out.push(Action::StartSyncJoin(buffer.trim().to_uppercase()));
-                        ui.data_mut(|d| d.remove_temp::<String>(join_id));
-                    }
-                });
+                let mut buffer = ui.data(|d| d.get_temp::<String>(join_id)).unwrap_or_default();
+                let edit = egui::TextEdit::singleline(&mut buffer)
+                    .hint_text("Room code")
+                    .desired_width(field.width() - 16.0)
+                    .font(sans(12.0))
+                    .frame(false);
+                let edit_resp = ui.put(field.shrink2(vec2(8.0, 2.0)), edit);
+                if edit_resp.changed() {
+                    ui.data_mut(|d| d.insert_temp(join_id, buffer.clone()));
+                }
+                let join_clicked = edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !buffer.trim().is_empty();
+                let join_btn = Rect::from_min_max(pos2(join_row.right() - 80.0, join_row.top() + 3.0), pos2(join_row.right(), join_row.bottom() - 3.0));
+                let join_resp = ui.interact(join_btn, Id::new("topbar-team-join-btn"), Sense::click());
+                let jhov = hover_of(ui, &join_resp);
+                ui.painter().rect_filled(join_btn, 9.0, accent.gamma_multiply(0.15 + 0.12 * jhov));
+                ui.painter().rect_stroke(join_btn, 9.0, Stroke::new(1.0_f32, accent.gamma_multiply(if jhov > 0.1 { 1.0 } else { 0.55 })), StrokeKind::Inside);
+                ui.painter().text(join_btn.center(), Align2::CENTER_CENTER, "Join", bold(12.0), if jhov > 0.1 { TEXT } else { accent });
+                describe(&join_resp, "Join a friend's room");
+                if (join_resp.clicked() || join_clicked) && !buffer.trim().is_empty() {
+                    out.push(Action::StartSyncJoin(buffer.trim().to_uppercase()));
+                    ui.data_mut(|d| d.remove_temp::<String>(join_id));
+                }
+            }
+        }
+
+        if in_room {
+            // Leave button, shared by host and guest states.
+            let (leave, leave_resp) = ui.allocate_exact_size(vec2(panel_w - 24.0, 32.0), Sense::click());
+            let hov = hover_of(ui, &leave_resp);
+            ui.painter().rect_filled(leave, 9.0, red.gamma_multiply(0.10 + 0.10 * hov));
+            ui.painter().rect_stroke(leave, 9.0, Stroke::new(1.0_f32, red.gamma_multiply(if hov > 0.1 { 1.0 } else { 0.5 })), StrokeKind::Inside);
+            ui.painter().text(leave.center(), Align2::CENTER_CENTER, "Leave room", bold(12.0), if hov > 0.1 { TEXT } else { red });
+            describe(&leave_resp, "Leave the Listen Together room");
+            if leave_resp.clicked() {
+                out.push(Action::StopSync);
             }
         }
     });
