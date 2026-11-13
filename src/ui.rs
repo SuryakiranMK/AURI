@@ -2871,108 +2871,106 @@ fn search_bar_with_live_results(
     }
 
     // The dropdown: recents on an empty query, live results while typing.
+    // Painted with exact rect math inside an explicit max_rect scope, so the
+    // box always spans the search bar and its height follows the row count —
+    // there is no auto-sizing involved that could collapse it.
     let mut drop_rect = Rect::NOTHING;
     let show = open && if query_trimmed.is_empty() { !saved.recent_searches.is_empty() } else { true };
     if show {
-        let (drop_width, row_width) = (bar_rect.width() - 4.0, bar_rect.width() - 24.0);
-        let area = egui::Area::new(Id::new("search-live-drop"))
+        enum DropEntry<'a> {
+            Hint(&'static str),
+            Recent(&'a String),
+            Submit,
+            Suggestion(&'a String),
+            Result(&'a Item),
+        }
+        let mut entries: Vec<DropEntry> = Vec::new();
+        if query_trimmed.is_empty() {
+            entries.push(DropEntry::Hint("Recent searches"));
+            entries.extend(saved.recent_searches.iter().map(DropEntry::Recent));
+        } else {
+            entries.push(DropEntry::Submit);
+            if suggestions_for == query_trimmed {
+                entries.extend(suggestions.iter().filter(|text| text.as_str() != query_trimmed).map(DropEntry::Suggestion));
+            }
+            match pages.get(&Route::Search(query_trimmed.clone())) {
+                Some(Load::Ready(page)) => {
+                    let items: Vec<&Item> = page.sections.iter().flat_map(|section| &section.items).take(6).collect();
+                    entries.extend(items.iter().map(|item| DropEntry::Result(item)));
+                    if items.is_empty() {
+                        entries.push(DropEntry::Hint("No quick results — press Enter for the full page."));
+                    }
+                }
+                Some(Load::Failed(_)) => entries.push(DropEntry::Hint("Search failed — check your connection.")),
+                _ => entries.push(DropEntry::Hint("Searching…")),
+            }
+        }
+        let row_h = 42.0;
+        let visible = entries.len().min(10);
+        let drop_width = bar_rect.width() - 4.0;
+        let pos = pos2(bar_rect.left(), bar_rect.bottom() + 6.0);
+        drop_rect = Rect::from_min_size(pos, vec2(drop_width, visible as f32 * row_h + 8.0));
+        let fill_color = if is_light { Color32::from_rgb(250, 250, 253) } else { panel_bg_color(saved) };
+        let (art, out) = (cx.art, &mut cx.out);
+        egui::Area::new(Id::new("search-live-drop"))
             .order(egui::Order::Foreground)
-            .fixed_pos(pos2(bar_rect.left(), bar_rect.bottom() + 6.0))
+            .fixed_pos(pos)
             .show(ui.ctx(), |ui| {
-                Frame::new()
-                    .fill(if is_light { Color32::from_rgb(250, 250, 253) } else { panel_bg_color(saved) })
-                    .stroke(Stroke::new(1.0_f32, veil(0.14)))
-                    .corner_radius(14.0)
-                    .inner_margin(Margin::same(10))
-                    .shadow(egui::Shadow { offset: [0, 10], blur: 26, spread: 0, color: Color32::from_black_alpha(130) })
-                    .show(ui, |ui| {
-                        ui.set_min_width(drop_width);
-                        ui.set_max_width(drop_width);
-                        // Width spans the search bar; height grows with the
-                        // content up to the cap, so the box is fully dynamic.
-                        egui::ScrollArea::vertical().auto_shrink([false, true]).max_height(380.0).show(ui, |ui| {
-                            if query_trimmed.is_empty() {
-                                ui.label(RichText::new("Recent searches").font(bold(12.5)).color(m_color));
-                                ui.add_space(4.0);
-                                for recent in &saved.recent_searches {
-                                    let row = wide_row(ui, vec2(row_width, 34.0), icon::MAGNIFYING_GLASS, glyph(13.0), m_color, recent);
-                                    if row.clicked() {
-                                        *query = recent.clone();
-                                        cx.out.push(Action::Go(Route::Search(recent.clone())));
-                                        open = false;
-                                    }
-                                }
-                            } else {
-                                let search_row = wide_row(ui, vec2(row_width, 34.0), icon::MAGNIFYING_GLASS, glyph(13.0), pal_color, &format!("Search \u{201C}{query_trimmed}\u{201D}"));
-                                if search_row.clicked() {
-                                    cx.out.push(Action::Go(Route::Search(query_trimmed.clone())));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(drop_rect), |ui| {
+                    // Drop shadow, then the plate.
+                    ui.painter().rect_filled(drop_rect.translate(vec2(0.0, 10.0)).expand(4.0), 24.0, Color32::from_black_alpha(90));
+                    ui.painter().rect_filled(drop_rect, 14.0, fill_color);
+                    ui.painter().rect_stroke(drop_rect, 14.0, Stroke::new(1.0_f32, veil(0.14)), StrokeKind::Inside);
+                    for (index, entry) in entries.iter().take(visible).enumerate() {
+                        let row = Rect::from_min_size(
+                            pos2(drop_rect.left() + 4.0, drop_rect.top() + 4.0 + index as f32 * row_h),
+                            vec2(drop_rect.width() - 8.0, row_h - 2.0),
+                        );
+                        match entry {
+                            DropEntry::Hint(text) => {
+                                ui.painter().text(pos2(row.left() + 8.0, row.center().y), Align2::LEFT_CENTER, *text, bold(11.5), m_color);
+                            }
+                            DropEntry::Submit | DropEntry::Suggestion(_) | DropEntry::Recent(_) => {
+                                let (text, tint, id, hint) = match entry {
+                                    DropEntry::Submit => (format!("Search \u{201C}{query_trimmed}\u{201D}"), pal_color, "submit", "Run the full search"),
+                                    DropEntry::Suggestion(text) => ((*text).clone(), m_color, "sugg", "Run this suggestion"),
+                                    DropEntry::Recent(text) => ((*text).clone(), m_color, "recent", "Run this recent search"),
+                                    _ => unreachable!(),
+                                };
+                                let resp = ui.interact(row, Id::new(("search-drop", id, index)), Sense::click());
+                                let hov = hover_of(ui, &resp);
+                                ui.painter().rect_filled(row, 8.0, veil(0.08 * hov));
+                                ui.painter().text(pos2(row.left() + 22.0, row.center().y), Align2::CENTER_CENTER, icon::MAGNIFYING_GLASS, glyph(13.0), tint.lerp_to_gamma(TEXT, hov * 0.5));
+                                label(ui, pos2(row.left() + 46.0, row.center().y), Align2::LEFT_CENTER, &text, medium(12.5), if hov > 0.1 { TEXT } else { t_color }, row.width() - 58.0);
+                                describe(&resp, hint);
+                                if resp.clicked() {
+                                    *query = text.clone();
+                                    out.push(Action::Go(Route::Search(text.clone())));
                                     open = false;
                                 }
-                                // Stage 1: instant text suggestions.
-                                let mut shown_any = false;
-                                if suggestions_for == query_trimmed {
-                                    for suggestion in suggestions {
-                                        if suggestion == &query_trimmed {
-                                            continue;
-                                        }
-                                        let row = wide_row(ui, vec2(row_width, 32.0), icon::MAGNIFYING_GLASS, glyph(12.5), m_color, suggestion);
-                                        if row.clicked() {
-                                            *query = suggestion.clone();
-                                            cx.out.push(Action::Go(Route::Search(suggestion.clone())));
-                                            open = false;
-                                        }
-                                        shown_any = true;
+                            }
+                            DropEntry::Result(item) => {
+                                let resp = ui.interact(row, Id::new(("search-drop", "result", index)), Sense::click());
+                                let hov = hover_of(ui, &resp);
+                                ui.painter().rect_filled(row, 8.0, veil(0.08 * hov));
+                                let art_rect = Rect::from_min_size(row.min + vec2(6.0, 3.0), Vec2::splat(32.0));
+                                artwork(ui, art, &item.thumb, art_rect, 6.0);
+                                label(ui, pos2(art_rect.right() + 10.0, row.top() + 14.0), Align2::LEFT_CENTER, &item.title, medium(12.0), t_color, row.width() - 62.0);
+                                label(ui, pos2(art_rect.right() + 10.0, row.bottom() - 12.0), Align2::LEFT_CENTER, &item.subtitle, sans(10.5), m_color, row.width() - 62.0);
+                                describe(&resp, &item.title);
+                                if resp.clicked() {
+                                    if !item.video_id.is_empty() {
+                                        out.push(Action::Play(vec![(*item).clone()], 0));
+                                    } else if !item.browse_id.is_empty() {
+                                        out.push(Action::Go(Route::Browse(item.browse_id.clone())));
                                     }
-                                }
-                                // Stage 2: lazy rich rows — they stream in as
-                                // soon as the prefetched results page lands.
-                                match pages.get(&Route::Search(query_trimmed.clone())) {
-                                    Some(Load::Ready(page)) => {
-                                        let items: Vec<&Item> = page.sections.iter().flat_map(|section| &section.items).take(6).collect();
-                                        if items.is_empty() {
-                                            if !shown_any {
-                                                ui.label(RichText::new("No quick results — press Enter for the full page.").font(sans(11.5)).color(m_color));
-                                            }
-                                        } else {
-                                            if shown_any {
-                                                ui.add_space(4.0);
-                                            }
-                                            for item in items {
-                                                let (rect, resp) = ui.allocate_exact_size(vec2(row_width, 46.0), Sense::click());
-                                                let hov = hover_of(ui, &resp);
-                                                ui.painter().rect_filled(rect, 8.0, veil(0.08 * hov));
-                                                let art_rect = Rect::from_min_size(rect.min + vec2(4.0, 4.0), Vec2::splat(38.0));
-                                                artwork(ui, cx.art, &item.thumb, art_rect, 6.0);
-                                                label(ui, pos2(art_rect.right() + 10.0, rect.top() + 15.0), Align2::LEFT_CENTER, &item.title, medium(12.5), t_color, rect.width() - 66.0);
-                                                label(ui, pos2(art_rect.right() + 10.0, rect.top() + 31.0), Align2::LEFT_CENTER, &item.subtitle, sans(10.5), m_color, rect.width() - 66.0);
-                                                describe(&resp, &item.title);
-                                                if resp.clicked() {
-                                                    if !item.video_id.is_empty() {
-                                                        cx.out.push(Action::Play(vec![item.clone()], 0));
-                                                    } else if !item.browse_id.is_empty() {
-                                                        cx.out.push(Action::Go(Route::Browse(item.browse_id.clone())));
-                                                    }
-                                                    open = false;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Some(Load::Failed(_)) => {
-                                        if !shown_any {
-                                            ui.label(RichText::new("Search failed — check your connection.").font(sans(11.5)).color(m_color));
-                                        }
-                                    }
-                                    _ => {
-                                        if !shown_any {
-                                            ui.label(RichText::new("Searching…").font(sans(11.5)).color(m_color));
-                                        }
-                                    }
+                                    open = false;
                                 }
                             }
-                        });
-                    });
+                        }
+                    }
+                });
             });
-        drop_rect = area.response.rect;
     }
 
     // Clicking anywhere outside the bar or the dropdown dismisses it.
