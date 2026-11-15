@@ -150,6 +150,7 @@ fn main() -> eframe::Result {
         .with_maximized(true)
         .with_transparent(true)
         .with_decorations(false)
+        .with_close_button(true)
         .with_icon(ui::app_icon());
     let options = eframe::NativeOptions {
         viewport,

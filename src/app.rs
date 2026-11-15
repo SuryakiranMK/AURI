@@ -1568,6 +1568,7 @@ pub struct App {
     replaced: Option<(Vec<Item>, Option<usize>, u64)>,
     curated: bool,
     growing: Option<(Route, usize, usize)>,
+    pub hidden_in_tray: bool,
     pub resume_at: Option<u64>,
     pub sign_in: Option<SignIn>,
     pub library: Vec<Item>,
@@ -1604,6 +1605,7 @@ pub struct App {
     pub sync_last_state: Option<(String, bool)>,
     pub sync_listeners: std::collections::HashMap<String, (String, Instant)>,
     pub sync_skew: crate::sync::SkewEstimator,
+    pub sync_is_p2p: bool,
     /// Set when the user really wants to exit (tray Quit), so the
     /// close-to-tray interception lets the close through.
     pub force_quit: bool,
@@ -1708,6 +1710,7 @@ impl App {
             replaced: None,
             curated: !saved.queue.is_empty(),
             growing: None,
+            hidden_in_tray: false,
             resume_at: saved.current.map(|_| saved.position_ms),
             sign_in: None,
             library: Vec::new(),
@@ -1749,6 +1752,7 @@ impl App {
             sync_last_state: None,
             sync_listeners: std::collections::HashMap::new(),
             sync_skew: crate::sync::SkewEstimator::default(),
+            sync_is_p2p: false,
             force_quit: false,
             last_notified_track: None,
             suggestions: Vec::new(),
@@ -2509,6 +2513,12 @@ impl App {
                     self.ctx.request_repaint();
                 }
                 Event::SyncPacket(pkt) => {
+                    if pkt.p2p {
+                        self.sync_is_p2p = true;
+                    }
+                    if pkt.kind == "ping" || pkt.kind == "pong" || pkt.kind == "candidate" {
+                        return;
+                    }
                     match self.sync_mode {
                         crate::sync::SyncMode::Guest if pkt.kind == "state" => {
                             // Shared queue: rebuild when the host's queue changed.
@@ -2565,6 +2575,9 @@ impl App {
                                 if is_new {
                                     self.notify("🎧 Someone joined your Listen Together room");
                                 }
+                                // Force instant state broadcast so the guest syncs immediately:
+                                self.sync_last_publish = None;
+                                self.sync_last_state = None;
                             }
                             "bye" => {
                                 self.sync_listeners.remove(&pkt.sender);
@@ -2958,6 +2971,7 @@ impl App {
                     // the capsule over the main window.
                     let ppp = self.ctx.input(|i| i.viewport().native_pixels_per_point.unwrap_or(1.0)) as f32;
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(self.title_bar.mini_anchor(egui::vec2(w, h), ppp)));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                     if self.saved.auto_purge_ram || (self.saved.performance_mode && self.saved.perf_aggressive_ram) {
                         self.apply(Action::PurgeMemory);
                     }
@@ -2970,6 +2984,7 @@ impl App {
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
             }
             Action::ToggleLoudness => {
@@ -3274,7 +3289,7 @@ impl App {
                 std::thread::spawn(move || {
                     #[cfg(windows)]
                     {
-                        let script = "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.Description = 'Select AURI Storage & Downloads Directory'; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }";
+                        let script = "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.AutoUpgradeEnabled = $true; $f.Description = 'Select AURI Storage & Downloads Directory'; if ($f.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $f.SelectedPath }";
                         let out = std::process::Command::new("powershell")
                             .args(["-NoProfile", "-Command", script])
                             .output();
@@ -3311,6 +3326,7 @@ impl App {
                 self.saved.sync_room_code = room.clone();
                 self.sync_last_state = None;
                 self.sync_listeners.clear();
+                self.sync_is_p2p = false;
                 if let Some(s) = &self.sync {
                     s.host(room);
                 }
@@ -3321,6 +3337,7 @@ impl App {
                 self.sync_room = room.clone();
                 self.saved.sync_room_code = room.clone();
                 self.sync_skew = crate::sync::SkewEstimator::default();
+                self.sync_is_p2p = false;
                 if let Some(s) = &self.sync {
                     // The display name travels in hello packets so hosts can
                     // list who is listening.
@@ -3340,6 +3357,7 @@ impl App {
                 self.sync_room.clear();
                 self.sync_listeners.clear();
                 self.sync_last_state = None;
+                self.sync_is_p2p = false;
                 if let Some(s) = &self.sync {
                     s.disconnect();
                 }
@@ -3399,11 +3417,14 @@ impl App {
                 apply_startup_registration(val);
             }
             Action::RestoreFromTray => {
+                self.hidden_in_tray = false;
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                crate::tray::restore_main_window();
             }
             Action::HideToTray => {
+                self.hidden_in_tray = true;
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             }
             Action::QuitApp => {
@@ -3846,6 +3867,7 @@ impl eframe::App for App {
             && !self.force_quit
             && ctx.input(|input| input.viewport().close_requested())
         {
+            self.hidden_in_tray = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
@@ -3875,19 +3897,19 @@ impl eframe::App for App {
                 .current
                 .and_then(|c| self.saved.queue.get(c))
                 .map(|cur| (cur.video_id.clone(), self.playing()));
-            // Publish instantly on track/play-pause changes, else every 1.5s.
+            // Publish instantly on track/play-pause changes, else every 8s drift-check.
             let changed = state.is_some() && state != self.sync_last_state;
-            let due = self.sync_last_publish.map_or(true, |last| last.elapsed() > Duration::from_millis(1500));
+            let due = self.sync_last_publish.map_or(true, |last| last.elapsed() > Duration::from_millis(8000));
             if let (Some((video_id, playing)), true) = (state.clone(), changed || due) {
                 self.sync_last_publish = Some(Instant::now());
                 self.sync_last_state = state;
                 if let Some(cur_index) = self.saved.current {
                     if let Some(cur) = self.saved.queue.get(cur_index) {
                         // Share a window of the queue around the current track
-                        // (relays cap message sizes, so 24 tracks is plenty).
+                        // (16 tracks safely fits within 1472-byte UDP MTU without IP fragmentation).
                         let len = self.saved.queue.len();
-                        let start = cur_index.saturating_sub(12).min(len.saturating_sub(24));
-                        let queue: Vec<crate::sync::SyncTrack> = self.saved.queue[start..(start + 24).min(len)]
+                        let start = cur_index.saturating_sub(6).min(len.saturating_sub(16));
+                        let queue: Vec<crate::sync::SyncTrack> = self.saved.queue[start..(start + 16).min(len)]
                             .iter()
                             .map(|it| crate::sync::SyncTrack {
                                 id: it.video_id.clone(),
@@ -3938,6 +3960,8 @@ impl eframe::App for App {
                     self.last_purge = Instant::now();
                 }
             }
+        } else if self.hidden_in_tray {
+            // Hidden in tray: do not render heavy UI components to keep CPU/GPU at 0%.
         } else if self.saved.mini_mode {
             let is_maximized = ctx.input(|input| input.viewport().maximized == Some(true));
             if is_maximized {
@@ -3958,11 +3982,15 @@ impl eframe::App for App {
         for action in actions {
             self.apply(action);
         }
-        self.look_up_covers();
-        self.look_up_lyrics();
-        let minimized = self.ctx.input(|input| input.viewport().minimized == Some(true));
+        if !self.hidden_in_tray {
+            self.look_up_covers();
+            self.look_up_lyrics();
+        }
+        let minimized = self.ctx.input(|input| input.viewport().minimized == Some(true)) || self.hidden_in_tray;
         if self.playing() || self.player.loading() {
-            let tick = if minimized || self.in_game_mode {
+            let tick = if self.hidden_in_tray {
+                Duration::from_millis(1000)
+            } else if minimized || self.in_game_mode {
                 Duration::from_millis(500)
             } else if self.saved.performance_mode {
                 Duration::from_millis(1000 / self.saved.perf_tick_fps.max(1) as u64)

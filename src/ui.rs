@@ -523,31 +523,30 @@ impl TitleBar {
         use windows_sys::Win32::UI::WindowsAndMessaging::{
             GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_STYLE, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOMOVE,
             SWP_NOSIZE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME, WS_POPUP,
-            WS_EX_TOOLWINDOW, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOPMOST, SW_HIDE, SW_SHOWNOACTIVATE, HWND_TOPMOST,
+            WS_EX_TOOLWINDOW, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOPMOST, SW_SHOW, HWND_TOPMOST,
         };
-        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+        use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
         use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
         use windows::Win32::Foundation::HWND;
 
         if self.window != 0 {
             unsafe {
-                // 1. Hide the window first so Explorer can detach the taskbar button
-                ShowWindow(self.window as _, SW_HIDE);
-
-                // 2. Remove tab from Windows taskbar via COM interface
+                // 1. Remove tab from Windows taskbar via COM interface
+                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
                 if let Ok(taskbar) = CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER) {
                     let _ = taskbar.HrInit();
                     let _ = taskbar.DeleteTab(HWND(self.window as _));
                 }
 
-                // 3. Strip all window caption and button styles so Windows DWM never renders minimize/maximize/close buttons
+                // 2. Strip all window caption and button styles so Windows DWM never renders minimize/maximize/close buttons
                 let style = GetWindowLongPtrW(self.window as _, GWL_STYLE) as u32;
                 let new_style = (style | WS_POPUP) & !(WS_CAPTION | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_THICKFRAME);
                 SetWindowLongPtrW(self.window as _, GWL_STYLE, new_style as isize);
 
-                // 4. Set WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_NOACTIVATE, and clear WS_EX_APPWINDOW (Metrix-style overlay)
+                // 3. Set WS_EX_TOOLWINDOW & WS_EX_TOPMOST, clear WS_EX_APPWINDOW & WS_EX_NOACTIVATE.
+                // Keeping the window activated allows immediate mouse interaction and dragging on first frame.
                 let ex_style = GetWindowLongPtrW(self.window as _, GWL_EXSTYLE) as u32;
-                let new_ex_style = (ex_style | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE) & !WS_EX_APPWINDOW;
+                let new_ex_style = (ex_style | WS_EX_TOOLWINDOW | WS_EX_TOPMOST) & !(WS_EX_APPWINDOW | WS_EX_NOACTIVATE);
                 SetWindowLongPtrW(self.window as _, GWL_EXSTYLE, new_ex_style as isize);
 
                 SetWindowPos(self.window as _, HWND_TOPMOST as _, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
@@ -556,8 +555,9 @@ impl TitleBar {
                 let border_color: u32 = 0xFFFFFFFE;
                 DwmSetWindowAttribute(self.window as _, 34, (&raw const border_color).cast(), 4);
 
-                // Disable non-client rendering and drop shadow (DWMWA_NCRENDERING_POLICY = 2, DWMNCRP_DISABLED = 1)
-                let nc_policy: u32 = 1;
+                // Ensure DWM non-client rendering policy is always ENABLED (DWMWA_NCRENDERING_POLICY = 2, DWMNCRP_ENABLED = 2).
+                // Never disable it (1), which caused Windows to fall back to the legacy Windows 95/XP GDI frame!
+                let nc_policy: u32 = 2;
                 DwmSetWindowAttribute(self.window as _, 2, (&raw const nc_policy).cast(), 4);
 
                 // Disable Windows 11 rounded window frame (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_DONOTROUND = 1)
@@ -576,8 +576,8 @@ impl TitleBar {
                 };
                 DwmExtendFrameIntoClientArea(self.window, &margins);
 
-                // 5. Show without stealing focus from active fullscreen game or window
-                ShowWindow(self.window as _, SW_SHOWNOACTIVATE);
+                // 4. Ensure window is visible and ready for interaction
+                ShowWindow(self.window as _, SW_SHOW);
             }
         }
     }
@@ -596,7 +596,7 @@ impl TitleBar {
         };
         use windows_sys::Win32::Foundation::RECT;
         use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
-        use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+        use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
         use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
         use windows::Win32::Foundation::HWND;
 
@@ -613,9 +613,11 @@ impl TitleBar {
                 SetWindowLongPtrW(self.window as _, GWL_EXSTYLE, new_ex_style as isize);
 
                 // 2. DWM state first, so the frame change below is rendered
-                // with the final look. (Non-client rendering, attribute 2, is
-                // intentionally never disabled — that made Windows fall back
-                // to the legacy classic frame, the "old Windows UI".)
+                // with the final look. Ensure DWM non-client rendering policy is explicitly ENABLED (2)
+                // so Windows never falls back to the legacy classic GDI frame.
+                let nc_policy: u32 = 2;
+                DwmSetWindowAttribute(self.window as _, 2, (&raw const nc_policy).cast(), 4);
+
                 let border_color: u32 = 0xFFFFFFFF;
                 DwmSetWindowAttribute(self.window as _, 34, (&raw const border_color).cast(), 4);
 
@@ -634,6 +636,7 @@ impl TitleBar {
                 DwmExtendFrameIntoClientArea(self.window, &margins);
 
                 // 3. Taskbar re-registration.
+                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
                 if let Ok(taskbar) = CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER) {
                     let _ = taskbar.HrInit();
                     let _ = taskbar.AddTab(HWND(self.window as _));
@@ -1066,99 +1069,274 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
         .gap(6.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
-            // Reuses the settings kit: `team_row` rows (the same composition
-            // as settings rows) and the Listen Together card's button styling.
-            // The popup auto-sizes to its content, and content measured against
-            // the full available width balloons it, so clamp BOTH directions:
-            // rows then measure against exactly this width.
-            ui.set_min_width(248.0);
-            ui.set_max_width(248.0);
-            let width = ui.available_width().min(248.0);
-            let accent = pal_color;
-            let red = Color32::from_rgb(244, 63, 94);
-            let (head, _) = ui.allocate_exact_size(vec2(width, 18.0), Sense::hover());
-            ui.painter().text(pos2(head.left() + 2.0, head.center().y), Align2::LEFT_CENTER, "LISTEN TOGETHER", bold(9.5), FAINT);
+            let popup_frame = Frame::new()
+                .fill(Color32::from_rgb(20, 22, 28))
+                .stroke(Stroke::new(1.0_f32, veil(0.18)))
+                .corner_radius(12.0)
+                .shadow(Shadow {
+                    offset: [0, 8],
+                    blur: 24,
+                    spread: 0,
+                    color: shade(0.70),
+                })
+                .inner_margin(Margin::same(14));
 
-            let menu_button = |ui: &mut Ui, id: &str, row: Rect, text: &str, tone: Color32| -> egui::Response {
-                let btn = Rect::from_min_size(pos2(row.right() - 92.0, row.center().y - 14.0), vec2(86.0, 28.0));
-                let resp = ui.interact(btn, Id::new(id), Sense::click());
-                let hov = hover_of(ui, &resp);
-                ui.painter().rect_filled(btn, 14.0, tone.gamma_multiply(0.16 + 0.12 * hov));
-                ui.painter().rect_stroke(btn, 14.0, Stroke::new(1.0_f32, tone), StrokeKind::Inside);
-                ui.painter().text(btn.center(), Align2::CENTER_CENTER, text, bold(12.0), if hov > 0.1 { TEXT } else { tone });
-                describe(&resp, text);
-                resp
-            };
+            popup_frame.show(ui, |ui| {
+                let panel_w = 286.0;
+                ui.set_width(panel_w);
+                let accent = pal_color;
+                let red = Color32::from_rgb(244, 63, 94);
 
-            match app.sync_mode {
-                crate::sync::SyncMode::Host | crate::sync::SyncMode::Guest => {
-                    let hosting = app.sync_mode == crate::sync::SyncMode::Host;
-                    // Room code row + Copy button (settings-card pattern).
-                    let row = team_row(ui, icon::LINK, if hosting { "Your room code" } else { "Room code" }, &app.sync_room);
-                    if menu_button(ui, "team-copy", row, "Copy", accent).clicked() {
-                        ui.ctx().copy_text(app.sync_room.clone());
-                        out.push(Action::Notify("Room code copied to clipboard".to_owned()));
-                    }
-                    if hosting {
-                        let mut names: Vec<&str> = app
-                            .sync_listeners
-                            .values()
-                            .filter(|(_, seen)| seen.elapsed() < Duration::from_secs(45))
-                            .map(|(name, _)| name.as_str())
-                            .collect();
-                        names.sort_unstable();
-                        if names.is_empty() {
-                            team_row(ui, icon::USER, "No one listening yet", "Share the code, or invite from Discord.");
+                match app.sync_mode {
+                    crate::sync::SyncMode::Host | crate::sync::SyncMode::Guest => {
+                        let hosting = app.sync_mode == crate::sync::SyncMode::Host;
+
+                        // Header with status indicator
+                        ui.horizontal(|ui| {
+                            let (dot_rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
+                            let status_dot_color = if hosting {
+                                Color32::from_rgb(34, 197, 94)
+                            } else {
+                                Color32::from_rgb(96, 165, 250)
+                            };
+                            ui.painter().circle_filled(dot_rect.center(), 4.5, status_dot_color);
+                            ui.painter().circle_stroke(dot_rect.center(), 4.5, Stroke::new(1.0_f32, Color32::from_rgb(20, 21, 26)));
+
+                            ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    label(
+                                        ui,
+                                        pos2(ui.cursor().left(), ui.cursor().top() + 4.0),
+                                        Align2::LEFT_CENTER,
+                                        if hosting { "Broadcasting Session" } else { "Listening in Room" },
+                                        bold(13.0),
+                                        TEXT,
+                                        panel_w - 115.0,
+                                    );
+                                    if app.sync_is_p2p {
+                                        let p2p_badge = Rect::from_min_size(pos2(ui.cursor().left() + 4.0, ui.cursor().top() - 1.0), vec2(70.0, 16.0));
+                                        ui.painter().rect_filled(p2p_badge, 8.0, Color32::from_rgb(34, 197, 94).gamma_multiply(0.20));
+                                        ui.painter().text(p2p_badge.center(), Align2::CENTER_CENTER, "⚡ Direct P2P", bold(9.0), Color32::from_rgb(34, 197, 94));
+                                    }
+                                });
+                                label(
+                                    ui,
+                                    pos2(ui.cursor().left(), ui.cursor().top() + 18.0),
+                                    Align2::LEFT_CENTER,
+                                    if hosting {
+                                        if app.sync_is_p2p { "Direct P2P UDP (<15ms) active" } else { "You control playback & shared queue" }
+                                    } else {
+                                        if app.sync_is_p2p { "Direct P2P UDP (<15ms) synced" } else { "Playback is locked to host" }
+                                    },
+                                    sans(10.5),
+                                    MUTED,
+                                    panel_w - 30.0,
+                                );
+                            });
+                        });
+                        ui.add_space(24.0);
+
+                        // Room code chip: click to copy instantly
+                        let copied_id = Id::new("team-code-copied");
+                        let copied_until = ui.ctx().data(|d| d.get_temp::<f64>(copied_id)).unwrap_or(0.0);
+                        let now = ui.ctx().input(|i| i.time);
+                        let copied = now < copied_until;
+
+                        let (chip, chip_resp) = ui.allocate_exact_size(vec2(panel_w, 46.0), Sense::click());
+                        let chip_hov = hover_of(ui, &chip_resp);
+                        let fill = if copied {
+                            accent.gamma_multiply(0.24)
                         } else {
-                            for name in names {
-                                team_row(ui, icon::USER, name, "Listening");
+                            accent.gamma_multiply(0.10 + 0.08 * chip_hov)
+                        };
+                        ui.painter().rect_filled(chip, 10.0, fill);
+                        ui.painter().rect_stroke(
+                            chip,
+                            10.0,
+                            Stroke::new(1.0_f32, accent.gamma_multiply(if chip_hov > 0.1 || copied { 0.85 } else { 0.40 })),
+                            StrokeKind::Inside,
+                        );
+
+                        if copied {
+                            ui.painter().text(chip.center(), Align2::CENTER_CENTER, "✓ Copied to clipboard", bold(12.5), TEXT);
+                        } else {
+                            label(
+                                ui,
+                                pos2(chip.left() + 12.0, chip.top() + 12.0),
+                                Align2::LEFT_CENTER,
+                                "ROOM CODE · CLICK TO COPY",
+                                bold(8.5),
+                                accent,
+                                chip.width() - 40.0,
+                            );
+                            label(
+                                ui,
+                                pos2(chip.left() + 12.0, chip.bottom() - 14.0),
+                                Align2::LEFT_CENTER,
+                                &app.sync_room,
+                                bold(14.0),
+                                TEXT,
+                                chip.width() - 48.0,
+                            );
+                            ui.painter().text(pos2(chip.right() - 18.0, chip.center().y), Align2::CENTER_CENTER, icon::COPY, glyph(15.0), accent);
+                        }
+                        if chip_resp.clicked() {
+                            ui.ctx().copy_text(app.sync_room.clone());
+                            ui.ctx().data_mut(|d| d.insert_temp(copied_id, now + 2.0));
+                            out.push(Action::Notify("Room code copied to clipboard".to_owned()));
+                        }
+                        describe(&chip_resp, "Click to copy room code");
+                        ui.add_space(10.0);
+
+                        // Listeners or track status
+                        if hosting {
+                            let mut names: Vec<&str> = app
+                                .sync_listeners
+                                .values()
+                                .filter(|(_, seen)| seen.elapsed() < Duration::from_secs(45))
+                                .map(|(name, _)| name.as_str())
+                                .collect();
+                            names.sort_unstable();
+
+                            let (l_head, _) = ui.allocate_exact_size(vec2(panel_w, 16.0), Sense::hover());
+                            ui.painter().text(
+                                pos2(l_head.left() + 2.0, l_head.center().y),
+                                Align2::LEFT_CENTER,
+                                &format!("ACTIVE LISTENERS ({})", names.len()),
+                                bold(9.0),
+                                FAINT,
+                            );
+
+                            if names.is_empty() {
+                                let (empty_rect, _) = ui.allocate_exact_size(vec2(panel_w, 30.0), Sense::hover());
+                                ui.painter().rect_filled(empty_rect, 6.0, veil(0.04));
+                                ui.painter().text(
+                                    pos2(empty_rect.left() + 10.0, empty_rect.center().y),
+                                    Align2::LEFT_CENTER,
+                                    "No one listening yet · Share code with friends",
+                                    sans(11.0),
+                                    MUTED,
+                                );
+                            } else {
+                                for name in names {
+                                    let (l_row, _) = ui.allocate_exact_size(vec2(panel_w, 28.0), Sense::hover());
+                                    ui.painter().text(pos2(l_row.left() + 6.0, l_row.center().y), Align2::CENTER_CENTER, icon::USER, glyph(14.0), MUTED);
+                                    label(ui, pos2(l_row.left() + 24.0, l_row.center().y), Align2::LEFT_CENTER, name, medium(12.0), TEXT, panel_w - 90.0);
+                                    let badge = Rect::from_min_size(pos2(l_row.right() - 58.0, l_row.center().y - 9.0), vec2(54.0, 18.0));
+                                    ui.painter().rect_filled(badge, 9.0, Color32::from_rgb(34, 197, 94).gamma_multiply(0.18));
+                                    ui.painter().text(badge.center(), Align2::CENTER_CENTER, "Active", sans(9.5), Color32::from_rgb(34, 197, 94));
+                                }
+                            }
+                        } else {
+                            if let Some(cur) = app.saved.current.and_then(|c| app.saved.queue.get(c)) {
+                                let (track_rect, _) = ui.allocate_exact_size(vec2(panel_w, 36.0), Sense::hover());
+                                ui.painter().rect_filled(track_rect, 8.0, veil(0.04));
+                                label(ui, pos2(track_rect.left() + 10.0, track_rect.top() + 10.0), Align2::LEFT_CENTER, &cur.title, bold(11.5), TEXT, panel_w - 20.0);
+                                label(ui, pos2(track_rect.left() + 10.0, track_rect.bottom() - 10.0), Align2::LEFT_CENTER, &cur.subtitle, sans(10.0), MUTED, panel_w - 20.0);
                             }
                         }
-                        let row = team_row(ui, icon::HEADPHONES, "Session", "You are broadcasting playback.");
-                        if menu_button(ui, "team-leave", row, "Leave", red).clicked() {
+                        ui.add_space(10.0);
+
+                        // Leave button
+                        let (leave_rect, leave_resp) = ui.allocate_exact_size(vec2(panel_w, 32.0), Sense::click());
+                        let lhov = hover_of(ui, &leave_resp);
+                        ui.painter().rect_filled(leave_rect, 8.0, red.gamma_multiply(0.12 + 0.12 * lhov));
+                        ui.painter().rect_stroke(
+                            leave_rect,
+                            8.0,
+                            Stroke::new(1.0_f32, red.gamma_multiply(if lhov > 0.1 { 0.85 } else { 0.45 })),
+                            StrokeKind::Inside,
+                        );
+                        ui.painter().text(
+                            leave_rect.center(),
+                            Align2::CENTER_CENTER,
+                            "Leave Session",
+                            bold(12.0),
+                            if lhov > 0.1 { TEXT } else { red },
+                        );
+                        describe(&leave_resp, "Leave this Listen Together session");
+                        if leave_resp.clicked() {
                             out.push(Action::StopSync);
                             ui.close();
                         }
-                    } else {
-                        let row = team_row(ui, icon::HEADPHONES, "Session", "Listening along with the host.");
-                        if menu_button(ui, "team-leave", row, "Leave", red).clicked() {
-                            out.push(Action::StopSync);
-                            ui.close();
+                    }
+                    crate::sync::SyncMode::Disconnected => {
+                        // Header
+                        ui.horizontal(|ui| {
+                            let (icon_rect, _) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::hover());
+                            ui.painter().circle_filled(icon_rect.center(), 12.0, accent.gamma_multiply(0.18));
+                            ui.painter().text(icon_rect.center(), Align2::CENTER_CENTER, icon::HEADPHONES, solid(13.0), accent);
+                            ui.vertical(|ui| {
+                                label(ui, pos2(ui.cursor().left(), ui.cursor().top() + 3.0), Align2::LEFT_CENTER, "Listen Together", bold(13.5), TEXT, panel_w - 32.0);
+                                label(ui, pos2(ui.cursor().left(), ui.cursor().top() + 17.0), Align2::LEFT_CENTER, "Stream synchronized audio with friends", sans(10.5), MUTED, panel_w - 32.0);
+                            });
+                        });
+                        ui.add_space(22.0);
+
+                        // Host action card
+                        let (card_rect, card_resp) = ui.allocate_exact_size(vec2(panel_w, 48.0), Sense::click());
+                        let chov = hover_of(ui, &card_resp);
+                        ui.painter().rect_filled(card_rect, 10.0, veil(0.06 + 0.06 * chov));
+                        ui.painter().rect_stroke(
+                            card_rect,
+                            10.0,
+                            Stroke::new(1.0_f32, accent.gamma_multiply(if chov > 0.1 { 0.65 } else { 0.22 })),
+                            StrokeKind::Inside,
+                        );
+                        ui.painter().text(pos2(card_rect.left() + 18.0, card_rect.center().y), Align2::CENTER_CENTER, icon::BROADCAST, glyph(16.0), accent);
+                        label(ui, pos2(card_rect.left() + 36.0, card_rect.top() + 14.0), Align2::LEFT_CENTER, "Host a Room", bold(12.5), TEXT, panel_w - 110.0);
+                        label(ui, pos2(card_rect.left() + 36.0, card_rect.bottom() - 14.0), Align2::LEFT_CENTER, "Get a shareable room code", sans(10.0), MUTED, panel_w - 110.0);
+
+                        let host_btn = Rect::from_min_size(pos2(card_rect.right() - 66.0, card_rect.center().y - 13.0), vec2(58.0, 26.0));
+                        ui.painter().rect_filled(host_btn, 13.0, accent.gamma_multiply(0.20 + 0.14 * chov));
+                        ui.painter().rect_stroke(host_btn, 13.0, Stroke::new(1.0_f32, accent), StrokeKind::Inside);
+                        ui.painter().text(host_btn.center(), Align2::CENTER_CENTER, "Host", bold(11.5), if chov > 0.1 { TEXT } else { accent });
+
+                        describe(&card_resp, "Host a new Listen Together room");
+                        if card_resp.clicked() {
+                            out.push(Action::StartSyncHost(crate::sync::new_room_code()));
+                        }
+                        ui.add_space(12.0);
+
+                        // Divider
+                        let (div_rect, _) = ui.allocate_exact_size(vec2(panel_w, 14.0), Sense::hover());
+                        ui.painter().text(pos2(div_rect.left() + 2.0, div_rect.center().y), Align2::LEFT_CENTER, "OR JOIN WITH CODE", bold(9.0), FAINT);
+                        ui.add_space(4.0);
+
+                        // Join row: text field + join button
+                        let (join_row, _) = ui.allocate_exact_size(vec2(panel_w, 34.0), Sense::hover());
+                        let field = Rect::from_min_max(join_row.min, pos2(join_row.right() - 72.0, join_row.bottom()));
+                        ui.painter().rect_filled(field, 8.0, veil(0.08));
+                        ui.painter().rect_stroke(field, 8.0, Stroke::new(1.0_f32, veil(0.16)), StrokeKind::Inside);
+
+                        let join_id = Id::new("topbar-team-join-code");
+                        let mut buffer = ui.data(|d| d.get_temp::<String>(join_id)).unwrap_or_default();
+                        let edit = egui::TextEdit::singleline(&mut buffer)
+                            .hint_text("e.g. K7QX-9M2T-B4")
+                            .desired_width(field.width() - 14.0)
+                            .font(sans(12.0))
+                            .frame(false);
+                        let edit_resp = ui.put(field.shrink2(vec2(8.0, 2.0)), edit);
+                        if edit_resp.changed() {
+                            ui.data_mut(|d| d.insert_temp(join_id, buffer.clone()));
+                        }
+                        let join_clicked = edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !buffer.trim().is_empty();
+
+                        let join_btn = Rect::from_min_max(pos2(join_row.right() - 64.0, join_row.top()), join_row.max);
+                        let join_resp = ui.interact(join_btn, Id::new("topbar-team-join-btn"), Sense::click());
+                        let jhov = hover_of(ui, &join_resp);
+                        ui.painter().rect_filled(join_btn, 8.0, accent.gamma_multiply(0.18 + 0.12 * jhov));
+                        ui.painter().rect_stroke(join_btn, 8.0, Stroke::new(1.0_f32, accent), StrokeKind::Inside);
+                        ui.painter().text(join_btn.center(), Align2::CENTER_CENTER, "Join", bold(12.0), if jhov > 0.1 { TEXT } else { accent });
+
+                        describe(&join_resp, "Join room using the entered code");
+                        if (join_resp.clicked() || join_clicked) && !buffer.trim().is_empty() {
+                            out.push(Action::StartSyncJoin(buffer.trim().to_uppercase()));
+                            ui.data_mut(|d| d.remove_temp::<String>(join_id));
                         }
                     }
                 }
-                crate::sync::SyncMode::Disconnected => {
-                    // Host row: stays open — the popup instantly transitions
-                    // to the hosting view (code + listeners) next frame.
-                    let row = team_row(ui, icon::HEADPHONES, "Host a room", "Get a code friends can join.");
-                    if menu_button(ui, "team-host", row, "Host", accent).clicked() {
-                        out.push(Action::StartSyncHost(crate::sync::new_room_code()));
-                    }
-                    // Join row: themed code field + Join button. Joining also
-                    // transitions the popup into the guest view.
-                    let row = team_row(ui, icon::LINK, "", "");
-                    let field = Rect::from_min_max(pos2(row.left() + 28.0, row.top() + 7.0), pos2(row.right() - 98.0, row.bottom() - 7.0));
-                    ui.painter().rect_filled(field, 8.0, veil(0.07));
-                    ui.painter().rect_stroke(field, 8.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-                    let join_id = Id::new("topbar-team-join-code");
-                    let mut buffer = ui.data(|d| d.get_temp::<String>(join_id)).unwrap_or_default();
-                    let edit = egui::TextEdit::singleline(&mut buffer)
-                        .hint_text("Room code")
-                        .desired_width(field.width() - 12.0)
-                        .font(sans(12.0))
-                        .frame(false);
-                    let edit_resp = ui.put(field.shrink2(vec2(6.0, 2.0)), edit);
-                    if edit_resp.changed() {
-                        ui.data_mut(|d| d.insert_temp(join_id, buffer.clone()));
-                    }
-                    let join_clicked = edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !buffer.trim().is_empty();
-                    let clicked_join = menu_button(ui, "team-join", row, "Join", accent).clicked();
-                    if (clicked_join || join_clicked) && !buffer.trim().is_empty() {
-                        out.push(Action::StartSyncJoin(buffer.trim().to_uppercase()));
-                        ui.data_mut(|d| d.remove_temp::<String>(join_id));
-                    }
-                }
-            }
+            });
         });
     tool_right -= 34.0;
 
@@ -3981,6 +4159,7 @@ fn row_base(ui: &mut Ui, sym: &str, title: &str, desc: &str) -> Rect {
 
 /// `row_base` styled for menu-width popups: the same icon/title/description
 /// composition as settings rows, with clamps that fit the narrower column.
+#[allow(dead_code)]
 fn team_row(ui: &mut Ui, sym: &str, title: &str, desc: &str) -> Rect {
     let full = ui.available_width();
     let height = if desc.is_empty() { ROW_PLAIN } else { ROW_DESC };
@@ -9310,14 +9489,18 @@ pub fn draw_mini(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
                 }
             }
 
-            // Drag area: user can click and drag anywhere on non-interactive top area to move window
-            // Movement is restricted if locked
-            let drag_rect = Rect::from_min_max(
-                card_rect.min,
-                pos2(card_rect.right() - 60.0, card_rect.top() + (if app.saved.mini_variant == MiniVariant::CapsulePill { 30.0 } else { 45.0 })),
-            );
-            let drag_resp = ui.interact(drag_rect, Id::new("mini-drag"), Sense::click_and_drag());
-            if !is_locked && drag_resp.dragged() {
+            // Drag area: user can click and drag anywhere on non-interactive top area or disc to move window
+            // Movement is restricted if locked. Uses drag_started to start native drag once without flooding Win32.
+            let drag_rect = if app.saved.mini_variant == MiniVariant::CapsulePill {
+                Rect::from_min_max(card_rect.min, pos2(card_rect.left() + 150.0, card_rect.bottom()))
+            } else {
+                Rect::from_min_max(
+                    card_rect.min,
+                    pos2(card_rect.right() - 60.0, card_rect.top() + 45.0),
+                )
+            };
+            let drag_resp = ui.interact(drag_rect, Id::new("mini-drag"), Sense::drag());
+            if !is_locked && drag_resp.drag_started() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
 

@@ -16,13 +16,13 @@ use symphonia::core::probe::Hint;
 use symphonia::core::units::{Time, TimeBase};
 
 const RANGE_BYTES: u64 = 512 * 1024;
-const WINDOW_BYTES: u64 = 2560 * 1024;
-const KEPT_BEHIND: u64 = 512 * 1024;
-const BUFFERED_AHEAD: u64 = WINDOW_BYTES - KEPT_BEHIND - RANGE_BYTES;
+const WINDOW_BYTES: u64 = 16 * 1024 * 1024;
+const KEPT_BEHIND: u64 = 1024 * 1024;
+const BUFFERED_AHEAD: u64 = 12 * 1024 * 1024;
 const FULL_POLL: Duration = Duration::from_millis(10);
 const PAUSED_POLL: Duration = Duration::from_millis(250);
-const WINDOW_POLL: Duration = Duration::from_millis(200);
-const MAX_STALLS: u32 = 5;
+const WINDOW_POLL: Duration = Duration::from_millis(150);
+const MAX_STALLS: u32 = 8;
 const QUEUED_CHUNKS: usize = 24;
 const PRE_ROLL_MS: u64 = 80;
 const SILENCE_SAMPLES: usize = 512;
@@ -91,10 +91,20 @@ struct Fetch {
     cancelled: AtomicBool,
     generation: u64,
     shared: Arc<Shared>,
+    video_id: String,
+    target_ext: &'static str,
 }
 
 impl Fetch {
-    fn start(yt: &ytm::Client, url: String, len: u64, generation: u64, shared: Arc<Shared>) -> Arc<Fetch> {
+    fn start(
+        yt: &ytm::Client,
+        url: String,
+        len: u64,
+        generation: u64,
+        shared: Arc<Shared>,
+        video_id: String,
+        target_ext: &'static str,
+    ) -> Arc<Fetch> {
         let (agent, user_agent) = (yt.agent.clone(), yt.player_agent());
         let window = Window {
             bytes: VecDeque::with_capacity(len.min(WINDOW_BYTES) as usize),
@@ -108,6 +118,8 @@ impl Fetch {
             cancelled: AtomicBool::new(false),
             generation,
             shared,
+            video_id,
+            target_ext,
         });
         let worker = fetch.clone();
         std::thread::spawn(move || {
@@ -152,33 +164,89 @@ impl Fetch {
 
     fn download(&self, agent: &ureq::Agent, url: &str, user_agent: &str) -> bool {
         let mut stalls = 0;
-        let mut block = [0u8; 16 * 1024];
+        let mut block = [0u8; 32 * 1024];
+
+        let cache_dir = crate::cache::get_cache_dir();
+        let target_file = cache_dir.join(format!("{}.{}", self.video_id, self.target_ext));
+        let part_file = cache_dir.join(format!("{}.part", self.video_id));
+        let mut cache_writer = if !target_file.exists() && !self.video_id.is_empty() {
+            std::fs::File::create(&part_file).ok()
+        } else {
+            None
+        };
+        let mut cache_bytes_written = 0u64;
+
         while let Some(from) = self.next_range() {
             let mut at = from;
             let to = (from + RANGE_BYTES).min(self.len) - 1;
-            let request = agent.get(&format!("{url}&range={from}-{to}")).set("User-Agent", user_agent);
-            if let Ok(response) = request.call() {
-                let mut body = response.into_reader();
-                while let Ok(read) = body.read(&mut block) {
-                    if read == 0 || !self.current() {
-                        break;
+            let request = agent
+                .get(&format!("{url}&range={from}-{to}"))
+                .set("User-Agent", user_agent);
+
+            match request.call() {
+                Ok(response) => {
+                    let mut body = response.into_reader();
+                    let mut chunk_bytes = Vec::with_capacity(32 * 1024);
+                    while let Ok(read) = body.read(&mut block) {
+                        if read == 0 || !self.current() {
+                            break;
+                        }
+                        chunk_bytes.extend_from_slice(&block[..read]);
+                        at += read as u64;
                     }
-                    self.window.lock().unwrap().bytes.extend(&block[..read]);
-                    at += read as u64;
-                    self.changed.notify_all();
-                    self.shared.buffered.store((at * 1000 / self.len) as u32, Relaxed);
+                    if !self.current() {
+                        if let Some(f) = cache_writer.take() {
+                            drop(f);
+                            let _ = std::fs::remove_file(&part_file);
+                        }
+                        return false;
+                    }
+                    if !chunk_bytes.is_empty() {
+                        if let Some(writer) = &mut cache_writer {
+                            use std::io::Write;
+                            if from == cache_bytes_written && writer.write_all(&chunk_bytes).is_ok() {
+                                cache_bytes_written += chunk_bytes.len() as u64;
+                            } else {
+                                cache_writer = None;
+                                let _ = std::fs::remove_file(&part_file);
+                            }
+                        }
+                        self.window.lock().unwrap().bytes.extend(chunk_bytes);
+                        self.changed.notify_all();
+                        self.shared.buffered.store((at * 1000 / self.len.max(1)) as u32, Relaxed);
+                    }
                 }
+                Err(_) => {}
             }
+
             if at > from {
                 stalls = 0;
                 continue;
             }
             stalls += 1;
             if stalls >= MAX_STALLS {
+                if let Some(f) = cache_writer.take() {
+                    drop(f);
+                    let _ = std::fs::remove_file(&part_file);
+                }
                 return false;
             }
-            std::thread::sleep(Duration::from_millis(400 * stalls as u64));
+            let backoff_ms = (250 * stalls as u64).min(2000);
+            std::thread::sleep(Duration::from_millis(backoff_ms));
         }
+
+        if let Some(mut writer) = cache_writer.take() {
+            use std::io::Write;
+            let _ = writer.flush();
+            drop(writer);
+            if cache_bytes_written >= self.len && self.len > 0 {
+                let _ = std::fs::rename(&part_file, &target_file);
+                crate::cache::trim_cache_if_needed(1024 * 1024 * 1024);
+            } else {
+                let _ = std::fs::remove_file(&part_file);
+            }
+        }
+
         true
     }
 }
@@ -326,28 +394,17 @@ impl Track {
             shared.loudness_gain.store(gain.to_bits(), Relaxed);
         }
 
-        let cache_dir = crate::cache::get_cache_dir();
         let target_ext = if opus { "opus" } else { "m4a" };
-        let target_file = cache_dir.join(format!("{video_id}.{target_ext}"));
-        if !target_file.exists() {
-            let vid = video_id.to_owned();
-            let stream_url = url.clone();
-            let agent = yt.agent.clone();
-            std::thread::spawn(move || {
-                let part = cache_dir.join(format!("{vid}.part"));
-                if let Ok(resp) = agent.get(&stream_url).call() {
-                    if let Ok(mut out_f) = std::fs::File::create(&part) {
-                        if std::io::copy(&mut resp.into_reader(), &mut out_f).is_ok() {
-                            let _ = std::fs::rename(part, target_file);
-                            crate::cache::trim_cache_if_needed(1024 * 1024 * 1024);
-                        }
-                    }
-                }
-            });
-        }
-
         let seekable = Arc::new(AtomicBool::new(false));
-        let fetch = Fetch::start(yt, url, len, generation, shared.clone());
+        let fetch = Fetch::start(
+            yt,
+            url,
+            len,
+            generation,
+            shared.clone(),
+            video_id.to_owned(),
+            target_ext,
+        );
         let reader = Reader {
             fetch,
             at: 0,

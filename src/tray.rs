@@ -21,9 +21,11 @@ mod implementation {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
-        GetCursorPos, GetMessageW, MF_STRING, MSG, PostMessageW, RegisterClassW, SetForegroundWindow,
-        TrackPopupMenu, TranslateMessage, TPM_BOTTOMALIGN, TPM_LEFTALIGN, HICON, HWND_MESSAGE, WNDCLASSW,
-        WM_APP, WM_COMMAND, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_RBUTTONUP,
+        FindWindowW, GetCursorPos, GetMessageW, MF_STRING, MSG, PostMessageW, RegisterClassW,
+        SetForegroundWindow, ShowWindow, TrackPopupMenu, TranslateMessage, HICON, WNDCLASSW,
+        SW_RESTORE, SW_SHOWMAXIMIZED, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD,
+        TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
+        WS_POPUP,
     };
 
     const WM_TRAY: u32 = WM_APP + 1;
@@ -100,12 +102,12 @@ mod implementation {
                 0,
                 class_name.as_ptr(),
                 class_name.as_ptr(),
+                WS_POPUP,
                 0,
                 0,
                 0,
                 0,
-                0,
-                HWND_MESSAGE,
+                std::ptr::null_mut(),
                 std::ptr::null_mut(),
                 instance,
                 std::ptr::null(),
@@ -150,8 +152,24 @@ mod implementation {
     }
 
     fn fire(action: TrayAction) {
+        if action == TrayAction::Restore {
+            restore_main_window();
+        }
         if let Some(callback) = CALLBACK.get() {
             callback(action);
+        }
+    }
+
+    /// Directly un-hides and raises the main AURI window at the OS level.
+    pub fn restore_main_window() {
+        unsafe {
+            let title = wide(crate::APP_NAME);
+            let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+            if !hwnd.is_null() {
+                ShowWindow(hwnd, SW_RESTORE);
+                ShowWindow(hwnd, SW_SHOWMAXIMIZED);
+                SetForegroundWindow(hwnd);
+            }
         }
     }
 
@@ -164,9 +182,25 @@ mod implementation {
             AppendMenuW(menu, MF_STRING, MENU_QUIT_ID, quit.as_ptr());
             let mut cursor = POINT { x: 0, y: 0 };
             GetCursorPos(&mut cursor);
+            // Per MS KB131845: must set foreground window before TrackPopupMenu
             SetForegroundWindow(window);
-            TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_BOTTOMALIGN, cursor.x, cursor.y, 0, window, std::ptr::null());
+            let cmd = TrackPopupMenu(
+                menu,
+                TPM_LEFTALIGN | TPM_BOTTOMALIGN | TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTBUTTON,
+                cursor.x,
+                cursor.y,
+                0,
+                window,
+                std::ptr::null(),
+            ) as usize;
+            // Per MS KB131845: must post WM_NULL to force task switch / release Explorer capture
+            PostMessageW(window, WM_NULL, 0, 0);
             DestroyMenu(menu);
+            match cmd {
+                MENU_RESTORE_ID => fire(TrayAction::Restore),
+                MENU_QUIT_ID => fire(TrayAction::Quit),
+                _ => {}
+            }
         }
     }
 
@@ -250,4 +284,5 @@ mod stubs {
     pub fn set_visible(_visible: bool) {}
     pub fn notify_song(_title: &str, _subtitle: &str) {}
     pub fn shutdown() {}
+    pub fn restore_main_window() {}
 }
