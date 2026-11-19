@@ -8280,14 +8280,15 @@ fn update_dialog(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>) {
                 ui.add_space(4.0);
                 if !app.update_notes.is_empty() {
                     for note in app.update_notes.iter().take(6) {
-                        ui.label(RichText::new(format!("• {note}")).size(11.5).color(TEXT));
+                        let clean_note = note.replace("**", "");
+                        ui.label(RichText::new(format!("• {clean_note}")).size(11.5).color(TEXT));
                     }
                 } else {
-                    ui.label(RichText::new("• Direct P2P Listen Together & 1-Click Discord Join").size(11.5).color(TEXT));
-                    ui.label(RichText::new("• 2MB High-Resilience audio buffer (resolves 31s stream cutoff)").size(11.5).color(TEXT));
-                    ui.label(RichText::new("• Fixed Tray Icon Quit & clean background exit").size(11.5).color(TEXT));
-                    ui.label(RichText::new("• In-App Listen Together security verification modal").size(11.5).color(TEXT));
-                    ui.label(RichText::new("• Dynamic release notes in update dialog").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Seamless Live Audio Streaming (Fixed HTTP 416 chunk cutoffs)").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Reliable Discord Rich Presence status & 1-click party joining").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Direct P2P Listen Together with automatic URL deep linking").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Single-threaded named pipe with instant reconnect").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Clean background tray exit & fast response").size(11.5).color(TEXT));
                 }
             });
 
