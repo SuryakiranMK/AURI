@@ -64,13 +64,114 @@ fn attach_console() {
 #[cfg(not(windows))]
 fn attach_console() {}
 
+fn parse_join_code(arg: &str) -> Option<String> {
+    let clean = arg.trim().trim_matches('"').trim_matches('\'');
+    let code_candidate = if let Some(rest) = clean.strip_prefix("auri://join/") {
+        rest.trim_matches('/')
+    } else if let Some(rest) = clean.strip_prefix("auri://join?room=") {
+        rest.split('&').next().unwrap_or(rest)
+    } else if let Some(rest) = clean.strip_prefix("auri://") {
+        rest.strip_prefix("join/").or_else(|| rest.strip_prefix("join?room=")).unwrap_or(rest).trim_matches('/')
+    } else {
+        return None;
+    };
+    let code = code_candidate.trim().to_uppercase();
+    if crate::sync::is_valid_room_code(&code) {
+        Some(code)
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+pub fn register_protocol() {
+    use std::os::windows::process::CommandExt;
+    if let Ok(exe) = std::env::current_exe() {
+        let exe_str = exe.to_string_lossy();
+        let cmd = format!("\"{}\" \"%1\"", exe_str);
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let _ = std::process::Command::new("reg")
+            .args(&["add", r"HKCU\Software\Classes\auri", "/ve", "/d", "URL:AURI Protocol", "/f"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        let _ = std::process::Command::new("reg")
+            .args(&["add", r"HKCU\Software\Classes\auri", "/v", "URL Protocol", "/d", "", "/f"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        let _ = std::process::Command::new("reg")
+            .args(&["add", r"HKCU\Software\Classes\auri\shell\open\command", "/ve", "/d", &cmd, "/f"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+    }
+}
+
+#[cfg(not(windows))]
+pub fn register_protocol() {}
+
+#[cfg(windows)]
+pub fn start_ipc_server(sender: std::sync::mpsc::Sender<app::Event>, ctx: egui::Context) {
+    let profile = app_id();
+    let folder = match eframe::storage_dir(profile) {
+        Some(f) => f,
+        None => return,
+    };
+    let _ = std::fs::create_dir_all(&folder);
+    let lock_file = folder.join("ipc.lock");
+
+    let listener = match std::net::TcpListener::bind("127.0.0.1:0") {
+        Ok(l) => l,
+        Err(_) => return,
+    };
+    let port = match listener.local_addr() {
+        Ok(addr) => addr.port(),
+        Err(_) => return,
+    };
+    let token = crate::sync::new_room_code();
+    let _ = std::fs::write(&lock_file, format!("{}:{}", port, token));
+
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader, Write};
+        for stream in listener.incoming() {
+            if let Ok(mut stream) = stream {
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                if reader.read_line(&mut line).is_ok() {
+                    let parts: Vec<&str> = line.trim().split_whitespace().collect();
+                    if parts.len() >= 2 && parts[0] == token {
+                        match parts[1] {
+                            "JOIN" => {
+                                if let Some(code) = parts.get(2) {
+                                    if crate::sync::is_valid_room_code(code) {
+                                        let _ = sender.send(app::Event::Pressed(app::Action::PromptSyncJoin(code.to_string())));
+                                        ctx.request_repaint();
+                                    }
+                                }
+                            }
+                            "FOCUS" => {
+                                let _ = sender.send(app::Event::Pressed(app::Action::RestoreFromTray));
+                                ctx.request_repaint();
+                            }
+                            _ => {}
+                        }
+                        let _ = stream.write_all(b"OK\n");
+                    }
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+pub fn start_ipc_server(_sender: std::sync::mpsc::Sender<app::Event>, _ctx: egui::Context) {}
+
 /// One AURI per profile. A named mutex keyed by the profile id makes a plain
 /// double-click focus the running instance instead of stacking a second
 /// process — a leftover process left in Mini Mode would otherwise keep its
 /// always-on-top capsule floating over the window. Explicit `--profile`
 /// launches get their own mutex, so multi-instance testing still works.
 #[cfg(windows)]
-fn enforce_single_instance() {
+fn enforce_single_instance(join_code: Option<&str>) {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
     use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE};
@@ -81,6 +182,32 @@ fn enforce_single_instance() {
     // keeping the mutex alive for this process's whole lifetime.
     let _mutex = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        // Forward code or focus to running instance via authenticated loopback IPC
+        if let Some(folder) = eframe::storage_dir(profile) {
+            let lock_file = folder.join("ipc.lock");
+            if let Ok(content) = std::fs::read_to_string(&lock_file) {
+                let mut parts = content.trim().split(':');
+                if let (Some(port_str), Some(token)) = (parts.next(), parts.next()) {
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        use std::io::Write;
+                        use std::net::TcpStream;
+                        if let Ok(mut stream) = TcpStream::connect_timeout(
+                            &std::net::SocketAddr::from(([127, 0, 0, 1], port)),
+                            Duration::from_millis(400),
+                        ) {
+                            let msg = if let Some(code) = join_code {
+                                format!("{token} JOIN {code}\n")
+                            } else {
+                                format!("{token} FOCUS\n")
+                            };
+                            let _ = stream.write_all(msg.as_bytes());
+                            let _ = stream.flush();
+                        }
+                    }
+                }
+            }
+        }
+
         let title: Vec<u16> = format!("{APP_NAME}\0").encode_utf16().collect();
         let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) } as isize;
         if window != 0 {
@@ -94,7 +221,7 @@ fn enforce_single_instance() {
 }
 
 #[cfg(not(windows))]
-fn enforce_single_instance() {}
+fn enforce_single_instance(_join_code: Option<&str>) {}
 
 fn log_crashes() {
     let Some(folder) = eframe::storage_dir(app_id()) else { return };
@@ -123,6 +250,18 @@ fn main() -> eframe::Result {
         std::thread::sleep(PREVIOUS_VERSION_EXIT);
     }
     update::clear_leftovers();
+
+    // Check for auri:// deep-link argument
+    let mut pending_join = None;
+    arguments.retain(|arg| {
+        if let Some(code) = parse_join_code(arg) {
+            pending_join = Some(code);
+            false
+        } else {
+            true
+        }
+    });
+
     let mut arguments = arguments.into_iter();
     let (flag, value) = (arguments.next(), arguments.next());
     if flag.as_deref() == Some("--selftest") {
@@ -141,7 +280,7 @@ fn main() -> eframe::Result {
         (Some(query), None) if !query.starts_with("--") => (Some(query), false),
         _ => (None, false),
     };
-    enforce_single_instance();
+    enforce_single_instance(pending_join.as_deref());
     let viewport = egui::ViewportBuilder::default()
         .with_title(APP_NAME)
         .with_app_id(app_id())
@@ -159,6 +298,33 @@ fn main() -> eframe::Result {
     eframe::run_native(
         APP_NAME,
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, query, autoplay)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, query, autoplay, pending_join)))),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_join_code() {
+        assert_eq!(parse_join_code("auri://join/K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(parse_join_code("auri://join/K7QX-9M2T-B4/"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(parse_join_code("\"auri://join/K7QX-9M2T-B4\""), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(parse_join_code("auri://join?room=K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(parse_join_code("auri://join/INVALID"), None);
+        assert_eq!(parse_join_code("--play"), None);
+        assert_eq!(parse_join_code("daft punk"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_register_protocol() {
+        register_protocol();
+        let out = std::process::Command::new("reg")
+            .args(&["query", r"HKCU\Software\Classes\auri"])
+            .output()
+            .expect("reg query should succeed");
+        assert!(out.status.success());
+    }
 }

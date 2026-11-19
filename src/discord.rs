@@ -313,6 +313,12 @@ fn activity(
         act["assets"] = json!({
             "large_text": app_name,
         });
+        if let Some((room, size)) = party {
+            act["buttons"] = json!([{
+                "label": format!("🎧 Listen Together ({})", size.max(1)),
+                "url": format!("https://suryakiranmk.github.io/AURI/join?room={room}")
+            }]);
+        }
         apply_party(&mut act, party);
         return act;
     }
@@ -383,9 +389,19 @@ fn activity(
             crate::app::DiscordButtonOption::None => {}
         }
     };
-    add_button(fmt.button1, &mut buttons);
+    if let Some((room, size)) = party {
+        buttons.insert(0, json!({
+            "label": format!("🎧 Listen Together ({})", size.max(1)),
+            "url": format!("https://suryakiranmk.github.io/AURI/join?room={room}")
+        }));
+    } else {
+        add_button(fmt.button1, &mut buttons);
+    }
     if buttons.len() < 2 {
-        add_button(fmt.button2, &mut buttons);
+        add_button(if party.is_some() { fmt.button1 } else { fmt.button2 }, &mut buttons);
+    }
+    if buttons.len() > 2 {
+        buttons.truncate(2);
     }
     if !buttons.is_empty() {
         activity["buttons"] = json!(buttons);
@@ -545,6 +561,8 @@ mod tests {
         assert_eq!(act["party"]["id"], "K7QX-9M2T-B4");
         assert_eq!(act["party"]["size"][0], 3);
         assert_eq!(act["secrets"]["join"], "K7QX-9M2T-B4");
+        assert_eq!(act["buttons"][0]["label"], "🎧 Listen Together (3)");
+        assert_eq!(act["buttons"][0]["url"], "https://suryakiranmk.github.io/AURI/join?room=K7QX-9M2T-B4");
         let without = activity(&lucky, "", Headline::App, "", 0, 248_000, DiscordFormat::default(), true, None);
         assert!(without["party"].is_null());
         assert!(without["secrets"].is_null());

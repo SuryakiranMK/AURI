@@ -15,14 +15,14 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use symphonia::core::units::{Time, TimeBase};
 
-const RANGE_BYTES: u64 = 512 * 1024;
+const RANGE_BYTES: u64 = 2 * 1024 * 1024;
 const WINDOW_BYTES: u64 = 16 * 1024 * 1024;
 const KEPT_BEHIND: u64 = 1024 * 1024;
 const BUFFERED_AHEAD: u64 = 12 * 1024 * 1024;
 const FULL_POLL: Duration = Duration::from_millis(10);
 const PAUSED_POLL: Duration = Duration::from_millis(250);
 const WINDOW_POLL: Duration = Duration::from_millis(150);
-const MAX_STALLS: u32 = 8;
+const MAX_STALLS: u32 = 16;
 const QUEUED_CHUNKS: usize = 24;
 const PRE_ROLL_MS: u64 = 80;
 const SILENCE_SAMPLES: usize = 512;
@@ -93,11 +93,12 @@ struct Fetch {
     shared: Arc<Shared>,
     video_id: String,
     target_ext: &'static str,
+    yt: Arc<ytm::Client>,
 }
 
 impl Fetch {
     fn start(
-        yt: &ytm::Client,
+        yt: Arc<ytm::Client>,
         url: String,
         len: u64,
         generation: u64,
@@ -120,6 +121,7 @@ impl Fetch {
             shared,
             video_id,
             target_ext,
+            yt,
         });
         let worker = fetch.clone();
         std::thread::spawn(move || {
@@ -162,7 +164,7 @@ impl Fetch {
         None
     }
 
-    fn download(&self, agent: &ureq::Agent, url: &str, user_agent: &str) -> bool {
+    fn download(&self, agent: &ureq::Agent, initial_url: &str, user_agent: &str) -> bool {
         let mut stalls = 0;
         let mut block = [0u8; 32 * 1024];
 
@@ -175,18 +177,24 @@ impl Fetch {
             None
         };
         let mut cache_bytes_written = 0u64;
+        let mut current_url = initial_url.to_string();
 
         while let Some(from) = self.next_range() {
             let mut at = from;
             let to = (from + RANGE_BYTES).min(self.len) - 1;
+            let sep = if current_url.contains('?') { '&' } else { '?' };
+            let url_with_range = format!("{current_url}{sep}range={from}-{to}");
+            let range_header = format!("bytes={from}-{to}");
             let request = agent
-                .get(&format!("{url}&range={from}-{to}"))
-                .set("User-Agent", user_agent);
+                .get(&url_with_range)
+                .set("User-Agent", user_agent)
+                .set("Range", &range_header)
+                .set("Accept-Encoding", "identity");
 
             match request.call() {
                 Ok(response) => {
                     let mut body = response.into_reader();
-                    let mut chunk_bytes = Vec::with_capacity(32 * 1024);
+                    let mut chunk_bytes = Vec::with_capacity(64 * 1024);
                     while let Ok(read) = body.read(&mut block) {
                         if read == 0 || !self.current() {
                             break;
@@ -216,7 +224,13 @@ impl Fetch {
                         self.shared.buffered.store((at * 1000 / self.len.max(1)) as u32, Relaxed);
                     }
                 }
-                Err(_) => {}
+                Err(err) => {
+                    eprintln!("[Stream] Range chunk fetch error for {}: {:?}", self.video_id, err);
+                    if let Ok(stream) = self.yt.stream(&self.video_id) {
+                        current_url = stream.url;
+                        eprintln!("[Stream] Refreshed stream URL for {}", self.video_id);
+                    }
+                }
             }
 
             if at > from {
@@ -225,6 +239,7 @@ impl Fetch {
             }
             stalls += 1;
             if stalls >= MAX_STALLS {
+                eprintln!("[Stream] Max stalls ({MAX_STALLS}) reached for {}, aborting fetch", self.video_id);
                 if let Some(f) = cache_writer.take() {
                     drop(f);
                     let _ = std::fs::remove_file(&part_file);
@@ -332,7 +347,7 @@ struct Track {
 }
 
 impl Track {
-    fn open(yt: &ytm::Client, urls: &Urls, video_id: &str, generation: u64, shared: &Arc<Shared>) -> Result<Track, String> {
+    fn open(yt: &Arc<ytm::Client>, urls: &Urls, video_id: &str, generation: u64, shared: &Arc<Shared>) -> Result<Track, String> {
         if let Some(cached_path) = crate::cache::get_cached_track_path(video_id) {
             if let Ok(file) = std::fs::File::open(&cached_path) {
                 let is_opus = cached_path.extension().map_or(true, |ext| ext == "opus");
@@ -372,13 +387,13 @@ impl Track {
 
         let mut stream = resolve(yt, urls, video_id)?;
         let fallback = stream.fallback.take();
-        Self::open_stream(yt, stream, video_id, generation, shared).or_else(|message| match fallback {
-            Some(aac) => Self::open_stream(yt, *aac, video_id, generation, shared),
+        Self::open_stream(yt.clone(), stream, video_id, generation, shared).or_else(|message| match fallback {
+            Some(aac) => Self::open_stream(yt.clone(), *aac, video_id, generation, shared),
             None => Err(message),
         })
     }
 
-    fn open_stream(yt: &ytm::Client, stream: ytm::Stream, video_id: &str, generation: u64, shared: &Arc<Shared>) -> Result<Track, String> {
+    fn open_stream(yt: Arc<ytm::Client>, stream: ytm::Stream, video_id: &str, generation: u64, shared: &Arc<Shared>) -> Result<Track, String> {
         let ytm::Stream {
             url,
             len,
@@ -953,7 +968,7 @@ impl Player {
 
 pub fn selftest(query: &str) -> Result<String, String> {
     let started = Instant::now();
-    let yt = ytm::Client::new(String::new());
+    let yt = Arc::new(ytm::Client::new(String::new()));
     let song = yt.search(query)?.songs().into_iter().next().ok_or("search returned no songs")?;
     let searched = started.elapsed();
     let radio = yt.radio(&song.video_id)?;

@@ -1433,6 +1433,8 @@ pub enum Action {
     OpenCacheDir,
     StartSyncHost(String),
     StartSyncJoin(String),
+    PromptSyncJoin(String),
+    DismissSyncPrompt,
     StopSync,
     TypeSearch,
     Notify(String),
@@ -1518,7 +1520,7 @@ pub enum Action {
     ExitGameModeToMini,
 }
 
-enum Event {
+pub enum Event {
     Page(Route, Result<Box<Page>, String>),
     Part(u64, usize, Vec<Section>),
     Radio(String, Vec<Item>),
@@ -1528,7 +1530,7 @@ enum Event {
     Liked(Vec<Item>),
     LikeRejected(Item, String),
     Cover(String, Option<String>),
-    Release(String),
+    Release { version: String, notes: Vec<String> },
     Updated(Result<PathBuf, String>),
     Pressed(Action),
     Lyrics(String, Result<Option<Lyrics>, String>),
@@ -1587,6 +1589,7 @@ pub struct App {
     pub saved: Saved,
     pub notice: Option<Notice>,
     pub update: Option<String>,
+    pub update_notes: Vec<String>,
     pub updating: bool,
     pub update_dialog_open: bool,
     pub discord_linked: Option<bool>,
@@ -1606,6 +1609,8 @@ pub struct App {
     pub sync_listeners: std::collections::HashMap<String, (String, Instant)>,
     pub sync_skew: crate::sync::SkewEstimator,
     pub sync_is_p2p: bool,
+    /// Holds a pending room code when invited externally via deep link or Discord.
+    pub pending_sync_join: Option<String>,
     /// Set when the user really wants to exit (tray Quit), so the
     /// close-to-tray interception lets the close through.
     pub force_quit: bool,
@@ -1633,7 +1638,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(cc: &eframe::CreationContext<'_>, query: Option<String>, autoplay: bool) -> Self {
+    pub fn new(
+        cc: &eframe::CreationContext<'_>,
+        query: Option<String>,
+        autoplay: bool,
+        pending_join: Option<String>,
+    ) -> Self {
         ui::install(&cc.egui_ctx);
         let mut saved: Saved = cc
             .storage
@@ -1676,6 +1686,8 @@ impl App {
             // is machine state, and the exe path may have moved.
             saved.launch_on_startup = startup_registered();
             crate::tray::set_visible(saved.close_to_tray || saved.song_notifications);
+            crate::register_protocol();
+            crate::start_ipc_server(sender.clone(), ctx.clone());
             let (tray_sender, tray_ctx) = (sender.clone(), ctx.clone());
             crate::tray::start(std::sync::Arc::new(move |action| {
                 match action {
@@ -1728,6 +1740,7 @@ impl App {
             saved,
             notice: None,
             update: None,
+            update_notes: Vec::new(),
             updating: false,
             update_dialog_open: false,
             discord_linked: None,
@@ -1753,6 +1766,7 @@ impl App {
             sync_listeners: std::collections::HashMap::new(),
             sync_skew: crate::sync::SkewEstimator::default(),
             sync_is_p2p: false,
+            pending_sync_join: pending_join,
             force_quit: false,
             last_notified_track: None,
             suggestions: Vec::new(),
@@ -1803,8 +1817,7 @@ impl App {
         app.load_library();
         app.background(|yt| {
             yt.refresh_clients();
-            let latest = yt.agent.head(LATEST_RELEASE).call().ok()?;
-            newer_version(latest.get_url(), VERSION).map(Event::Release)
+            fetch_latest_release(&yt.agent)
         });
         app
     }
@@ -2469,13 +2482,14 @@ impl App {
                         };
                     }
                 }
-                Event::Release(version) => {
+                Event::Release { version, notes } => {
                     self.offer(
                         format!("{APP_NAME} {version} is out"),
                         Some(("Update", Action::OpenUpdateDialog)),
                         UPDATE_NOTICE_TIME,
                     );
                     self.update = Some(version);
+                    self.update_notes = notes;
                     self.update_dialog_open = true;
                 }
                 Event::Updated(Ok(program)) => {
@@ -2914,7 +2928,12 @@ impl App {
             }
             Action::OpenRelease => {
                 self.notice = None;
-                self.ctx.open_url(egui::OpenUrl::new_tab(LATEST_RELEASE));
+                let url = if let Some(ref ver) = self.update {
+                    format!("{}/releases/tag/v{ver}", env!("CARGO_PKG_REPOSITORY"))
+                } else {
+                    LATEST_RELEASE.to_owned()
+                };
+                self.ctx.open_url(egui::OpenUrl::new_tab(url));
             }
             Action::Pause(paused) => {
                 if paused == self.playing() {
@@ -3265,17 +3284,10 @@ impl App {
                 let ctx = self.ctx.clone();
                 std::thread::spawn(move || {
                     let agent = ureq::agent();
-                    match agent.head(LATEST_RELEASE).call() {
-                        Ok(latest) => {
-                            if let Some(version) = newer_version(latest.get_url(), VERSION) {
-                                let _ = sender.send(Event::Release(version));
-                            } else {
-                                let _ = sender.send(Event::Toast(format!("AURI v{} is up to date", VERSION)));
-                            }
-                        }
-                        Err(e) => {
-                            let _ = sender.send(Event::Toast(format!("Update check failed: {}", e)));
-                        }
+                    if let Some(ev) = fetch_latest_release(&agent) {
+                        let _ = sender.send(ev);
+                    } else {
+                        let _ = sender.send(Event::Toast(format!("AURI v{} is up to date", VERSION)));
                     }
                     ctx.request_repaint();
                 });
@@ -3352,6 +3364,18 @@ impl App {
                 }
                 self.notify("🎧 Joined Listen Together Session (Syncing)");
             }
+            Action::PromptSyncJoin(room) => {
+                if crate::sync::is_valid_room_code(&room) {
+                    self.pending_sync_join = Some(room);
+                    self.saved.mini_mode = false;
+                    self.hidden_in_tray = false;
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
+            }
+            Action::DismissSyncPrompt => {
+                self.pending_sync_join = None;
+            }
             Action::StopSync => {
                 self.sync_mode = crate::sync::SyncMode::Disconnected;
                 self.sync_room.clear();
@@ -3418,6 +3442,7 @@ impl App {
             }
             Action::RestoreFromTray => {
                 self.hidden_in_tray = false;
+                self.force_quit = false;
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -3431,6 +3456,7 @@ impl App {
                 self.force_quit = true;
                 crate::tray::shutdown();
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                std::process::exit(0);
             }
             Action::SetHistoryEnabled(val) => {
                 self.saved.history_enabled = val;
@@ -3863,8 +3889,9 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Close-to-tray: OS-level close requests (Alt+F4, taskbar) hide the
         // window instead of quitting, unless the user chose to really quit.
+        let force_quit = self.force_quit || crate::tray::is_force_quit();
         if self.saved.close_to_tray
-            && !self.force_quit
+            && !force_quit
             && ctx.input(|input| input.viewport().close_requested())
         {
             self.hidden_in_tray = true;
@@ -4185,9 +4212,9 @@ fn link_discord(sender: &Sender<Event>, ctx: &egui::Context) -> Discord {
             report_ctx.request_repaint();
         },
         move |secret| {
-            // A friend clicked Join on this user's Discord profile: join their
-            // Listen Together room with the delivered room code.
-            let _ = join_sender.send(Event::Pressed(Action::StartSyncJoin(secret)));
+            // A friend clicked Join on this user's Discord profile: prompt
+            // confirmation to join their Listen Together room.
+            let _ = join_sender.send(Event::Pressed(Action::PromptSyncJoin(secret)));
             join_ctx.request_repaint();
         },
     )
@@ -4197,6 +4224,43 @@ fn newer_version(release_url: &str, current: &str) -> Option<String> {
     let numbers = |version: &str| version.split('.').map(|part| part.parse().ok()).collect::<Option<Vec<u32>>>();
     let latest = release_url.rsplit_once("/tag/v")?.1;
     (numbers(latest)? > numbers(current)?).then(|| latest.to_owned())
+}
+
+fn fetch_latest_release(agent: &ureq::Agent) -> Option<Event> {
+    const GITHUB_API_LATEST: &str = "https://api.github.com/repos/SuryakiranMK/AURI/releases/latest";
+    let req = agent.get(GITHUB_API_LATEST).set("User-Agent", "AURI-Desktop");
+    if let Ok(resp) = req.call() {
+        if let Ok(json) = resp.into_json::<serde_json::Value>() {
+            if let Some(tag) = json["tag_name"].as_str() {
+                let tag_path = format!("/tag/{tag}");
+                if let Some(version) = newer_version(&tag_path, VERSION) {
+                    let mut notes = Vec::new();
+                    if let Some(body) = json["body"].as_str() {
+                        for line in body.lines() {
+                            let line = line.trim();
+                            if line.starts_with("• ") || line.starts_with("- ") || line.starts_with("* ") {
+                                let item = line.trim_start_matches(|c| c == '•' || c == '-' || c == '*' || c == ' ').trim();
+                                if !item.is_empty() && !item.starts_with('#') {
+                                    notes.push(item.to_string());
+                                }
+                            } else if let Some((num, rest)) = line.split_once(". **") {
+                                if num.chars().all(|c| c.is_ascii_digit()) {
+                                    if let Some((heading, _)) = rest.split_once("**") {
+                                        notes.push(heading.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return Some(Event::Release { version, notes });
+                }
+            }
+        }
+    }
+
+    let latest = agent.head(LATEST_RELEASE).call().ok()?;
+    let version = newer_version(latest.get_url(), VERSION)?;
+    Some(Event::Release { version, notes: Vec::new() })
 }
 
 fn reorder(queue: &mut Vec<Item>, upcoming: usize, from: usize, gap: usize) -> bool {

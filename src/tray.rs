@@ -43,9 +43,14 @@ mod implementation {
     static CALLBACK: OnceLock<Arc<dyn Fn(TrayAction) + Send + Sync>> = OnceLock::new();
     static VISIBLE: AtomicBool = AtomicBool::new(false);
     static ADDED: AtomicBool = AtomicBool::new(false);
+    static FORCE_QUIT: AtomicBool = AtomicBool::new(false);
     static TRAY_WINDOW: AtomicIsize = AtomicIsize::new(0);
     static APP_ICON: AtomicIsize = AtomicIsize::new(0);
     static BALLOON: OnceLock<Mutex<Option<(String, String)>>> = OnceLock::new();
+
+    pub fn is_force_quit() -> bool {
+        FORCE_QUIT.load(Ordering::SeqCst)
+    }
 
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(Some(0)).collect()
@@ -154,6 +159,31 @@ mod implementation {
     fn fire(action: TrayAction) {
         if action == TrayAction::Restore {
             restore_main_window();
+        } else if action == TrayAction::Quit {
+            FORCE_QUIT.store(true, Ordering::SeqCst);
+            shutdown();
+            if let Some(callback) = CALLBACK.get() {
+                callback(TrayAction::Quit);
+            }
+            unsafe {
+                let title = wide(crate::APP_NAME);
+                let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
+                if !hwnd.is_null() {
+                    windows_sys::Win32::UI::WindowsAndMessaging::PostMessageW(
+                        hwnd,
+                        windows_sys::Win32::UI::WindowsAndMessaging::WM_CLOSE,
+                        0,
+                        0,
+                    );
+                }
+            }
+            // Watchdog: If the window event loop is paused or hidden in tray and
+            // does not exit promptly, ensure the process exits cleanly.
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(350));
+                std::process::exit(0);
+            });
+            return;
         }
         if let Some(callback) = CALLBACK.get() {
             callback(action);
@@ -285,4 +315,5 @@ mod stubs {
     pub fn notify_song(_title: &str, _subtitle: &str) {}
     pub fn shutdown() {}
     pub fn restore_main_window() {}
+    pub fn is_force_quit() -> bool { false }
 }

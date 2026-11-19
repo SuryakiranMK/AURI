@@ -1186,7 +1186,23 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                             out.push(Action::Notify("Room code copied to clipboard".to_owned()));
                         }
                         describe(&chip_resp, "Click to copy room code");
-                        ui.add_space(10.0);
+                        ui.add_space(8.0);
+
+                        if hosting {
+                            let (link_btn, link_resp) = ui.allocate_exact_size(vec2(panel_w, 28.0), Sense::click());
+                            let lhov = hover_of(ui, &link_resp);
+                            ui.painter().rect_filled(link_btn, 6.0, veil(0.04 + 0.04 * lhov));
+                            ui.painter().rect_stroke(link_btn, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+                            ui.painter().text(pos2(link_btn.left() + 10.0, link_btn.center().y), Align2::LEFT_CENTER, icon::LINK, glyph(12.0), accent);
+                            label(ui, pos2(link_btn.left() + 26.0, link_btn.center().y), Align2::LEFT_CENTER, "Copy 1-Click Discord/Web Link", sans(11.0), TEXT, panel_w - 32.0);
+                            describe(&link_resp, "Copy 1-click web invite link to share with friends");
+                            if link_resp.clicked() {
+                                let invite_url = format!("https://suryakiranmk.github.io/AURI/join?room={}", app.sync_room);
+                                ui.ctx().copy_text(invite_url);
+                                out.push(Action::Notify("Invite link copied to clipboard".to_owned()));
+                            }
+                            ui.add_space(8.0);
+                        }
 
                         // Listeners or track status
                         if hosting {
@@ -1583,6 +1599,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
     app.title_bar.paint(frame);
     sign_in_dialog(app, ctx, &mut out);
     update_dialog(app, ctx, &mut out);
+    sync_invite_dialog(app, ctx, &mut out);
     notice(app, ctx, &mut out);
     out
 }
@@ -8261,11 +8278,17 @@ fn update_dialog(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>) {
             card_frame.show(ui, |ui| {
                 ui.label(RichText::new("What's New in This Version:").strong().size(12.5).color(TEXT));
                 ui.add_space(4.0);
-                ui.label(RichText::new("• Pure Desktop Overlay HUD in Mini Mode (Metrix-Engine)").size(11.5).color(TEXT));
-                ui.label(RichText::new("• YouTube Music account avatar & 1-click Log Out menu").size(11.5).color(TEXT));
-                ui.label(RichText::new("• Seamless Track Crossfade with automatic Gaming Mode bypass").size(11.5).color(TEXT));
-                ui.label(RichText::new("• High-Quality 160k vs Data-Saver 70k Opus stream bitrate").size(11.5).color(TEXT));
-                ui.label(RichText::new("• Blocked Artists auto-skip filter & offline audio cache manager").size(11.5).color(TEXT));
+                if !app.update_notes.is_empty() {
+                    for note in app.update_notes.iter().take(6) {
+                        ui.label(RichText::new(format!("• {note}")).size(11.5).color(TEXT));
+                    }
+                } else {
+                    ui.label(RichText::new("• Direct P2P Listen Together & 1-Click Discord Join").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• 2MB High-Resilience audio buffer (resolves 31s stream cutoff)").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Fixed Tray Icon Quit & clean background exit").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• In-App Listen Together security verification modal").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Dynamic release notes in update dialog").size(11.5).color(TEXT));
+                }
             });
 
             ui.add_space(20.0);
@@ -8296,7 +8319,8 @@ fn update_dialog(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>) {
                 let r_hov = hover_of(ui, &rel_resp);
                 ui.painter().rect_filled(rel_rect, 8.0, veil(0.06 + 0.05 * r_hov));
                 ui.painter().rect_stroke(rel_rect, 8.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-                ui.painter().text(rel_rect.center(), Align2::CENTER_CENTER, "Release Notes", medium(12.5), TEXT);
+                ui.painter().text(rel_rect.center(), Align2::CENTER_CENTER, "Release Notes ↗", medium(12.5), TEXT);
+                describe(&rel_resp, "Open full release notes and changelog on GitHub");
                 if rel_resp.clicked() {
                     out.push(Action::OpenRelease);
                 }
@@ -8316,6 +8340,91 @@ fn update_dialog(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>) {
 
     if (modal.inner || modal.should_close()) && !app.updating {
         out.push(Action::CloseUpdateDialog);
+    }
+}
+
+fn sync_invite_dialog(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>) {
+    let Some(room) = app.pending_sync_join.clone() else {
+        return;
+    };
+    let pal_color = app.saved.theme_palette.color();
+    let frame = Frame::new()
+        .fill(Color32::from_rgb(20, 22, 28))
+        .stroke(Stroke::new(1.0_f32, veil(0.18)))
+        .corner_radius(16.0)
+        .shadow(Shadow {
+            offset: [0, 12],
+            blur: 32,
+            spread: 0,
+            color: shade(0.75),
+        })
+        .inner_margin(Margin::same(24));
+
+    let modal = egui::Modal::new(Id::new("sync-invite-modal"))
+        .frame(frame)
+        .backdrop_color(shade(0.70))
+        .show(ctx, |ui| {
+            ui.set_width(380.0);
+            let width = ui.available_width();
+
+            // Icon + Title
+            ui.vertical_centered(|ui| {
+                let (icon_rect, _) = ui.allocate_exact_size(vec2(52.0, 52.0), Sense::hover());
+                ui.painter().circle_filled(icon_rect.center(), 26.0, pal_color.gamma_multiply(0.20));
+                ui.painter().circle_stroke(icon_rect.center(), 26.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.5)));
+                ui.painter().text(icon_rect.center(), Align2::CENTER_CENTER, icon::HEADPHONES, solid(24.0), pal_color);
+
+                ui.add_space(10.0);
+                ui.painter().text(pos2(icon_rect.center().x, ui.cursor().top() + 8.0), Align2::CENTER_CENTER, "Listen Together Invite", bold(17.5), TEXT);
+                ui.add_space(20.0);
+
+                paragraph(ui, "A friend has invited you to listen along with them in real-time.", sans(12.5), MUTED, 2);
+            });
+
+            ui.add_space(14.0);
+
+            // Room Code Card
+            let (chip, _) = ui.allocate_exact_size(vec2(width, 48.0), Sense::hover());
+            ui.painter().rect_filled(chip, 10.0, pal_color.gamma_multiply(0.12));
+            ui.painter().rect_stroke(chip, 10.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.40)), StrokeKind::Inside);
+            ui.painter().text(pos2(chip.center().x, chip.top() + 14.0), Align2::CENTER_CENTER, "ROOM CODE", bold(9.0), pal_color);
+            ui.painter().text(pos2(chip.center().x, chip.bottom() - 14.0), Align2::CENTER_CENTER, &room, bold(15.0), TEXT);
+
+            if app.sync_mode != crate::sync::SyncMode::Disconnected {
+                ui.add_space(8.0);
+                paragraph(ui, "⚠️ Note: Joining will leave your current session.", sans(11.0), Color32::from_rgb(251, 191, 36), 2);
+            }
+
+            ui.add_space(18.0);
+
+            // Action Buttons Row: [Decline]  [Join Session]
+            ui.horizontal(|ui| {
+                let btn_w = (width - 12.0) / 2.0;
+
+                // Decline Button
+                let (dec_rect, dec_resp) = ui.allocate_exact_size(vec2(btn_w, 36.0), Sense::click());
+                let dhov = hover_of(ui, &dec_resp);
+                ui.painter().rect_filled(dec_rect, 10.0, veil(0.06 + 0.06 * dhov));
+                ui.painter().rect_stroke(dec_rect, 10.0, Stroke::new(1.0_f32, veil(0.14)), StrokeKind::Inside);
+                ui.painter().text(dec_rect.center(), Align2::CENTER_CENTER, "Decline", bold(12.5), if dhov > 0.1 { TEXT } else { MUTED });
+                if dec_resp.clicked() {
+                    out.push(Action::DismissSyncPrompt);
+                }
+
+                // Join Button
+                let (join_rect, join_resp) = ui.allocate_exact_size(vec2(btn_w, 36.0), Sense::click());
+                let jhov = hover_of(ui, &join_resp);
+                ui.painter().rect_filled(join_rect, 10.0, pal_color.gamma_multiply(0.85 + 0.15 * jhov));
+                ui.painter().text(join_rect.center(), Align2::CENTER_CENTER, "Join Session", bold(12.5), Color32::WHITE);
+                if join_resp.clicked() {
+                    out.push(Action::StartSyncJoin(room.clone()));
+                    out.push(Action::DismissSyncPrompt);
+                }
+            });
+        });
+
+    if modal.should_close() {
+        out.push(Action::DismissSyncPrompt);
     }
 }
 

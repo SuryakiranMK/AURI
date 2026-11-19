@@ -121,6 +121,20 @@ pub fn new_room_code() -> String {
     format!("{}{}{}{}-{}{}{}{}-{}{}", chars[0], chars[1], chars[2], chars[3], chars[4], chars[5], chars[6], chars[7], chars[8], chars[9])
 }
 
+/// Strictly validates the format of Listen Together room codes (XXXX-XXXX-XX).
+/// Prevents path traversal, shell injection, or invalid inputs.
+pub fn is_valid_room_code(code: &str) -> bool {
+    let clean = code.trim();
+    let parts: Vec<&str> = clean.split('-').collect();
+    if parts.len() != 3 {
+        return false;
+    }
+    parts[0].len() == 4
+        && parts[1].len() == 4
+        && parts[2].len() == 2
+        && parts.iter().all(|part| part.chars().all(|c| c.is_ascii_alphanumeric()))
+}
+
 /// The ntfy topic is derived from a hash of the room code, so the relay (or
 /// anyone watching it) never learns the code itself.
 fn topic_for(room: &str) -> String {
@@ -800,5 +814,17 @@ mod tests {
         let host_ts3 = host_ts + 4_000;
         let guest_now3 = host_ts3 - 30_000 + 400;
         assert_eq!(estimator.target_position(54_000, host_ts3, guest_now3), 54_300);
+    }
+
+    #[test]
+    fn test_is_valid_room_code() {
+        assert!(is_valid_room_code("ABCD-EFGH-12"));
+        assert!(is_valid_room_code("1234-5678-90"));
+        assert!(is_valid_room_code("K7QX-9M2T-B4"));
+        assert!(!is_valid_room_code(""));
+        assert!(!is_valid_room_code("ABCD-EFGH"));
+        assert!(!is_valid_room_code("ABCD-EFGH-123"));
+        assert!(!is_valid_room_code("ABCD-EFGH-1;DROP"));
+        assert!(!is_valid_room_code("ABCD/EFGH/12"));
     }
 }
