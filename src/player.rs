@@ -184,12 +184,9 @@ impl Fetch {
             let to = (from + RANGE_BYTES).min(self.len) - 1;
             let sep = if current_url.contains('?') { '&' } else { '?' };
             let url_with_range = format!("{current_url}{sep}range={from}-{to}");
-            let range_header = format!("bytes={from}-{to}");
             let request = agent
                 .get(&url_with_range)
-                .set("User-Agent", user_agent)
-                .set("Range", &range_header)
-                .set("Accept-Encoding", "identity");
+                .set("User-Agent", user_agent);
 
             match request.call() {
                 Ok(response) => {
@@ -1041,5 +1038,35 @@ mod tests {
         assert_eq!(second.by_ref().take(SILENCE_SAMPLES + 4).filter(|sample| *sample == 0.5).count(), 4);
         assert_eq!(shared.position_ms.load(Relaxed), 2000);
         assert!(queue(3000));
+    }
+
+    #[test]
+    fn test_download_live_audio_chunks() {
+        let yt = ytm::Client::new(String::new());
+        let song = yt.search("Aeroplane Scene").unwrap().songs().into_iter().next().unwrap();
+        let stream = yt.stream(&song.video_id).unwrap();
+        let user_agent = yt.player_agent();
+        let agent = yt.agent.clone();
+
+        // Verify full song chunked download seamlessly retrieves all bytes across multiple chunks
+        let mut downloaded_bytes = 0u64;
+        let mut chunk_index = 0;
+        while downloaded_bytes < stream.len {
+            let from = downloaded_bytes;
+            let to = (from + RANGE_BYTES).min(stream.len) - 1;
+            let sep = if stream.url.contains('?') { '&' } else { '?' };
+            let url = format!("{}{sep}range={from}-{to}", stream.url);
+            let req = agent.get(&url).set("User-Agent", &user_agent);
+            let resp = req.call();
+            assert!(resp.is_ok(), "Chunk {chunk_index} ({from}-{to}) failed: {:?}", resp.err());
+            let mut reader = resp.unwrap().into_reader();
+            let mut chunk = Vec::new();
+            reader.read_to_end(&mut chunk).unwrap();
+            assert_eq!(chunk.len() as u64, to - from + 1, "Chunk {chunk_index} wrong size");
+            downloaded_bytes += chunk.len() as u64;
+            chunk_index += 1;
+        }
+        assert!(chunk_index > 1, "Expected multiple chunks for full song");
+        assert_eq!(downloaded_bytes, stream.len);
     }
 }

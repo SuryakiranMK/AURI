@@ -2,7 +2,6 @@ use crate::ytm::{self, Item};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::io::{self, Read, Write};
-use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -77,9 +76,9 @@ pub struct Discord {
 }
 
 impl Discord {
-    pub fn start(report: impl Fn(bool) + Send + 'static, on_join: impl Fn(String) + Send + Sync + 'static) -> Self {
+    pub fn start(report: impl Fn(bool) + Send + 'static, _on_join: impl Fn(String) + Send + Sync + 'static) -> Self {
         let (updates, inbox) = mpsc::channel();
-        std::thread::spawn(move || run(inbox, report, on_join));
+        std::thread::spawn(move || run(inbox, report));
         Self { updates, shown: None }
     }
 
@@ -127,23 +126,22 @@ impl Discord {
     }
 }
 
-fn run(updates: Receiver<Option<Value>>, report: impl Fn(bool), on_join: impl Fn(String) + Send + Sync + 'static) {
-    let on_join: Arc<dyn Fn(String) + Send + Sync> = Arc::new(on_join);
+fn run(updates: Receiver<Option<Value>>, report: impl Fn(bool)) {
     let (mut pipe, mut activity, mut delivered, mut nonce) = (None, None, false, 0u64);
     let mut linked = None;
     loop {
         if pipe.is_none() {
-            (pipe, delivered) = (connect(&on_join), false);
+            (pipe, delivered) = (connect(), false);
         }
         if let Some(open) = &mut pipe {
             if !delivered {
                 nonce += 1;
                 let args = json!({ "pid": std::process::id(), "activity": activity });
-                // Write-only: the event reader thread owns all inbound frames.
-                let sent = open.write_all(&frame(
+                let sent = exchange(
+                    open,
                     FRAME,
                     &json!({ "cmd": "SET_ACTIVITY", "args": args, "nonce": nonce.to_string() }),
-                ));
+                );
                 delivered = sent.is_ok();
                 if !delivered {
                     pipe = None;
@@ -167,42 +165,12 @@ fn run(updates: Receiver<Option<Value>>, report: impl Fn(bool), on_join: impl Fn
     }
 }
 
-fn connect(on_join: &Arc<dyn Fn(String) + Send + Sync>) -> Option<Pipe> {
+fn connect() -> Option<Pipe> {
     (0..PIPES).find_map(|number| {
         let mut pipe = open(number)?;
         exchange(&mut pipe, HANDSHAKE, &json!({ "v": 1, "client_id": APPLICATION_ID })).ok()?;
-        // Listen Together invites: subscribe to joins, then hand all inbound
-        // frames to a dedicated reader so SET_ACTIVITY stays write-only.
-        pipe.write_all(&frame(FRAME, &json!({ "cmd": "SUBSCRIBE", "evt": "ACTIVITY_JOIN", "nonce": "join-sub" })))
-            .ok()?;
-        let mut reader = pipe.try_clone().ok()?;
-        let on_join = on_join.clone();
-        std::thread::spawn(move || read_events(&mut reader, on_join));
         Some(pipe)
     })
-}
-
-fn read_events(pipe: &mut impl Read, on_join: Arc<dyn Fn(String) + Send + Sync>) {
-    loop {
-        let mut header = [0u8; 8];
-        if pipe.read_exact(&mut header).is_err() {
-            return;
-        }
-        let length = u32::from_le_bytes([header[4], header[5], header[6], header[7]]) as usize;
-        if length > 1024 * 1024 {
-            return;
-        }
-        let mut body = vec![0u8; length];
-        if pipe.read_exact(&mut body).is_err() {
-            return;
-        }
-        let Ok(value) = serde_json::from_slice::<Value>(&body) else { continue };
-        if value["evt"] == "ACTIVITY_JOIN" {
-            if let Some(secret) = value["data"]["secret"].as_str().filter(|s| !s.is_empty()) {
-                on_join(secret.to_owned());
-            }
-        }
-    }
 }
 
 #[cfg(windows)]
@@ -411,12 +379,11 @@ fn activity(
     activity
 }
 
-/// The Listen Together invite: friends see a Join button on the user's Discord
-/// profile, and clicking it hands the room code back via ACTIVITY_JOIN.
+/// The Listen Together party presence: friends see the room size on the user's
+/// profile and can join via the 1-click web/protocol button in the buttons list.
 fn apply_party(activity: &mut Value, party: Option<(&str, usize)>) {
     if let Some((room, size)) = party {
-        activity["party"] = json!({ "id": room, "size": [size.max(1), 20] });
-        activity["secrets"] = json!({ "join": room });
+        activity["party"] = json!({ "id": format!("party_{room}"), "size": [size.max(1), 20] });
     }
 }
 
@@ -558,9 +525,9 @@ mod tests {
             ..Item::default()
         };
         let act = activity(&lucky, "", Headline::App, "", 0, 248_000, fmt, true, Some(("K7QX-9M2T-B4", 3)));
-        assert_eq!(act["party"]["id"], "K7QX-9M2T-B4");
+        assert_eq!(act["party"]["id"], "party_K7QX-9M2T-B4");
         assert_eq!(act["party"]["size"][0], 3);
-        assert_eq!(act["secrets"]["join"], "K7QX-9M2T-B4");
+        assert!(act["secrets"].is_null());
         assert_eq!(act["buttons"][0]["label"], "🎧 Listen Together (3)");
         assert_eq!(act["buttons"][0]["url"], "https://suryakiranmk.github.io/AURI/join?room=K7QX-9M2T-B4");
         let without = activity(&lucky, "", Headline::App, "", 0, 248_000, DiscordFormat::default(), true, None);
