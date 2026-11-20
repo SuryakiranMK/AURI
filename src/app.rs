@@ -1518,6 +1518,12 @@ pub enum Action {
     SetArtworkBgOpacity(f32),
     SetArtworkBgBlur(f32),
     ExitGameModeToMini,
+    ToggleDiagnostics,
+    OpenDiagnostics,
+    CloseDiagnostics,
+    CopyLogs,
+    ClearLogs,
+    OpenLogFolder,
 }
 
 pub enum Event {
@@ -1634,6 +1640,9 @@ pub struct App {
     /// Queue dock state before the live preview took over the rail, restored
     /// when the preview session ends.
     pub queue_was_open: bool,
+    pub diagnostics_open: bool,
+    pub diagnostics_filter: usize,
+    pub diagnostics_auto_scroll: bool,
     restart: Option<PathBuf>,
 }
 
@@ -1782,6 +1791,9 @@ impl App {
             original_queue: None,
             settings_preview_open: false,
             queue_was_open: false,
+            diagnostics_open: false,
+            diagnostics_filter: 0,
+            diagnostics_auto_scroll: true,
             restart: None,
         };
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
@@ -2036,6 +2048,25 @@ impl App {
 
     pub fn playing(&self) -> bool {
         self.saved.current.is_some() && !self.player.paused()
+    }
+
+    pub fn system_summary(&self) -> String {
+        let os = std::env::consts::OS;
+        let arch = std::env::consts::ARCH;
+        let track_info = self.now_playing().map_or_else(
+            || "None".to_string(),
+            |t| format!("{} - {} (video_id: {})", t.title, t.subtitle, t.video_id),
+        );
+        let pos_sec = self.player.position_ms() / 1000;
+        let dur_sec = self.player.duration_ms() / 1000;
+        let playing = self.playing();
+        let loading = self.player.loading();
+        let error = self.player.current_error();
+        let device = self.player.device_name().unwrap_or_else(|| "None / Unbound".to_string());
+        format!(
+            "App: AURI v{} ({} {})\nAudio Output Device: {}\nPlayback State: playing={}, loading={}, pos={}s/{}s\nActive Track: {}\nPlayer Error: {:?}",
+            crate::VERSION, os, arch, device, playing, loading, pos_sec, dur_sec, track_info, error
+        )
     }
 
     fn ensure(&mut self, route: &Route) {
@@ -2748,6 +2779,12 @@ impl App {
             }
             if free && input.consume_key(Modifiers::COMMAND, Key::Z) {
                 out.push(Action::Undo);
+            }
+            if input.modifiers.command && input.modifiers.shift && input.key_pressed(Key::L) {
+                out.push(Action::ToggleDiagnostics);
+            }
+            if self.diagnostics_open && free && input.consume_key(Modifiers::NONE, Key::Escape) {
+                out.push(Action::CloseDiagnostics);
             }
             if self.expanded && free && input.consume_key(Modifiers::NONE, Key::Escape) {
                 out.push(Action::Expand(false));
@@ -3492,6 +3529,32 @@ impl App {
             }
             Action::CloseUpdateDialog => {
                 self.update_dialog_open = false;
+            }
+            Action::ToggleDiagnostics => {
+                self.diagnostics_open = !self.diagnostics_open;
+            }
+            Action::OpenDiagnostics => {
+                self.diagnostics_open = true;
+            }
+            Action::CloseDiagnostics => {
+                self.diagnostics_open = false;
+            }
+            Action::CopyLogs => {
+                let summary = self.system_summary();
+                let report = crate::logger::export_report(&summary);
+                self.ctx.copy_text(report);
+                self.notify("Diagnostic logs copied to clipboard!");
+            }
+            Action::ClearLogs => {
+                crate::logger::clear();
+                self.notify("Diagnostic logs cleared.");
+            }
+            Action::OpenLogFolder => {
+                if let Some(path) = crate::logger::log_file_path() {
+                    if let Some(dir) = path.parent() {
+                        let _ = std::process::Command::new("explorer").arg(dir).spawn();
+                    }
+                }
             }
             Action::StartRadio(item) => {
                 let seed = item.video_id.clone();

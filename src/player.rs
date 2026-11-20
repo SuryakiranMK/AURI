@@ -179,17 +179,21 @@ impl Fetch {
         let mut cache_bytes_written = 0u64;
         let mut current_url = initial_url.to_string();
 
+        crate::log_stream!("Fetch", "Starting download loop for {}: total_len={}", self.video_id, self.len);
         while let Some(from) = self.next_range() {
             let mut at = from;
             let to = (from + RANGE_BYTES).min(self.len) - 1;
             let sep = if current_url.contains('?') { '&' } else { '?' };
             let url_with_range = format!("{current_url}{sep}range={from}-{to}");
+            crate::log_stream!("Fetch", "Requesting chunk {from}-{to} for {}", self.video_id);
             let request = agent
                 .get(&url_with_range)
                 .set("User-Agent", user_agent);
 
             match request.call() {
                 Ok(response) => {
+                    let status = response.status();
+                    crate::log_stream!("Fetch", "Chunk {from}-{to} HTTP {status} received");
                     let mut body = response.into_reader();
                     let mut chunk_bytes = Vec::with_capacity(64 * 1024);
                     while let Ok(read) = body.read(&mut block) {
@@ -207,6 +211,7 @@ impl Fetch {
                         return false;
                     }
                     if !chunk_bytes.is_empty() {
+                        crate::log_stream!("Fetch", "Chunk {from}-{to} buffered {} bytes (at={at})", chunk_bytes.len());
                         if let Some(writer) = &mut cache_writer {
                             use std::io::Write;
                             if from == cache_bytes_written && writer.write_all(&chunk_bytes).is_ok() {
@@ -222,10 +227,10 @@ impl Fetch {
                     }
                 }
                 Err(err) => {
-                    eprintln!("[Stream] Range chunk fetch error for {}: {:?}", self.video_id, err);
+                    crate::log_error!("Fetch", "Chunk {from}-{to} fetch ERROR for {}: {:?}", self.video_id, err);
                     if let Ok(stream) = self.yt.stream(&self.video_id) {
                         current_url = stream.url;
-                        eprintln!("[Stream] Refreshed stream URL for {}", self.video_id);
+                        crate::log_warn!("Fetch", "Refreshed stream URL for {}", self.video_id);
                     }
                 }
             }
@@ -235,8 +240,9 @@ impl Fetch {
                 continue;
             }
             stalls += 1;
+            crate::log_warn!("Fetch", "Chunk {from}-{to} stall #{stalls}/{MAX_STALLS} for {}", self.video_id);
             if stalls >= MAX_STALLS {
-                eprintln!("[Stream] Max stalls ({MAX_STALLS}) reached for {}, aborting fetch", self.video_id);
+                crate::log_error!("Fetch", "Max stalls reached for {}, aborting fetch", self.video_id);
                 if let Some(f) = cache_writer.take() {
                     drop(f);
                     let _ = std::fs::remove_file(&part_file);
@@ -346,6 +352,7 @@ struct Track {
 impl Track {
     fn open(yt: &Arc<ytm::Client>, urls: &Urls, video_id: &str, generation: u64, shared: &Arc<Shared>) -> Result<Track, String> {
         if let Some(cached_path) = crate::cache::get_cached_track_path(video_id) {
+            crate::log_info!("Cache", "Found cached audio for {video_id} ({cached_path:?})");
             if let Ok(file) = std::fs::File::open(&cached_path) {
                 let is_opus = cached_path.extension().map_or(true, |ext| ext == "opus");
                 let source = MediaSourceStream::new(Box::new(file), Default::default());
@@ -365,6 +372,7 @@ impl Track {
                             if shared.generation.load(Relaxed) == generation {
                                 shared.buffered.store(1000, Relaxed);
                             }
+                            crate::log_audio!("Cache", "Loaded cached track decoder for {video_id}");
                             return Ok(Track {
                                 video_id: video_id.to_owned(),
                                 generation,
@@ -384,9 +392,12 @@ impl Track {
 
         let mut stream = resolve(yt, urls, video_id)?;
         let fallback = stream.fallback.take();
-        Self::open_stream(yt.clone(), stream, video_id, generation, shared).or_else(|message| match fallback {
-            Some(aac) => Self::open_stream(yt.clone(), *aac, video_id, generation, shared),
-            None => Err(message),
+        Self::open_stream(yt.clone(), stream, video_id, generation, shared).or_else(|message| {
+            crate::log_warn!("Stream", "Primary stream open failed for {video_id}: {message}. Checking fallback...");
+            match fallback {
+                Some(aac) => Self::open_stream(yt.clone(), *aac, video_id, generation, shared),
+                None => Err(message),
+            }
         })
     }
 
@@ -396,11 +407,13 @@ impl Track {
             len,
             duration_ms,
             opus,
+            loudness_db,
             ..
         } = stream;
+        crate::log_stream!("Stream", "Opening stream for {video_id}: len={len} bytes, duration={duration_ms}ms, opus={opus}, loudness={loudness_db:?}dB");
         if shared.generation.load(Relaxed) == generation {
             shared.duration_ms.store(duration_ms, Relaxed);
-            let gain = crate::dsp::calculate_loudness_gain_db(stream.loudness_db)
+            let gain = crate::dsp::calculate_loudness_gain_db(loudness_db)
                 .map(crate::dsp::db_to_linear)
                 .unwrap_or(1.0);
             shared.loudness_gain.store(gain.to_bits(), Relaxed);
@@ -425,20 +438,44 @@ impl Track {
         let source = MediaSourceStream::new(Box::new(reader), Default::default());
         let mut hint = Hint::new();
         hint.with_extension(if opus { "webm" } else { "m4a" });
-        let format = symphonia::default::get_probe()
+        let format = match symphonia::default::get_probe()
             .format(&hint, source, &FormatOptions::default(), &MetadataOptions::default())
-            .map_err(|e| e.to_string())?
-            .format;
+        {
+            Ok(probed) => {
+                crate::log_stream!("Decoder", "Symphonia probed format container successfully for {video_id}");
+                probed.format
+            }
+            Err(e) => {
+                crate::log_error!("Decoder", "Symphonia probe failed for {video_id}: {e}");
+                return Err(e.to_string());
+            }
+        };
         seekable.store(true, Relaxed);
         let track = format.default_track().ok_or("This stream has no audio track")?;
         let (id, time_base) = (track.id, track.codec_params.time_base);
         let options = DecoderOptions::default();
         let decoder: Box<dyn Decoder> = if opus {
-            Box::new(OpusStream::try_new(&track.codec_params, &options).map_err(|e| e.to_string())?)
+            match OpusStream::try_new(&track.codec_params, &options) {
+                Ok(stream) => {
+                    crate::log_audio!("Decoder", "Opus decoder stream initialized (rate={:?}, channels={:?})", track.codec_params.sample_rate, track.codec_params.channels);
+                    Box::new(stream)
+                }
+                Err(e) => {
+                    crate::log_error!("Decoder", "Opus decoder stream initialization failed: {e}");
+                    return Err(e.to_string());
+                }
+            }
         } else {
-            symphonia::default::get_codecs()
-                .make(&track.codec_params, &options)
-                .map_err(|e| e.to_string())?
+            match symphonia::default::get_codecs().make(&track.codec_params, &options) {
+                Ok(dec) => {
+                    crate::log_audio!("Decoder", "AAC/Symphonia decoder initialized (rate={:?}, channels={:?})", track.codec_params.sample_rate, track.codec_params.channels);
+                    dec
+                }
+                Err(e) => {
+                    crate::log_error!("Decoder", "AAC decoder initialization failed: {e}");
+                    return Err(e.to_string());
+                }
+            }
         };
         Ok(Track {
             video_id: video_id.to_owned(),
@@ -683,6 +720,7 @@ fn decode_loop(
                 generation,
                 epoch: started,
             }) => {
+                crate::log_stream!("Player", "Cmd::Load: initiating playback for video_id={video_id}, gen={generation}");
                 (track, pending, resume, epoch) = (None, None, None, started);
                 let (replies, shared, yt, urls) = (replies.clone(), shared.clone(), yt.clone(), urls.clone());
                 std::thread::spawn(move || {
@@ -705,6 +743,7 @@ fn decode_loop(
                 });
             }
             Some(Cmd::Opened(mut opened)) if current(opened.generation) => {
+                crate::log_audio!("Player", "Cmd::Opened: track ready video_id={}, duration_ms={}", opened.video_id, shared.duration_ms.load(Relaxed));
                 if let Some(ms) = resume.take() {
                     opened.seek(ms);
                 }
@@ -713,6 +752,7 @@ fn decode_loop(
                 wake();
             }
             Some(Cmd::Failed { generation, message }) if current(generation) => {
+                crate::log_error!("Player", "Cmd::Failed: playback failed for generation {generation}: {message}");
                 *shared.error.lock().unwrap() = Some(message);
                 shared.loading.store(false, Relaxed);
                 wake();
@@ -800,7 +840,10 @@ impl Player {
         };
         player.open_output();
         if player.output.is_none() {
+            crate::log_error!("Audio", "Audio output initialization failed: No output audio device available or device is busy");
             *player.shared.error.lock().unwrap() = Some(NO_OUTPUT.to_owned());
+        } else {
+            crate::log_audio!("Audio", "Audio output initialized successfully on device: {:?}", player.device);
         }
         player
     }
@@ -824,6 +867,11 @@ impl Player {
             (stream, sink)
         });
         self.device = default_device().filter(|_| self.output.is_some());
+        if let Some(dev) = &self.device {
+            crate::log_audio!("Audio", "Bound audio output stream to device: {dev}");
+        } else {
+            crate::log_warn!("Audio", "Could not bind audio output device");
+        }
     }
 
     pub fn follow_default_device(&mut self) {
@@ -834,11 +882,13 @@ impl Player {
         if default_device() == self.device && !self.device_lost.load(Relaxed) {
             return;
         }
+        crate::log_audio!("Audio", "Audio output device changed. Previous: {:?}, New: {:?}", self.device, default_device());
         let paused = self.paused();
         let played = self.output.take().is_some();
         self.open_output();
         self.set_paused(paused);
         if played && self.output.is_none() {
+            crate::log_error!("Audio", "Lost audio output device on switch, no replacement device available");
             *self.shared.error.lock().unwrap() = Some(NO_OUTPUT.to_owned());
         }
     }
@@ -960,6 +1010,14 @@ impl Player {
 
     pub fn take_error(&self) -> Option<String> {
         self.shared.error.lock().unwrap().take()
+    }
+
+    pub fn device_name(&self) -> Option<String> {
+        self.device.clone()
+    }
+
+    pub fn current_error(&self) -> Option<String> {
+        self.shared.error.lock().unwrap().clone()
     }
 }
 

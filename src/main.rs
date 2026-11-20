@@ -7,6 +7,7 @@ mod cache;
 mod discord;
 mod dsp;
 mod hotkeys;
+mod logger;
 mod media;
 mod opus;
 mod player;
@@ -238,6 +239,7 @@ fn log_crashes() {
             .open(file);
         if let Ok(mut log) = log {
             let _ = writeln!(log, "{APP_NAME} {VERSION} at unix {seconds}: {panic}");
+            crate::logger::log(crate::logger::LogLevel::Error, "Panic", format!("{panic}"));
         }
     }));
 }
@@ -245,6 +247,8 @@ fn log_crashes() {
 fn main() -> eframe::Result {
     let mut arguments: Vec<String> = std::env::args().skip(1).collect();
     take_profile(&mut arguments);
+    logger::init(eframe::storage_dir(app_id()));
+    log_info!("System", "AURI v{} starting on {} ({})", VERSION, std::env::consts::OS, std::env::consts::ARCH);
     log_crashes();
     if take_updated(&mut arguments) {
         std::thread::sleep(PREVIOUS_VERSION_EXIT);

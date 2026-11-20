@@ -939,6 +939,23 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     }
     tool_right -= 34.0;
 
+    // Diagnostics & Live Logs Button
+    let is_diag = app.diagnostics_open;
+    let diag_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
+    let diag_resp = ui.interact(diag_rect, Id::new("win-tool-diag"), Sense::click());
+    let diag_hov = hover_of(ui, &diag_resp);
+    ui.painter().rect_filled(diag_rect, 6.0, if is_diag { pal_color.gamma_multiply(0.20) } else { veil(0.04 * diag_hov) });
+    if is_diag {
+        ui.painter().rect_stroke(diag_rect, 6.0, Stroke::new(1.0_f32, pal_color), StrokeKind::Inside);
+    }
+    let diag_color = if is_diag || diag_hov > 0.1 { pal_color } else { m_color };
+    ui.painter().text(diag_rect.center(), Align2::CENTER_CENTER, icon::TERMINAL_WINDOW, solid(16.0), diag_color);
+    describe(&diag_resp, "Diagnostics & Live Logs (Ctrl+Shift+L)");
+    if diag_resp.clicked() {
+        out.push(Action::ToggleDiagnostics);
+    }
+    tool_right -= 34.0;
+
     // Settings Gear Icon Button
     let is_settings = matches!(app.route(), Route::Settings(_));
     let set_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
@@ -1600,6 +1617,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
     sign_in_dialog(app, ctx, &mut out);
     update_dialog(app, ctx, &mut out);
     sync_invite_dialog(app, ctx, &mut out);
+    diagnostics_modal(app, ctx, &mut out);
     notice(app, ctx, &mut out);
     out
 }
@@ -8284,11 +8302,11 @@ fn update_dialog(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>) {
                         ui.label(RichText::new(format!("• {clean_note}")).size(11.5).color(TEXT));
                     }
                 } else {
-                    ui.label(RichText::new("• Seamless Live Audio Streaming (Fixed HTTP 416 chunk cutoffs)").size(11.5).color(TEXT));
-                    ui.label(RichText::new("• Reliable Discord Rich Presence status & 1-click party joining").size(11.5).color(TEXT));
-                    ui.label(RichText::new("• Direct P2P Listen Together with automatic URL deep linking").size(11.5).color(TEXT));
-                    ui.label(RichText::new("• Single-threaded named pipe with instant reconnect").size(11.5).color(TEXT));
-                    ui.label(RichText::new("• Clean background tray exit & fast response").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Live Diagnostics & Logs Viewer (Ctrl+Shift+L / top-right icon)").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• 1-Click Diagnostic Report copying for instant playback troubleshooting").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Audio device discovery & loss auto-detection").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Seamless Live Audio Streaming & chunk recovery").size(11.5).color(TEXT));
+                    ui.label(RichText::new("• Discord Rich Presence status & 1-click Listen Together").size(11.5).color(TEXT));
                 }
             });
 
@@ -8426,6 +8444,276 @@ fn sync_invite_dialog(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>)
 
     if modal.should_close() {
         out.push(Action::DismissSyncPrompt);
+    }
+}
+
+fn diagnostics_modal(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>) {
+    if !app.diagnostics_open {
+        return;
+    }
+    let pal_color = app.saved.theme_palette.color();
+
+    let frame = Frame::new()
+        .fill(Color32::from_rgb(14, 16, 22))
+        .stroke(Stroke::new(1.5_f32, pal_color.gamma_multiply(0.40)))
+        .corner_radius(16.0)
+        .shadow(Shadow {
+            offset: [0, 16],
+            blur: 40,
+            spread: 0,
+            color: shade(0.85),
+        })
+        .inner_margin(Margin::same(20));
+
+    let modal = egui::Modal::new(Id::new("auri-diagnostics-modal"))
+        .frame(frame)
+        .backdrop_color(shade(0.70))
+        .show(ctx, |ui| {
+            ui.set_width(740.0);
+            let width = ui.available_width();
+
+            // Header Row: Terminal Icon + Title + Close Button
+            let (head, _) = ui.allocate_exact_size(vec2(width, 36.0), Sense::hover());
+            let icon_center = pos2(head.left() + 16.0, head.center().y);
+            ui.painter().circle_filled(icon_center, 16.0, pal_color.gamma_multiply(0.20));
+            ui.painter().text(icon_center, Align2::CENTER_CENTER, icon::TERMINAL_WINDOW, solid(18.0), pal_color);
+            label(
+                ui,
+                pos2(head.left() + 42.0, head.center().y),
+                Align2::LEFT_CENTER,
+                "AURI Diagnostics & Live Logs",
+                display(20.0),
+                TEXT,
+                width - 150.0,
+            );
+
+            // Version badge
+            let v_badge = Rect::from_center_size(pos2(head.right() - 65.0, head.center().y), vec2(60.0, 22.0));
+            ui.painter().rect_filled(v_badge, 11.0, veil(0.08));
+            ui.painter().text(v_badge.center(), Align2::CENTER_CENTER, format!("v{}", crate::VERSION), medium(11.0), MUTED);
+
+            // Close button
+            let close_slot = Rect::from_center_size(pos2(head.right() - 14.0, head.center().y), Vec2::splat(26.0));
+            if icon_button(ui, close_slot, Id::new("diag-close-btn"), icon::X, glyph(16.0), MUTED, "Close (Esc)").clicked() {
+                out.push(Action::CloseDiagnostics);
+            }
+
+            ui.add_space(8.0);
+            paragraph(
+                ui,
+                "Live subsystem logs, decoder diagnostics, and streaming status. Use the buttons below to copy the report or inspect playback issues.",
+                sans(12.0),
+                MUTED,
+                2,
+            );
+            ui.add_space(10.0);
+
+            // System Quick Status Card
+            let audio_dev = app.player.device_name();
+            let has_audio = audio_dev.is_some();
+            let is_loading = app.player.loading();
+            let is_playing = app.playing();
+            let cur_track = app.now_playing();
+            let cur_err = app.player.current_error();
+
+            let card_frame = Frame::new()
+                .fill(Color32::from_rgb(20, 23, 31))
+                .stroke(Stroke::new(1.0_f32, veil(0.12)))
+                .corner_radius(10.0)
+                .inner_margin(Margin::symmetric(14, 10));
+
+            card_frame.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    // Audio Device Status Pill
+                    let dev_text = if let Some(dev) = &audio_dev {
+                        format!("🔊 Audio: {dev}")
+                    } else {
+                        "⚠️ Audio: NO OUTPUT DEVICE BOUND".to_string()
+                    };
+                    let dev_color = if has_audio { Color32::from_rgb(16, 185, 129) } else { Color32::from_rgb(239, 68, 68) };
+                    ui.label(RichText::new(dev_text).size(11.5).color(dev_color).strong());
+
+                    ui.separator();
+
+                    // Playback status
+                    let state_str = if is_loading {
+                        "⏳ Loading stream..."
+                    } else if is_playing {
+                        "▶ Playing"
+                    } else {
+                        "⏸ Paused / Idle"
+                    };
+                    let state_color = if is_loading { Color32::from_rgb(245, 158, 11) } else if is_playing { pal_color } else { MUTED };
+                    ui.label(RichText::new(state_str).size(11.5).color(state_color));
+
+                    ui.separator();
+
+                    // Track info
+                    let trk_str = if let Some(t) = cur_track {
+                        format!("🎵 {} ({})", t.title, t.video_id)
+                    } else {
+                        "🎵 No active track".to_string()
+                    };
+                    ui.add(egui::Label::new(RichText::new(trk_str).size(11.5).color(TEXT)).truncate());
+                });
+
+                if let Some(err) = &cur_err {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(format!("⚠️ Error: {err}")).size(11.5).color(Color32::from_rgb(239, 68, 68)).strong());
+                }
+            });
+
+            ui.add_space(10.0);
+
+            // Action Bar: Copy, Open Folder, Clear, Auto-scroll & Filter Tabs
+            let raw_entries = crate::logger::entries();
+            let total_count = raw_entries.len();
+            let err_count = raw_entries.iter().filter(|e| e.level == crate::logger::LogLevel::Error || e.level == crate::logger::LogLevel::Warn).count();
+            let stream_count = raw_entries.iter().filter(|e| e.level == crate::logger::LogLevel::Stream).count();
+            let audio_count = raw_entries.iter().filter(|e| e.level == crate::logger::LogLevel::Audio).count();
+
+            ui.horizontal(|ui| {
+                // Copy Logs Button
+                if ui.button(RichText::new("📋 Copy Logs").size(12.0).strong().color(Color32::WHITE)).clicked() {
+                    out.push(Action::CopyLogs);
+                }
+
+                // Open Folder Button
+                if ui.button(RichText::new("📂 Open Log Folder").size(12.0).color(TEXT)).clicked() {
+                    out.push(Action::OpenLogFolder);
+                }
+
+                // Clear Logs Button
+                if ui.button(RichText::new("🗑️ Clear").size(12.0).color(MUTED)).clicked() {
+                    out.push(Action::ClearLogs);
+                }
+
+                ui.separator();
+
+                // Filter Buttons: All, Errors, Stream, Audio
+                let mut filter_btn = |id_idx: usize, label_text: &str, count: usize| {
+                    let active = app.diagnostics_filter == id_idx;
+                    let text = format!("{label_text} ({count})");
+                    let rt = if active {
+                        RichText::new(text).size(11.5).strong().color(pal_color)
+                    } else {
+                        RichText::new(text).size(11.5).color(MUTED)
+                    };
+                    if ui.selectable_label(active, rt).clicked() {
+                        app.diagnostics_filter = id_idx;
+                    }
+                };
+
+                filter_btn(0, "All", total_count);
+                filter_btn(1, "Errors", err_count);
+                filter_btn(2, "Stream", stream_count);
+                filter_btn(3, "Audio", audio_count);
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.checkbox(&mut app.diagnostics_auto_scroll, "Auto-scroll");
+                });
+            });
+
+            ui.add_space(8.0);
+
+            // Log Console Area
+            let filtered_entries: Vec<&crate::logger::LogEntry> = raw_entries
+                .iter()
+                .filter(|e| match app.diagnostics_filter {
+                    1 => e.level == crate::logger::LogLevel::Error || e.level == crate::logger::LogLevel::Warn,
+                    2 => e.level == crate::logger::LogLevel::Stream,
+                    3 => e.level == crate::logger::LogLevel::Audio,
+                    _ => true,
+                })
+                .collect();
+
+            let console_frame = Frame::new()
+                .fill(Color32::from_rgb(10, 11, 16))
+                .stroke(Stroke::new(1.0_f32, veil(0.15)))
+                .corner_radius(8.0)
+                .inner_margin(Margin::same(10));
+
+            console_frame.show(ui, |ui| {
+                ui.set_height(280.0);
+                if filtered_entries.is_empty() {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(110.0);
+                        ui.label(RichText::new("No log records in this category yet.").size(13.0).color(MUTED));
+                        ui.add_space(4.0);
+                        ui.label(RichText::new("Play a song or perform actions to see live streaming logs.").size(11.5).color(FAINT));
+                    });
+                } else {
+                    let mut scroll = egui::ScrollArea::vertical().max_height(280.0);
+                    if app.diagnostics_auto_scroll {
+                        scroll = scroll.stick_to_bottom(true);
+                    }
+                    scroll.show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        for entry in &filtered_entries {
+                            let (badge_color, badge_text) = match entry.level {
+                                crate::logger::LogLevel::Error => (Color32::from_rgb(239, 68, 68), "[ERROR] "),
+                                crate::logger::LogLevel::Warn => (Color32::from_rgb(245, 158, 11), "[WARN]  "),
+                                crate::logger::LogLevel::Stream => (Color32::from_rgb(56, 189, 248), "[STREAM]"),
+                                crate::logger::LogLevel::Audio => (Color32::from_rgb(16, 185, 129), "[AUDIO] "),
+                                crate::logger::LogLevel::Info => (Color32::from_rgb(148, 163, 184), "[INFO]  "),
+                            };
+                            let msg_color = match entry.level {
+                                crate::logger::LogLevel::Error => Color32::from_rgb(248, 113, 113),
+                                crate::logger::LogLevel::Warn => Color32::from_rgb(252, 211, 77),
+                                _ => Color32::from_rgb(226, 232, 240),
+                            };
+
+                            let mut job = LayoutJob::default();
+                            // Timestamp
+                            job.append(
+                                &format!("{} ", entry.timestamp),
+                                0.0,
+                                TextFormat {
+                                    font_id: FontId::monospace(11.0),
+                                    color: Color32::from_rgb(100, 116, 139),
+                                    ..Default::default()
+                                },
+                            );
+                            // Level badge
+                            job.append(
+                                &format!("{badge_text} "),
+                                0.0,
+                                TextFormat {
+                                    font_id: FontId::monospace(11.0),
+                                    color: badge_color,
+                                    ..Default::default()
+                                },
+                            );
+                            // Component
+                            job.append(
+                                &format!("[{}] ", entry.component),
+                                0.0,
+                                TextFormat {
+                                    font_id: FontId::monospace(11.0),
+                                    color: Color32::from_rgb(167, 139, 250),
+                                    ..Default::default()
+                                },
+                            );
+                            // Message
+                            job.append(
+                                &entry.message,
+                                0.0,
+                                TextFormat {
+                                    font_id: FontId::monospace(11.0),
+                                    color: msg_color,
+                                    ..Default::default()
+                                },
+                            );
+
+                            ui.label(job);
+                        }
+                    });
+                }
+            });
+        });
+
+    if modal.should_close() {
+        out.push(Action::CloseDiagnostics);
     }
 }
 

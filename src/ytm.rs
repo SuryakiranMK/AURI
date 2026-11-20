@@ -216,6 +216,7 @@ impl Client {
             return false;
         }
         *checked = Some(Instant::now());
+        crate::log_info!("YTM", "Checking remote clients for updates from {LATEST_CLIENTS}...");
         let latest = self.agent.get(LATEST_CLIENTS).call().ok().and_then(|response| {
             let mut json = String::new();
             response.into_reader().take(CLIENTS_BYTES).read_to_string(&mut json).ok()?;
@@ -224,10 +225,19 @@ impl Client {
         let mut clients = self.clients.lock().unwrap();
         match latest {
             Some(latest) if latest != *clients => {
+                let name = latest.player.client["clientName"].as_str().unwrap_or("?");
+                crate::log_info!("YTM", "Updated player client to latest remote version: {name}");
                 *clients = latest;
                 true
             }
-            _ => false,
+            Some(_) => {
+                crate::log_info!("YTM", "Remote clients are identical to current configuration");
+                false
+            }
+            None => {
+                crate::log_warn!("YTM", "Could not fetch remote clients from GitHub; keeping bundled fallback");
+                false
+            }
         }
     }
 
@@ -533,23 +543,43 @@ impl Client {
 
     pub fn stream(&self, video_id: &str) -> Result<Stream, String> {
         let low = self.low_quality.load(std::sync::atomic::Ordering::Relaxed);
+        crate::log_stream!("YTM", "Resolving stream for video_id={video_id} (low_quality={low})");
         let mut response = self.player(video_id)?;
         if audio_with_quality(&response, low).is_none() {
+            crate::log_warn!("YTM", "No audio stream returned with current visitor data for {video_id}. Resetting visitor...");
             self.visitor.lock().unwrap().clear();
             response = self.player(video_id)?;
         }
         if audio_with_quality(&response, low).is_none() && self.refresh_clients() {
+            crate::log_warn!("YTM", "Retrying player API after remote client refresh for {video_id}...");
             response = self.player(video_id)?;
         }
-        audio_with_quality(&response, low).ok_or_else(|| {
-            let status = &response["playabilityStatus"];
-            let reason = if playable(&response) {
-                None
-            } else {
-                status["reason"].as_str().or(status["status"].as_str())
-            };
-            reason.unwrap_or("No compatible audio stream for this track").to_owned()
-        })
+        match audio_with_quality(&response, low) {
+            Some(stream) => {
+                crate::log_stream!(
+                    "YTM",
+                    "Resolved audio stream for {video_id}: len={} bytes, opus={}",
+                    stream.len,
+                    stream.opus
+                );
+                Ok(stream)
+            }
+            None => {
+                let status = &response["playabilityStatus"];
+                let status_str = status["status"].as_str().unwrap_or("UNKNOWN");
+                let reason = status["reason"].as_str().unwrap_or("No reason provided");
+                crate::log_error!(
+                    "YTM",
+                    "Audio stream resolution failed for {video_id}: playabilityStatus={status_str}, reason={reason}"
+                );
+                let err_msg = if playable(&response) {
+                    "No compatible audio stream found in YouTube response".to_string()
+                } else {
+                    format!("{status_str}: {reason}")
+                };
+                Err(err_msg)
+            }
+        }
     }
 
     fn player(&self, video_id: &str) -> Result<Value, String> {
@@ -558,7 +588,9 @@ impl Client {
             let player = &self.clients.lock().unwrap().player;
             (player.client.clone(), player.id.clone(), player.user_agent.clone())
         };
+        let client_name = client["clientName"].as_str().unwrap_or("?");
         let version = client["clientVersion"].as_str().unwrap_or_default().to_owned();
+        crate::log_stream!("YTM", "Requesting player API for {video_id} with client={client_name} v={version} id={id}");
         client["hl"] = LANGUAGE.into();
         client["visitorData"] = visitor.as_str().into();
         let body = json!({
