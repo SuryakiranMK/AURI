@@ -1,16 +1,19 @@
+use crate::cache::get_cache_dir;
 use crate::ytm;
 use eframe::egui::{self, Color32, ColorImage, TextureHandle, TextureId, TextureOptions};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const WORKERS: usize = 2;
 const DEFAULT_BUDGET_BYTES: usize = 4 * 1024 * 1024;
 const MAX_DOWNLOAD_BYTES: u64 = 6 * 1024 * 1024;
+const MAX_ART_DISK_BYTES: u64 = 64 * 1024 * 1024;
 const RETRY_AFTER: Duration = Duration::from_secs(20);
 // ponytail: the 8 px size is the blur, stretched with linear filtering
 const SIZES: [u32; 5] = [8, 64, 128, 256, 512];
@@ -158,7 +161,58 @@ fn work(ctx: egui::Context, agent: ureq::Agent, jobs: Jobs, sender: Sender<Loade
     }
 }
 
+fn art_cache_dir() -> PathBuf {
+    let dir = get_cache_dir().join("art");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+fn art_cache_path(url: &str) -> PathBuf {
+    let digest = ring::digest::digest(&ring::digest::SHA256, url.as_bytes());
+    let hex: String = digest.as_ref().iter().take(16).map(|b| format!("{b:02x}")).collect();
+    art_cache_dir().join(format!("{hex}.img"))
+}
+
+fn trim_art_disk_cache_if_needed() {
+    let dir = art_cache_dir();
+    let mut files = Vec::new();
+    let mut total = 0u64;
+    if let Ok(entries) = std::fs::read_dir(&dir) {
+        for entry in entries.flatten() {
+            if let Ok(meta) = entry.metadata() {
+                if meta.is_file() {
+                    let len = meta.len();
+                    total += len;
+                    let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+                    files.push((entry.path(), len, mtime));
+                }
+            }
+        }
+    }
+    if total > MAX_ART_DISK_BYTES {
+        files.sort_by_key(|(_, _, mtime)| *mtime);
+        let target = MAX_ART_DISK_BYTES * 3 / 4;
+        for (path, len, _) in files {
+            if total <= target {
+                break;
+            }
+            if std::fs::remove_file(path).is_ok() {
+                total = total.saturating_sub(len);
+            }
+        }
+    }
+}
+
 fn fetch(agent: &ureq::Agent, url: &str) -> Option<image::DynamicImage> {
+    let path = art_cache_path(url);
+    if let Ok(bytes) = std::fs::read(&path) {
+        if !bytes.is_empty() {
+            if let Ok(img) = image::load_from_memory(&bytes) {
+                return Some(img);
+            }
+        }
+    }
+
     let mut bytes = Vec::new();
     agent
         .get(url)
@@ -168,7 +222,17 @@ fn fetch(agent: &ureq::Agent, url: &str) -> Option<image::DynamicImage> {
         .take(MAX_DOWNLOAD_BYTES)
         .read_to_end(&mut bytes)
         .ok()?;
-    image::load_from_memory(&bytes).ok()
+
+    if let Ok(img) = image::load_from_memory(&bytes) {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&path, &bytes);
+        trim_art_disk_cache_if_needed();
+        Some(img)
+    } else {
+        None
+    }
 }
 
 fn load(agent: &ureq::Agent, url: &str, px: u32) -> Option<(ColorImage, Color32)> {
@@ -192,4 +256,38 @@ fn load(agent: &ureq::Agent, url: &str, px: u32) -> Option<(ColorImage, Color32)
         ColorImage::from_rgba_unmultiplied(size, &rgba),
         Color32::from_rgb(mean[0], mean[1], mean[2]),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_art_cache_path_deterministic() {
+        let url = "https://lh3.googleusercontent.com/test_cover=w512-h512";
+        let path1 = art_cache_path(url);
+        let path2 = art_cache_path(url);
+        assert_eq!(path1, path2);
+        assert!(path1.to_string_lossy().contains("art"));
+        assert_eq!(path1.extension().and_then(|e| e.to_str()), Some("img"));
+    }
+
+    #[test]
+    fn test_art_disk_cache_fetch() {
+        let url = "https://test.local/dummy_test_cover.png";
+        let path = art_cache_path(url);
+        let img = image::RgbaImage::new(4, 4);
+        let mut png_bytes = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(&mut std::io::Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+            .unwrap();
+
+        let _ = std::fs::create_dir_all(path.parent().unwrap());
+        std::fs::write(&path, &png_bytes).unwrap();
+
+        let agent = ureq::Agent::new();
+        let loaded = fetch(&agent, url);
+        assert!(loaded.is_some());
+        let _ = std::fs::remove_file(path);
+    }
 }

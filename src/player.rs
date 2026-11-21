@@ -170,7 +170,7 @@ impl Fetch {
 
         let cache_dir = crate::cache::get_cache_dir();
         let target_file = cache_dir.join(format!("{}.{}", self.video_id, self.target_ext));
-        let part_file = cache_dir.join(format!("{}.part", self.video_id));
+        let part_file = crate::cache::temp_part_path(&self.video_id, "fetch");
         let mut cache_writer = if !target_file.exists() && !self.video_id.is_empty() {
             std::fs::File::create(&part_file).ok()
         } else {
@@ -258,8 +258,7 @@ impl Fetch {
             let _ = writer.flush();
             drop(writer);
             if cache_bytes_written >= self.len && self.len > 0 {
-                let _ = std::fs::rename(&part_file, &target_file);
-                crate::cache::trim_cache_if_needed(1024 * 1024 * 1024);
+                crate::cache::commit_temp_track(&part_file, &self.video_id, &self.target_ext, self.len);
             } else {
                 let _ = std::fs::remove_file(&part_file);
             }
@@ -584,6 +583,8 @@ struct PcmSource {
     wake: Wake,
     limiter: crate::dsp::SoftLimiter,
     eq: crate::dsp::Equalizer,
+    last_l: f32,
+    last_r: f32,
 }
 
 impl PcmSource {
@@ -598,6 +599,8 @@ impl PcmSource {
             wake,
             limiter: crate::dsp::SoftLimiter::default(),
             eq: crate::dsp::Equalizer::default(),
+            last_l: 0.0,
+            last_r: 0.0,
         }
     }
 
@@ -617,8 +620,22 @@ impl PcmSource {
             }
             self.shared.position_ms.store(chunk.start_ms, Relaxed);
             self.rate = chunk.rate;
-            self.channels = chunk.channels;
-            self.samples = chunk.samples;
+
+            // Handle mono by duplicating/interleaving to stereo so WASAPI output
+            // (configured for 2 channels) plays at 1x speed without channel desync.
+            if chunk.channels == 1 {
+                let mut stereo = Vec::with_capacity(chunk.samples.len() * 2);
+                for &sample in &chunk.samples {
+                    stereo.push(sample);
+                    stereo.push(sample);
+                }
+                self.samples = stereo;
+                self.channels = 2;
+            } else {
+                self.channels = chunk.channels.max(2);
+                self.samples = chunk.samples;
+            }
+
             if self.shared.eq_enabled.load(Relaxed) {
                 if let Ok(gains) = self.shared.eq_gains.try_lock() {
                     self.eq.set_gains(*gains);
@@ -634,10 +651,37 @@ impl PcmSource {
             } else if self.shared.eq_enabled.load(Relaxed) {
                 self.limiter.process_buffer(&mut self.samples, 1.0);
             }
+
+            // Track final frame samples to enable gentle decay fade on buffer underrun
+            if self.samples.len() >= 2 {
+                self.last_l = self.samples[self.samples.len() - 2];
+                self.last_r = self.samples[self.samples.len() - 1];
+            } else if let Some(&s) = self.samples.first() {
+                self.last_l = s;
+                self.last_r = s;
+            }
+
             return;
         }
+
+        // Buffer underrun or silence: apply gentle cosine decay fade from last played
+        // samples to avoid DC step clicks, then fill remaining with silence.
         self.samples.clear();
-        self.samples.resize(SILENCE_SAMPLES, 0.0);
+        if self.last_l.abs() > 1e-4 || self.last_r.abs() > 1e-4 {
+            let fade_frames = 64.min(SILENCE_SAMPLES / 2);
+            self.samples.reserve(SILENCE_SAMPLES);
+            for i in 0..fade_frames {
+                // Cosine decay factor from 1.0 down to 0.0
+                let factor = 0.5 * (1.0 + (std::f32::consts::PI * (i as f32 / fade_frames as f32)).cos());
+                self.samples.push(self.last_l * factor);
+                self.samples.push(self.last_r * factor);
+            }
+            self.samples.resize(SILENCE_SAMPLES, 0.0);
+            self.last_l = 0.0;
+            self.last_r = 0.0;
+        } else {
+            self.samples.resize(SILENCE_SAMPLES, 0.0);
+        }
     }
 }
 
@@ -656,7 +700,7 @@ impl Iterator for PcmSource {
 
 impl rodio::Source for PcmSource {
     fn current_span_len(&self) -> Option<usize> {
-        Some(self.samples.len())
+        Some(self.samples.len().saturating_sub(self.at))
     }
 
     fn channels(&self) -> rodio::ChannelCount {
@@ -921,12 +965,13 @@ impl Player {
                 let target_ext = if stream.opus { "opus" } else { "m4a" };
                 let target_file = cache_dir.join(format!("{video_id}.{target_ext}"));
                 if !target_file.exists() {
-                    let part = cache_dir.join(format!("{video_id}.part"));
+                    let part = crate::cache::temp_part_path(&video_id, "preload");
                     if let Ok(resp) = yt.agent.get(&stream.url).call() {
                         if let Ok(mut out_f) = std::fs::File::create(&part) {
                             if std::io::copy(&mut resp.into_reader(), &mut out_f).is_ok() {
-                                let _ = std::fs::rename(part, target_file);
-                                crate::cache::trim_cache_if_needed(1024 * 1024 * 1024);
+                                crate::cache::commit_temp_track(&part, &video_id, target_ext, stream.len);
+                            } else {
+                                let _ = std::fs::remove_file(&part);
                             }
                         }
                     }
@@ -1096,6 +1141,110 @@ mod tests {
         assert_eq!(second.by_ref().take(SILENCE_SAMPLES + 4).filter(|sample| *sample == 0.5).count(), 4);
         assert_eq!(shared.position_ms.load(Relaxed), 2000);
         assert!(queue(3000));
+    }
+
+    #[test]
+    fn test_mono_audio_interleaving_to_stereo() {
+        use rodio::Source;
+        let shared = Arc::new(Shared::default());
+        let (pcm, chunks) = mpsc::sync_channel(QUEUED_CHUNKS);
+        let chunks: Chunks = Arc::new(Mutex::new(chunks));
+        let mut source = PcmSource::new(chunks, shared, Arc::new(|| {}));
+
+        // Drain initial silence
+        for _ in 0..SILENCE_SAMPLES {
+            source.next();
+        }
+
+        // Queue a mono chunk (channels = 1) with 3 samples
+        let mono_chunk = Chunk {
+            samples: vec![0.25, 0.5, 0.75],
+            start_ms: 500,
+            epoch: 0,
+            rate: 44_100,
+            channels: 1,
+            end: false,
+        };
+        pcm.send(mono_chunk).unwrap();
+
+        // Reading samples should yield duplicated stereo pairs [0.25, 0.25, 0.5, 0.5, 0.75, 0.75]
+        let mut read = Vec::new();
+        for _ in 0..6 {
+            read.push(source.next().unwrap());
+        }
+        assert_eq!(read, vec![0.25, 0.25, 0.5, 0.5, 0.75, 0.75]);
+        assert_eq!(source.channels(), 2);
+    }
+
+    #[test]
+    fn test_current_span_len_tracks_remaining_samples() {
+        use rodio::Source;
+        let shared = Arc::new(Shared::default());
+        let (pcm, chunks) = mpsc::sync_channel(QUEUED_CHUNKS);
+        let chunks: Chunks = Arc::new(Mutex::new(chunks));
+        let mut source = PcmSource::new(chunks, shared, Arc::new(|| {}));
+
+        assert_eq!(source.current_span_len(), Some(SILENCE_SAMPLES));
+        source.next();
+        assert_eq!(source.current_span_len(), Some(SILENCE_SAMPLES - 1));
+
+        // Skip to end of silence
+        for _ in 1..SILENCE_SAMPLES {
+            source.next();
+        }
+        assert_eq!(source.current_span_len(), Some(0));
+
+        // Queue a 4-sample stereo chunk
+        pcm.send(Chunk {
+            samples: vec![0.1; 4],
+            start_ms: 0,
+            epoch: 0,
+            rate: 48_000,
+            channels: 2,
+            end: false,
+        }).unwrap();
+
+        // First sample triggers refill
+        source.next();
+        assert_eq!(source.current_span_len(), Some(3));
+    }
+
+    #[test]
+    fn test_buffer_underrun_gentle_decay_fade() {
+        let shared = Arc::new(Shared::default());
+        let (pcm, chunks) = mpsc::sync_channel(QUEUED_CHUNKS);
+        let chunks: Chunks = Arc::new(Mutex::new(chunks));
+        let mut source = PcmSource::new(chunks, shared, Arc::new(|| {}));
+
+        // Drain initial silence
+        for _ in 0..SILENCE_SAMPLES {
+            source.next();
+        }
+
+        // Queue a chunk that ends on high non-zero amplitude (0.8)
+        pcm.send(Chunk {
+            samples: vec![0.8; 4],
+            start_ms: 0,
+            epoch: 0,
+            rate: 48_000,
+            channels: 2,
+            end: false,
+        }).unwrap();
+
+        for _ in 0..4 {
+            source.next();
+        }
+
+        // Next read causes buffer underrun. Instead of a hard 0.0 step, it should gently fade down
+        let mut underrun_samples = Vec::new();
+        for _ in 0..SILENCE_SAMPLES {
+            underrun_samples.push(source.next().unwrap());
+        }
+
+        // First frame should start near 0.8 (e.g. > 0.7) and smoothly decay towards 0.0
+        assert!(underrun_samples[0] > 0.7, "Expected gentle decay to start near 0.8, got {}", underrun_samples[0]);
+        // Last sample of fade region should be 0.0
+        assert_eq!(underrun_samples[SILENCE_SAMPLES - 1], 0.0);
     }
 
     #[test]

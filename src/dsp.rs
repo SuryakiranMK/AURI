@@ -18,8 +18,8 @@ pub const MIN_CUT_DB: f64 = -24.0;
 /// For example, a modern loud master with loudnessDb = +7.0 dB is attenuated by -7.0 dB.
 pub fn calculate_loudness_gain_db(loudness_db: Option<f64>) -> Option<f64> {
     let gain = match loudness_db {
-        Some(raw) => (-raw).clamp(MIN_CUT_DB, MAX_BOOST_DB),
-        None => -4.5, // Intelligent fallback for tracks without loudness metadata
+        Some(raw) if raw.is_finite() => (-raw).clamp(MIN_CUT_DB, MAX_BOOST_DB),
+        _ => -4.5, // Intelligent fallback for tracks without loudness metadata
     };
     if gain.abs() >= 0.05 {
         Some(gain)
@@ -65,20 +65,24 @@ impl SoftLimiter {
         if abs <= self.threshold {
             sample
         } else {
-            // Soft-knee compression above threshold
+            // Smooth C2-continuous soft-knee saturation above threshold.
+            // Eliminates second-derivative impulse discontinuity at threshold,
+            // preventing harsh odd-order harmonic buzzing on deep bass peaks.
             let excess = abs - self.threshold;
             let headroom = 1.0 - self.threshold;
-            let compressed = self.threshold + headroom * (excess / (excess + headroom));
+            let compressed = (self.threshold + (headroom * excess) / (headroom * headroom + excess * excess).sqrt())
+                .min(1.0 - 1e-6);
             if sample >= 0.0 {
-                compressed.min(1.0)
+                compressed
             } else {
-                (-compressed).max(-1.0)
+                -compressed
             }
         }
     }
 
     /// Process an interleaved slice of PCM audio samples in-place
     pub fn process_buffer(&self, buffer: &mut [f32], gain_multiplier: f32) {
+        let gain_multiplier = if gain_multiplier.is_finite() { gain_multiplier } else { 1.0 };
         if (gain_multiplier - 1.0).abs() < 0.001 {
             // Unity gain - only limit if needed
             for s in buffer.iter_mut() {
@@ -331,6 +335,7 @@ impl Equalizer {
         if self.sample_rate != rate && rate > 0 {
             self.sample_rate = rate;
             self.recalculate();
+            self.reset_states();
         }
     }
 
@@ -459,6 +464,22 @@ mod tests {
 
         let limited_neg = limiter.process_sample(-2.0);
         assert!(limited_neg > -1.0 && limited_neg <= -0.95);
+    }
+
+    #[test]
+    fn test_soft_limiter_smoothness_and_nan_resilience() {
+        let limiter = SoftLimiter::default();
+        // Threshold boundary continuity
+        let at_thresh = limiter.process_sample(0.95);
+        assert!((at_thresh - 0.95).abs() < 1e-6);
+
+        // Small excess above threshold is smoothly continuous without sudden jumps
+        let just_above = limiter.process_sample(0.9501);
+        assert!(just_above >= 0.95 && just_above < 0.9502);
+
+        // Non-finite loudness gain fallback
+        assert_eq!(calculate_loudness_gain_db(Some(f64::NAN)), Some(-4.5));
+        assert_eq!(calculate_loudness_gain_db(Some(f64::INFINITY)), Some(-4.5));
     }
 
     #[test]

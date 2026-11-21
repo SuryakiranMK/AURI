@@ -708,15 +708,29 @@ fn paint_glass_grain(painter: &egui::Painter, rect: Rect, rounding: f32, strengt
     let max_x = rect.right() - 3.0;
     let base_a = (strength * 75.0).clamp(3.0, 50.0) as u8;
 
+    let est_rows = ((max_y - y) / step).max(1.0) as usize;
+    let est_cols = ((max_x - (rect.left() + 3.0)) / step).max(1.0) as usize;
+    let est_dots = (est_rows * est_cols * 6 / 10).max(16);
+
+    let mut mesh = egui::Mesh::default();
+    mesh.vertices.reserve(est_dots * 4);
+    mesh.indices.reserve(est_dots * 6);
+
     while y < max_y {
         let mut x = rect.left() + 3.0;
+        let yi = (y * 4.0) as u32;
         while x < max_x {
             if rounding > 0.0 && !inside_rounded_rect(pos2(x, y), rect, rounding) {
                 x += step;
                 continue;
             }
-            // Fast pseudo-random hash
-            let h = ((x * 12.9898 + y * 78.233).sin() * 43758.5453).fract().abs();
+            // Fast integer pseudo-random hash (replaces expensive transcendental sin() trig)
+            let xi = (x * 4.0) as u32;
+            let mut n = xi.wrapping_mul(0x1e35a7bd) ^ yi.wrapping_mul(0x9e3779b9);
+            n = (n ^ (n >> 15)).wrapping_mul(0x85ebca6b);
+            n = (n ^ (n >> 13)).wrapping_mul(0xc2b2ae35);
+            let h = ((n ^ (n >> 16)) & 0xFFFF) as f32 / 65535.0;
+
             if h > 0.42 {
                 let dot_alpha = ((h - 0.42) * 1.7 * base_a as f32) as u8;
                 let col = if h > 0.70 {
@@ -724,11 +738,24 @@ fn paint_glass_grain(painter: &egui::Painter, rect: Rect, rounding: f32, strengt
                 } else {
                     Color32::from_rgba_unmultiplied(0, 0, 0, dot_alpha)
                 };
-                painter.rect_filled(Rect::from_min_size(pos2(x, y), vec2(1.5, 1.5)), 0.5, col);
+                let v_idx = mesh.vertices.len() as u32;
+                let p0 = pos2(x, y);
+                let p1 = pos2(x + 1.5, y);
+                let p2 = pos2(x + 1.5, y + 1.5);
+                let p3 = pos2(x, y + 1.5);
+                mesh.vertices.push(egui::epaint::Vertex { pos: p0, uv: Pos2::ZERO, color: col });
+                mesh.vertices.push(egui::epaint::Vertex { pos: p1, uv: Pos2::ZERO, color: col });
+                mesh.vertices.push(egui::epaint::Vertex { pos: p2, uv: Pos2::ZERO, color: col });
+                mesh.vertices.push(egui::epaint::Vertex { pos: p3, uv: Pos2::ZERO, color: col });
+                mesh.indices.extend_from_slice(&[v_idx, v_idx + 1, v_idx + 2, v_idx, v_idx + 2, v_idx + 3]);
             }
             x += step;
         }
         y += step;
+    }
+
+    if !mesh.is_empty() {
+        painter.add(Shape::mesh(mesh));
     }
 }
 
@@ -8879,6 +8906,34 @@ fn lyrics_view(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
     let follow = Id::new("lyrics-follow");
     let moved = ui.data(|data| data.get_temp::<Option<usize>>(follow)) != Some(sung);
     ui.data_mut(|data| data.insert_temp(follow, sung));
+
+    // Manual scroll grace period: prevent auto-scroll from aggressively fighting user manual scrolling
+    let scroll_grace_id = Id::new("lyrics-manual-scroll-time");
+    let catchup_id = Id::new("lyrics-auto-scroll-catchup");
+    let now = ui.input(|i| i.time);
+    let user_scrolled = ui.input(|i| i.raw_scroll_delta.y.abs() > 0.1 || i.smooth_scroll_delta.y.abs() > 0.1);
+    if user_scrolled {
+        ui.data_mut(|data| {
+            data.insert_temp(scroll_grace_id, now);
+            data.insert_temp(catchup_id, true);
+        });
+    }
+
+    let last_manual_scroll = ui.data(|data| data.get_temp::<f64>(scroll_grace_id)).unwrap_or(0.0);
+    const MANUAL_SCROLL_GRACE_SECS: f64 = 3.5;
+    let in_grace_period = (now - last_manual_scroll) < MANUAL_SCROLL_GRACE_SECS;
+    let mut needs_catchup = ui.data(|data| data.get_temp::<bool>(catchup_id)).unwrap_or(false);
+
+    if moved && in_grace_period {
+        ui.data_mut(|data| data.insert_temp(catchup_id, true));
+        needs_catchup = true;
+    }
+
+    if in_grace_period {
+        let remaining = MANUAL_SCROLL_GRACE_SECS - (now - last_manual_scroll);
+        ui.ctx().request_repaint_after(Duration::from_secs_f64(remaining.max(0.1)));
+    }
+
     let width = ui.available_width();
     let sense = if lyrics.synced { Sense::click() } else { Sense::hover() };
     let base_sz = app.saved.lyrics_font_size.clamp(16.0, 36.0);
@@ -8896,9 +8951,15 @@ fn lyrics_view(app: &App, ui: &mut Ui, out: &mut Vec<Action>) {
         let (rect, response) = ui.allocate_exact_size(vec2(width, galley.size().y + 14.0), sense);
         if response.clicked() && lyrics.synced {
             out.push(Action::Seek(*start));
-        }
-        if current && moved {
+            ui.data_mut(|data| {
+                data.insert_temp(scroll_grace_id, 0.0);
+                data.insert_temp(catchup_id, false);
+            });
             ui.scroll_to_rect(rect, Some(Align::Center));
+        }
+        if current && !in_grace_period && (moved || needs_catchup) {
+            ui.scroll_to_rect(rect, Some(Align::Center));
+            ui.data_mut(|data| data.insert_temp(catchup_id, false));
         }
         if !ui.is_rect_visible(rect) {
             continue;
@@ -10882,5 +10943,17 @@ mod tests {
                 .any(|glyph| glyph.uv_rect.size == Vec2::ZERO);
             assert!(!blank, "{name} cannot draw {text:?}");
         }
+    }
+
+    #[test]
+    fn test_paint_glass_grain_generates_mesh() {
+        let ctx = egui::Context::default();
+        let _ = ctx.run(Default::default(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                paint_glass_grain(ui.painter(), Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 40.0)), 6.0, 0.20);
+                // Also test zero strength bypass
+                paint_glass_grain(ui.painter(), Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 40.0)), 6.0, 0.0);
+            });
+        });
     }
 }

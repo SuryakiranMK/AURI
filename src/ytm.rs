@@ -606,12 +606,26 @@ impl Client {
             .set("X-YouTube-Client-Name", &id)
             .set("X-YouTube-Client-Version", &version)
             .set("X-Goog-Visitor-Id", &visitor);
-        match request.send_json(body) {
-            Ok(response) => read(response),
+        let response_val = match request.send_json(body) {
+            Ok(response) => read(response)?,
             Err(ureq::Error::Status(code, _)) => {
-                Ok(json!({ "playabilityStatus": { "reason": format!("YouTube answered with HTTP {code}") } }))
+                return Ok(json!({ "playabilityStatus": { "reason": format!("YouTube answered with HTTP {code}") } }));
             }
-            Err(error) => Err(describe(error)),
+            Err(error) => return Err(describe(error)),
+        };
+        self.update_visitor(&response_val);
+        Ok(response_val)
+    }
+
+    fn update_visitor(&self, response: &Value) {
+        if let Some(visitor) = response["responseContext"]["visitorData"].as_str() {
+            if !visitor.is_empty() {
+                let mut known = self.visitor.lock().unwrap();
+                if *known != visitor {
+                    crate::log_info!("YTM", "Updated visitorData token from YouTube responseContext");
+                    *known = visitor.to_owned();
+                }
+            }
         }
     }
 
@@ -668,12 +682,7 @@ impl Client {
             }
             Err(error) => return Err(describe(error)),
         };
-        if let Some(visitor) = response["responseContext"]["visitorData"].as_str() {
-            let mut known = self.visitor.lock().unwrap();
-            if known.is_empty() {
-                *known = visitor.to_owned();
-            }
-        }
+        self.update_visitor(&response);
         Ok(response)
     }
 }
@@ -1308,6 +1317,28 @@ fn thumb(node: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_visitor_data_updates_when_rotated() {
+        let client = Client::new("initial_visitor".to_string());
+        assert_eq!(client.visitor(), "initial_visitor");
+
+        let response = serde_json::json!({
+            "responseContext": {
+                "visitorData": "new_rotated_visitor_token"
+            }
+        });
+        client.update_visitor(&response);
+        assert_eq!(client.visitor(), "new_rotated_visitor_token");
+
+        let empty_response = serde_json::json!({
+            "responseContext": {
+                "visitorData": ""
+            }
+        });
+        client.update_visitor(&empty_response);
+        assert_eq!(client.visitor(), "new_rotated_visitor_token");
+    }
 
     #[test]
     fn suggestions_parse_both_response_shapes() {
