@@ -13,7 +13,7 @@ pub use stubs::*;
 mod implementation {
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
     use std::sync::{Arc, Mutex, OnceLock};
-    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::UI::Shell::{
         ExtractIconExW, Shell_NotifyIconW, NOTIFYICONDATAW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP,
@@ -21,35 +21,59 @@ mod implementation {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
-        FindWindowW, GetCursorPos, GetMessageW, MF_STRING, MSG, PostMessageW, RegisterClassW,
-        SetForegroundWindow, ShowWindow, TrackPopupMenu, TranslateMessage, HICON, WNDCLASSW,
-        SW_RESTORE, SW_SHOWMAXIMIZED, TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD,
-        TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP,
-        WS_POPUP,
+        FindWindowW, GetCursorPos, GetMessageW, GetWindowLongPtrW, GetWindowRect, IsZoomed, MF_SEPARATOR,
+        MF_STRING, MSG, PostMessageW, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+        ShowWindow, TrackPopupMenu, TranslateMessage, GWL_EXSTYLE, HICON, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+        SWP_NOSIZE, SWP_NOZORDER, SW_RESTORE, SW_SHOWMAXIMIZED, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+        TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_LBUTTONDBLCLK, WM_LBUTTONUP,
+        WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_POPUP,
     };
 
     const WM_TRAY: u32 = WM_APP + 1;
     const WM_APPLY: u32 = WM_APP + 2;
     const MENU_RESTORE_ID: usize = 1;
     const MENU_QUIT_ID: usize = 2;
+    const MENU_PLAY_PAUSE_ID: usize = 3;
+    const MENU_NEXT_ID: usize = 4;
+    const MENU_PREV_ID: usize = 5;
 
     /// What the tray can ask the app to do.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum TrayAction {
         Restore,
         Quit,
+        PlayPause,
+        Next,
+        Prev,
+    }
+
+    struct SavedPlacement {
+        rect: (i32, i32, i32, i32),
+        was_zoomed: bool,
     }
 
     static CALLBACK: OnceLock<Arc<dyn Fn(TrayAction) + Send + Sync>> = OnceLock::new();
     static VISIBLE: AtomicBool = AtomicBool::new(false);
     static ADDED: AtomicBool = AtomicBool::new(false);
     static FORCE_QUIT: AtomicBool = AtomicBool::new(false);
+    static IS_PLAYING: AtomicBool = AtomicBool::new(false);
     static TRAY_WINDOW: AtomicIsize = AtomicIsize::new(0);
+    static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
     static APP_ICON: AtomicIsize = AtomicIsize::new(0);
     static BALLOON: OnceLock<Mutex<Option<(String, String)>>> = OnceLock::new();
+    static SAVED_PLACEMENT: OnceLock<Mutex<Option<SavedPlacement>>> = OnceLock::new();
 
     pub fn is_force_quit() -> bool {
         FORCE_QUIT.load(Ordering::SeqCst)
+    }
+
+    pub fn set_playing(playing: bool) {
+        IS_PLAYING.store(playing, Ordering::Relaxed);
+    }
+
+    #[allow(dead_code)]
+    pub fn is_playing() -> bool {
+        IS_PLAYING.load(Ordering::Relaxed)
     }
 
     fn wide(text: &str) -> Vec<u16> {
@@ -147,6 +171,9 @@ mod implementation {
                     match wparam & 0xFFFF {
                         MENU_RESTORE_ID => fire(TrayAction::Restore),
                         MENU_QUIT_ID => fire(TrayAction::Quit),
+                        MENU_PLAY_PAUSE_ID => fire(TrayAction::PlayPause),
+                        MENU_NEXT_ID => fire(TrayAction::Next),
+                        MENU_PREV_ID => fire(TrayAction::Prev),
                         _ => {}
                     }
                     0
@@ -190,26 +217,117 @@ mod implementation {
         }
     }
 
-    /// Directly un-hides and raises the main AURI window at the OS level.
-    pub fn restore_main_window() {
+    pub fn main_hwnd() -> HWND {
+        let cached = MAIN_HWND.load(Ordering::Relaxed);
+        if cached != 0 {
+            return cached as HWND;
+        }
         unsafe {
             let title = wide(crate::APP_NAME);
             let hwnd = FindWindowW(std::ptr::null(), title.as_ptr());
             if !hwnd.is_null() {
+                MAIN_HWND.store(hwnd as isize, Ordering::Relaxed);
+                return hwnd;
+            }
+            std::ptr::null_mut()
+        }
+    }
+
+    /// Hides the main AURI window off-screen and removes it from the taskbar,
+    /// but keeps WS_VISIBLE active so the Win32 message pump (and eframe/winit
+    /// event loop) continues to run background ticks at 0% CPU.
+    pub fn hide_main_window_to_tray() {
+        let hwnd = main_hwnd();
+        if hwnd.is_null() {
+            return;
+        }
+        unsafe {
+            let mut rect = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+            GetWindowRect(hwnd, &mut rect);
+            let was_zoomed = IsZoomed(hwnd) != 0;
+            if rect.left > -10000 && rect.top > -10000 {
+                let cell = SAVED_PLACEMENT.get_or_init(Mutex::default);
+                if let Ok(mut store) = cell.lock() {
+                    *store = Some(SavedPlacement {
+                        rect: (rect.left, rect.top, (rect.right - rect.left).max(200), (rect.bottom - rect.top).max(200)),
+                        was_zoomed,
+                    });
+                }
+            }
+
+            let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            let new_ex = (ex_style & !WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex as isize);
+
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                -32000,
+                -32000,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE | SWP_FRAMECHANGED,
+            );
+            set_visible(true);
+        }
+    }
+
+    /// Directly un-hides and raises the main AURI window at the OS level.
+    pub fn restore_main_window() {
+        let hwnd = main_hwnd();
+        if hwnd.is_null() {
+            return;
+        }
+        unsafe {
+            let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            let new_ex = (ex_style & !WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW;
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex as isize);
+
+            let cell = SAVED_PLACEMENT.get_or_init(Mutex::default);
+            let placement = cell.lock().ok().and_then(|mut s| s.take());
+
+            if let Some(p) = placement {
+                if p.was_zoomed {
+                    ShowWindow(hwnd, SW_RESTORE);
+                    ShowWindow(hwnd, SW_SHOWMAXIMIZED);
+                } else {
+                    SetWindowPos(
+                        hwnd,
+                        std::ptr::null_mut(),
+                        p.rect.0,
+                        p.rect.1,
+                        p.rect.2,
+                        p.rect.3,
+                        SWP_NOZORDER | SWP_FRAMECHANGED,
+                    );
+                    ShowWindow(hwnd, SW_RESTORE);
+                }
+            } else {
                 ShowWindow(hwnd, SW_RESTORE);
                 ShowWindow(hwnd, SW_SHOWMAXIMIZED);
-                SetForegroundWindow(hwnd);
             }
+            SetForegroundWindow(hwnd);
         }
     }
 
     unsafe fn open_menu(window: HWND) {
         unsafe {
             let menu = CreatePopupMenu();
-            let restore = wide("Show AURI");
+            let is_playing = IS_PLAYING.load(Ordering::Relaxed);
+            let play_pause_label = if is_playing { "Pause" } else { "Play" };
+            let play_pause = wide(play_pause_label);
+            let next = wide("Next Track");
+            let prev = wide("Previous Track");
+            let restore = wide("Open AURI");
             let quit = wide("Quit AURI");
+
+            AppendMenuW(menu, MF_STRING, MENU_PLAY_PAUSE_ID, play_pause.as_ptr());
+            AppendMenuW(menu, MF_STRING, MENU_NEXT_ID, next.as_ptr());
+            AppendMenuW(menu, MF_STRING, MENU_PREV_ID, prev.as_ptr());
+            AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
             AppendMenuW(menu, MF_STRING, MENU_RESTORE_ID, restore.as_ptr());
             AppendMenuW(menu, MF_STRING, MENU_QUIT_ID, quit.as_ptr());
+
             let mut cursor = POINT { x: 0, y: 0 };
             GetCursorPos(&mut cursor);
             // Per MS KB131845: must set foreground window before TrackPopupMenu
@@ -229,6 +347,9 @@ mod implementation {
             match cmd {
                 MENU_RESTORE_ID => fire(TrayAction::Restore),
                 MENU_QUIT_ID => fire(TrayAction::Quit),
+                MENU_PLAY_PAUSE_ID => fire(TrayAction::PlayPause),
+                MENU_NEXT_ID => fire(TrayAction::Next),
+                MENU_PREV_ID => fire(TrayAction::Prev),
                 _ => {}
             }
         }
@@ -308,12 +429,46 @@ mod stubs {
     pub enum TrayAction {
         Restore,
         Quit,
+        PlayPause,
+        Next,
+        Prev,
     }
 
     pub fn start(_callback: std::sync::Arc<dyn Fn(TrayAction) + Send + Sync>) {}
     pub fn set_visible(_visible: bool) {}
     pub fn notify_song(_title: &str, _subtitle: &str) {}
     pub fn shutdown() {}
+    pub fn hide_main_window_to_tray() {}
     pub fn restore_main_window() {}
+    pub fn set_playing(_playing: bool) {}
+    pub fn is_playing() -> bool { false }
     pub fn is_force_quit() -> bool { false }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tray_action_variants() {
+        assert_eq!(TrayAction::Restore, TrayAction::Restore);
+        assert_ne!(TrayAction::PlayPause, TrayAction::Next);
+        assert_ne!(TrayAction::Prev, TrayAction::Quit);
+    }
+
+    #[test]
+    fn test_tray_playback_state() {
+        set_playing(true);
+        #[cfg(windows)]
+        assert!(is_playing());
+        set_playing(false);
+        #[cfg(windows)]
+        assert!(!is_playing());
+    }
+
+    #[test]
+    fn test_notify_song_no_panic() {
+        notify_song("Starboy", "The Weeknd, Daft Punk");
+        notify_song("A very long title that exceeds the limits of standard notification buffers to ensure truncation handles wide characters correctly", "Artist");
+    }
 }

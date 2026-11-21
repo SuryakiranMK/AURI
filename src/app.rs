@@ -1706,6 +1706,15 @@ impl App {
                     crate::tray::TrayAction::Quit => {
                         let _ = tray_sender.send(Event::Pressed(Action::QuitApp));
                     }
+                    crate::tray::TrayAction::PlayPause => {
+                        let _ = tray_sender.send(Event::Pressed(Action::Toggle));
+                    }
+                    crate::tray::TrayAction::Next => {
+                        let _ = tray_sender.send(Event::Pressed(Action::Next));
+                    }
+                    crate::tray::TrayAction::Prev => {
+                        let _ = tray_sender.send(Event::Pressed(Action::Previous));
+                    }
                 }
                 tray_ctx.request_repaint();
             }));
@@ -2231,6 +2240,9 @@ impl App {
                     ctx.request_repaint();
                 }
             });
+        }
+        if self.hidden_in_tray && self.saved.song_notifications {
+            crate::tray::notify_song(&item.title, &item.subtitle);
         }
         self.record_stat_play(&item);
         self.saved.recent.retain(|recent| recent.video_id != item.video_id);
@@ -3406,7 +3418,7 @@ impl App {
                     self.pending_sync_join = Some(room);
                     self.saved.mini_mode = false;
                     self.hidden_in_tray = false;
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    crate::tray::restore_main_window();
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
             }
@@ -3480,14 +3492,12 @@ impl App {
             Action::RestoreFromTray => {
                 self.hidden_in_tray = false;
                 self.force_quit = false;
-                self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
-                self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 crate::tray::restore_main_window();
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
             Action::HideToTray => {
                 self.hidden_in_tray = true;
-                self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                crate::tray::hide_main_window_to_tray();
             }
             Action::QuitApp => {
                 self.force_quit = true;
@@ -3959,7 +3969,7 @@ impl eframe::App for App {
         {
             self.hidden_in_tray = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            crate::tray::hide_main_window_to_tray();
         }
         let (size, minimized) = ctx.input(|input| (input.content_rect().size(), input.viewport().minimized == Some(true)));
         if minimized && (self.saved.auto_purge_ram || (self.saved.performance_mode && self.saved.perf_aggressive_ram)) {
@@ -4151,6 +4161,7 @@ impl eframe::App for App {
         } else {
             self.last_listen_tick = None;
         }
+        crate::tray::set_playing(playing);
         let (position_ms, duration_ms) = (self.player.position_ms(), self.player.duration_ms());
         if let Some(media) = &mut self.media {
             media.show(item, playing, position_ms, duration_ms);
