@@ -8559,7 +8559,14 @@ fn diagnostics_modal(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>) 
 
                 if let Some(err) = &cur_err {
                     ui.add_space(4.0);
-                    ui.label(RichText::new(format!("⚠️ Error: {err}")).size(11.5).color(Color32::from_rgb(239, 68, 68)).strong());
+                    let err_copy = err.clone();
+                    let resp = ui.add(egui::Label::new(RichText::new(format!("⚠️ Error: {err}")).size(11.5).color(Color32::from_rgb(239, 68, 68)).strong()).selectable(true));
+                    resp.context_menu(|ui| {
+                        if ui.button("📋 Copy error message").clicked() {
+                            ui.ctx().copy_text(err_copy);
+                            ui.close();
+                        }
+                    });
                 }
             });
 
@@ -8648,6 +8655,7 @@ fn diagnostics_modal(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>) 
                         scroll = scroll.stick_to_bottom(true);
                     }
                     scroll.show(ui, |ui| {
+                        ui.style_mut().interaction.selectable_labels = true;
                         ui.set_width(ui.available_width());
                         for entry in &filtered_entries {
                             let (badge_color, badge_text) = match entry.level {
@@ -8705,7 +8713,22 @@ fn diagnostics_modal(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>) 
                                 },
                             );
 
-                            ui.label(job);
+                            let resp = ui.add(egui::Label::new(job).selectable(true));
+                            let entry_msg = entry.message.clone();
+                            let full_line = format!(
+                                "{} {badge_text}[{}] {}",
+                                entry.timestamp, entry.component, entry.message
+                            );
+                            resp.context_menu(|ui| {
+                                if ui.button("📋 Copy message").clicked() {
+                                    ui.ctx().copy_text(entry_msg);
+                                    ui.close();
+                                }
+                                if ui.button("📋 Copy full log line").clicked() {
+                                    ui.ctx().copy_text(full_line);
+                                    ui.close();
+                                }
+                            });
                         }
                     });
                 }

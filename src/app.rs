@@ -1643,6 +1643,7 @@ pub struct App {
     pub diagnostics_open: bool,
     pub diagnostics_filter: usize,
     pub diagnostics_auto_scroll: bool,
+    consecutive_skips: usize,
     restart: Option<PathBuf>,
 }
 
@@ -1803,6 +1804,7 @@ impl App {
             diagnostics_open: false,
             diagnostics_filter: 0,
             diagnostics_auto_scroll: true,
+            consecutive_skips: 0,
             restart: None,
         };
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
@@ -2651,9 +2653,43 @@ impl App {
             self.notify("Your YouTube session ended. Sign in again.");
         }
         self.player.follow_default_device();
+        if self.player.position_ms() > 1000 {
+            self.consecutive_skips = 0;
+        }
         if let Some(message) = self.player.take_error() {
-            self.player.set_paused(true);
-            self.notify(message);
+            let is_unavailable = message.contains("UNPLAYABLE")
+                || message.contains("not available")
+                || message.contains("No compatible audio stream")
+                || message.contains("LOGIN_REQUIRED")
+                || message.contains("Video unavailable")
+                || message.contains("HTTP 404")
+                || message.contains("HTTP 410");
+
+            let has_next = self.saved.current.is_some()
+                && (self.saved.current.unwrap() + 1 < self.saved.queue.len()
+                    || (self.saved.repeat == Repeat::All && !self.saved.queue.is_empty()));
+
+            if is_unavailable && has_next {
+                if self.consecutive_skips < 5 && self.consecutive_skips < self.saved.queue.len() {
+                    self.consecutive_skips += 1;
+                    let track_title = self.now_playing().map(|i| i.title.clone()).unwrap_or_else(|| "Track".into());
+                    self.notify(format!("⚠️ \"{track_title}\" is unavailable on YouTube. Skipping to next..."));
+                    self.next(true);
+                } else {
+                    self.consecutive_skips = 0;
+                    self.player.set_paused(true);
+                    self.notify("Multiple tracks are unavailable. Playback paused.");
+                }
+            } else {
+                self.consecutive_skips = 0;
+                self.player.set_paused(true);
+                if is_unavailable {
+                    let track_title = self.now_playing().map(|i| i.title.clone()).unwrap_or_else(|| "Track".into());
+                    self.notify(format!("⚠️ \"{track_title}\" is unavailable on YouTube."));
+                } else {
+                    self.notify(message);
+                }
+            }
         }
         if self.player.take_ended() {
             if self.saved.repeat == Repeat::One {
