@@ -1021,47 +1021,6 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     }
     tool_right -= 34.0;
 
-    // Update Check Icon Button
-    let has_upd = app.update.is_some();
-    let upd_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
-    let upd_resp = ui.interact(upd_rect, Id::new("win-tool-update"), Sense::click());
-    let upd_hov = hover_of(ui, &upd_resp);
-    ui.painter().rect_filled(upd_rect, 6.0, if has_upd { pal_color.gamma_multiply(0.20 + 0.10 * upd_hov) } else { veil(0.04 * upd_hov) });
-    if has_upd {
-        ui.painter().rect_stroke(upd_rect, 6.0, Stroke::new(1.0_f32, pal_color), StrokeKind::Inside);
-    }
-    let upd_sym = if has_upd { icon::CLOUD_ARROW_DOWN } else { icon::ARROW_FAT_LINES_DOWN };
-    let upd_color = if has_upd { pal_color } else if upd_hov > 0.1 { pal_color } else { m_color };
-    ui.painter().text(upd_rect.center(), Align2::CENTER_CENTER, upd_sym, glyph(16.0), upd_color);
-    // Blue attention dot when an update is available.
-    if has_upd {
-        let upd_dot = pos2(upd_rect.center().x + 7.0, upd_rect.center().y - 6.5);
-        ui.painter().circle_filled(upd_dot, 3.5, Color32::from_rgb(96, 165, 250));
-        ui.painter().circle_stroke(upd_dot, 3.5, Stroke::new(1.0_f32, Color32::from_rgb(20, 21, 26)));
-    }
-    describe(&upd_resp, if has_upd { "Update Available (Click to view details)" } else { "Check for Updates" });
-    if upd_resp.clicked() {
-        if has_upd {
-            out.push(Action::OpenUpdateDialog);
-        } else {
-            out.push(Action::CheckUpdate);
-        }
-    }
-    tool_right -= 34.0;
-
-    // Equalizer Shortcut Button
-    let is_eq = matches!(app.route(), Route::Settings(SettingsTab::Equalizer));
-    let eq_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
-    let eq_resp = ui.interact(eq_rect, Id::new("win-tool-eq"), Sense::click());
-    let eq_hov = hover_of(ui, &eq_resp);
-    ui.painter().rect_filled(eq_rect, 6.0, if is_eq { pal_color.gamma_multiply(0.18) } else { veil(0.04 * eq_hov) });
-    ui.painter().text(eq_rect.center(), Align2::CENTER_CENTER, icon::SLIDERS, solid(16.0), if is_eq || eq_hov > 0.1 { pal_color } else { m_color });
-    describe(&eq_resp, "Equalizer & Sound DSP");
-    if eq_resp.clicked() {
-        out.push(Action::SetSettingsTab(SettingsTab::Equalizer));
-    }
-    tool_right -= 34.0;
-
     // Audio Output Source Selector Button & Flyout
     let cur_dev_name = app.player.device_name();
     let dev_icon = device_icon(cur_dev_name.as_deref());
@@ -1099,108 +1058,262 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                 .inner_margin(Margin::same(12));
 
             popup_frame.show(ui, |ui| {
-                let panel_w = 300.0;
+                let panel_w = 310.0;
                 ui.set_width(panel_w);
 
                 // Header
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Audio Output Source").size(13.0).strong().color(TEXT));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(RichText::new(icon::ARROWS_CLOCKWISE).size(13.0).color(MUTED)).on_hover_text("Refresh device list").clicked() {
-                            out.push(Action::RefreshAudioDevices);
-                        }
-                    });
-                });
+                let (header_rect, _) = ui.allocate_exact_size(vec2(panel_w, 32.0), Sense::hover());
+                ui.painter().text(
+                    pos2(header_rect.left(), header_rect.top() + 7.0),
+                    Align2::LEFT_CENTER,
+                    "Audio Output Source",
+                    bold(13.5),
+                    TEXT,
+                );
+                let active_name = app.player.device_name().unwrap_or_else(|| "System Default".to_string());
+                let active_sub = format!("Active: {active_name}");
+                label(
+                    ui,
+                    pos2(header_rect.left(), header_rect.bottom() - 6.0),
+                    Align2::LEFT_CENTER,
+                    &active_sub,
+                    sans(10.5),
+                    FAINT,
+                    panel_w - 36.0,
+                );
 
-                let active_name = app.player.device_name().unwrap_or_else(|| "Default Device".to_string());
-                ui.label(RichText::new(format!("Active: {active_name}")).size(11.0).color(FAINT));
+                // Refresh button in top right of header
+                let ref_rect = Rect::from_center_size(pos2(header_rect.right() - 12.0, header_rect.center().y), Vec2::splat(24.0));
+                let ref_resp = ui.interact(ref_rect, Id::new("flyout-dev-refresh"), Sense::click());
+                let ref_hov = hover_of(ui, &ref_resp);
+                if ref_hov > 0.05 {
+                    ui.painter().circle_filled(ref_rect.center(), 12.0, veil(0.08 * ref_hov));
+                }
+                ui.painter().text(
+                    ref_rect.center(),
+                    Align2::CENTER_CENTER,
+                    icon::ARROWS_CLOCKWISE,
+                    glyph(14.0),
+                    if ref_hov > 0.1 { pal_color } else { MUTED },
+                );
+                describe(&ref_resp, "Refresh audio devices");
+                if ref_resp.clicked() {
+                    out.push(Action::RefreshAudioDevices);
+                }
 
+                ui.add_space(8.0);
+                let (div1, _) = ui.allocate_exact_size(vec2(panel_w, 1.0), Sense::hover());
+                ui.painter().hline(div1.x_range(), div1.top(), Stroke::new(1.0_f32, veil(0.08)));
                 ui.add_space(6.0);
-                ui.separator();
-                ui.add_space(4.0);
 
-                // Devices list
-                egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                // Device Cards List
+                egui::ScrollArea::vertical().max_height(210.0).show(ui, |ui| {
                     ui.set_width(panel_w);
 
                     // Option: System Default
                     let is_default_selected = app.saved.audio_device.is_none();
-                    let def_bg = if is_default_selected { pal_color.gamma_multiply(0.18) } else { Color32::TRANSPARENT };
-                    let def_btn = Frame::new().fill(def_bg).corner_radius(6.0).inner_margin(Margin::symmetric(8, 6));
-                    let def_inner = def_btn.show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(icon::SPEAKER_SIMPLE_HIGH).size(14.0).color(if is_default_selected { pal_color } else { MUTED }));
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new("System Default").size(12.0).strong().color(if is_default_selected { pal_color } else { TEXT }));
-                                ui.label(RichText::new("Follows Windows default device").size(10.5).color(FAINT));
-                            });
-                            if is_default_selected {
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(RichText::new(icon::CHECK).size(13.0).strong().color(pal_color));
-                                });
-                            }
-                        });
-                    });
+                    let (def_rect, def_resp) = ui.allocate_exact_size(vec2(panel_w, 46.0), Sense::click());
+                    let def_hov = hover_of(ui, &def_resp);
+                    let def_bg = if is_default_selected {
+                        pal_color.gamma_multiply(0.18)
+                    } else if def_hov > 0.05 {
+                        veil(0.05 * def_hov)
+                    } else {
+                        veil(0.02)
+                    };
+                    ui.painter().rect_filled(def_rect, 8.0, def_bg);
+                    if is_default_selected {
+                        ui.painter().rect_stroke(def_rect, 8.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.65)), StrokeKind::Inside);
+                    } else if def_hov > 0.05 {
+                        ui.painter().rect_stroke(def_rect, 8.0, Stroke::new(1.0_f32, veil(0.10 * def_hov)), StrokeKind::Inside);
+                    }
 
-                    if ui.interact(def_inner.response.rect, Id::new("sel-dev-default"), Sense::click()).clicked() {
+                    // Device icon circle
+                    let icon_center = pos2(def_rect.left() + 20.0, def_rect.center().y);
+                    let icon_bg = if is_default_selected { pal_color.gamma_multiply(0.25) } else { veil(0.05) };
+                    ui.painter().circle_filled(icon_center, 13.0, icon_bg);
+                    ui.painter().text(
+                        icon_center,
+                        Align2::CENTER_CENTER,
+                        icon::SPEAKER_SIMPLE_HIGH,
+                        glyph(15.0),
+                        if is_default_selected { pal_color } else { MUTED },
+                    );
+
+                    // Title & subtitle
+                    let text_w = panel_w - 72.0;
+                    label(
+                        ui,
+                        pos2(def_rect.left() + 40.0, def_rect.center().y - 7.0),
+                        Align2::LEFT_CENTER,
+                        "System Default",
+                        bold(12.0),
+                        if is_default_selected { pal_color } else { TEXT },
+                        text_w,
+                    );
+                    label(
+                        ui,
+                        pos2(def_rect.left() + 40.0, def_rect.center().y + 8.0),
+                        Align2::LEFT_CENTER,
+                        "Follows Windows default device",
+                        sans(10.5),
+                        if is_default_selected { pal_color.gamma_multiply(0.85) } else { FAINT },
+                        text_w,
+                    );
+
+                    // Active checkmark
+                    if is_default_selected {
+                        let chk_center = pos2(def_rect.right() - 18.0, def_rect.center().y);
+                        ui.painter().circle_filled(chk_center, 9.0, pal_color);
+                        ui.painter().text(chk_center, Align2::CENTER_CENTER, icon::CHECK, glyph(11.0), contrast_text_for(pal_color));
+                    }
+
+                    describe(&def_resp, "Use Windows default audio device");
+                    if def_resp.clicked() {
                         out.push(Action::SetAudioDevice(None));
                         ui.close();
                     }
 
-                    ui.add_space(2.0);
+                    ui.add_space(4.0);
 
                     // Detected devices
-                    for (idx, dev) in app.audio_devices.iter().enumerate() {
+                    for dev in &app.audio_devices {
                         let is_selected = app.saved.audio_device.as_deref() == Some(dev.as_str());
-                        let dev_bg = if is_selected { pal_color.gamma_multiply(0.18) } else { Color32::TRANSPARENT };
-                        let dev_frame = Frame::new().fill(dev_bg).corner_radius(6.0).inner_margin(Margin::symmetric(8, 6));
+                        let (dev_row_rect, dev_row_resp) = ui.allocate_exact_size(vec2(panel_w, 46.0), Sense::click());
+                        let dhov = hover_of(ui, &dev_row_resp);
+                        let dbg = if is_selected {
+                            pal_color.gamma_multiply(0.18)
+                        } else if dhov > 0.05 {
+                            veil(0.05 * dhov)
+                        } else {
+                            veil(0.02)
+                        };
+                        ui.painter().rect_filled(dev_row_rect, 8.0, dbg);
+                        if is_selected {
+                            ui.painter().rect_stroke(dev_row_rect, 8.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.65)), StrokeKind::Inside);
+                        } else if dhov > 0.05 {
+                            ui.painter().rect_stroke(dev_row_rect, 8.0, Stroke::new(1.0_f32, veil(0.10 * dhov)), StrokeKind::Inside);
+                        }
 
-                        let dev_inner = dev_frame.show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(device_icon(Some(dev.as_str()))).size(14.0).color(if is_selected { pal_color } else { MUTED }));
-                                ui.vertical(|ui| {
-                                    ui.add(egui::Label::new(RichText::new(dev).size(12.0).strong().color(if is_selected { pal_color } else { TEXT })).truncate());
-                                    ui.label(RichText::new("WASAPI Endpoint").size(10.5).color(FAINT));
-                                });
-                                if is_selected {
-                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                        ui.label(RichText::new(icon::CHECK).size(13.0).strong().color(pal_color));
-                                    });
-                                }
-                            });
-                        });
+                        // Device icon circle
+                        let dev_icon_center = pos2(dev_row_rect.left() + 20.0, dev_row_rect.center().y);
+                        let dev_icon_bg = if is_selected { pal_color.gamma_multiply(0.25) } else { veil(0.05) };
+                        ui.painter().circle_filled(dev_icon_center, 13.0, dev_icon_bg);
+                        ui.painter().text(
+                            dev_icon_center,
+                            Align2::CENTER_CENTER,
+                            device_icon(Some(dev.as_str())),
+                            glyph(15.0),
+                            if is_selected { pal_color } else { MUTED },
+                        );
 
-                        if ui.interact(dev_inner.response.rect, Id::new(("sel-dev", idx)), Sense::click()).clicked() {
+                        // Device title & endpoint subtitle
+                        let dtext_w = panel_w - 72.0;
+                        label(
+                            ui,
+                            pos2(dev_row_rect.left() + 40.0, dev_row_rect.center().y - 7.0),
+                            Align2::LEFT_CENTER,
+                            dev,
+                            bold(12.0),
+                            if is_selected { pal_color } else { TEXT },
+                            dtext_w,
+                        );
+                        label(
+                            ui,
+                            pos2(dev_row_rect.left() + 40.0, dev_row_rect.center().y + 8.0),
+                            Align2::LEFT_CENTER,
+                            "WASAPI Endpoint",
+                            sans(10.5),
+                            if is_selected { pal_color.gamma_multiply(0.85) } else { FAINT },
+                            dtext_w,
+                        );
+
+                        // Active checkmark
+                        if is_selected {
+                            let chk_center = pos2(dev_row_rect.right() - 18.0, dev_row_rect.center().y);
+                            ui.painter().circle_filled(chk_center, 9.0, pal_color);
+                            ui.painter().text(chk_center, Align2::CENTER_CENTER, icon::CHECK, glyph(11.0), contrast_text_for(pal_color));
+                        }
+
+                        describe(&dev_row_resp, dev);
+                        if dev_row_resp.clicked() {
                             out.push(Action::SetAudioDevice(Some(dev.clone())));
                             ui.close();
                         }
-                        ui.add_space(2.0);
+
+                        ui.add_space(4.0);
                     }
                 });
 
-                ui.add_space(4.0);
-                ui.separator();
-                ui.add_space(4.0);
+                ui.add_space(6.0);
+                let (div2, _) = ui.allocate_exact_size(vec2(panel_w, 1.0), Sense::hover());
+                ui.painter().hline(div2.x_range(), div2.top(), Stroke::new(1.0_f32, veil(0.08)));
+                ui.add_space(8.0);
 
                 // Quick Volume Bar
-                ui.horizontal(|ui| {
-                    let vol_icon = if app.saved.volume <= 0.001 {
-                        icon::SPEAKER_X
-                    } else if app.saved.volume < 0.5 {
-                        icon::SPEAKER_LOW
-                    } else {
-                        icon::SPEAKER_HIGH
-                    };
-                    if ui.button(RichText::new(vol_icon).size(13.0).color(MUTED)).clicked() {
-                        let new_vol = if app.saved.volume > 0.001 { 0.0 } else { 0.8 };
-                        out.push(Action::Volume(new_vol));
-                    }
-                    let mut vol_percent = (app.saved.volume * 100.0).round();
-                    if ui.add(egui::Slider::new(&mut vol_percent, 0.0..=100.0).show_value(false)).changed() {
-                        out.push(Action::Volume(vol_percent / 100.0));
-                    }
-                    ui.label(RichText::new(format!("{}%", vol_percent as u32)).size(11.0).color(TEXT));
-                });
+                let (vol_bar_rect, _) = ui.allocate_exact_size(vec2(panel_w, 28.0), Sense::hover());
+                let vol_mid_y = vol_bar_rect.center().y;
+
+                let mute_rect = Rect::from_center_size(pos2(vol_bar_rect.left() + 14.0, vol_mid_y), Vec2::splat(26.0));
+                let mute_resp = ui.interact(mute_rect, Id::new("flyout-vol-mute"), Sense::click());
+                let mute_hov = hover_of(ui, &mute_resp);
+                if mute_hov > 0.05 {
+                    ui.painter().circle_filled(mute_rect.center(), 12.0, veil(0.08 * mute_hov));
+                }
+                let vol_sym = if app.saved.volume <= 0.001 {
+                    icon::SPEAKER_X
+                } else if app.saved.volume < 0.5 {
+                    icon::SPEAKER_LOW
+                } else {
+                    icon::SPEAKER_HIGH
+                };
+                ui.painter().text(
+                    mute_rect.center(),
+                    Align2::CENTER_CENTER,
+                    vol_sym,
+                    glyph(16.0),
+                    if mute_hov > 0.1 || app.saved.volume <= 0.001 { pal_color } else { MUTED },
+                );
+                describe(&mute_resp, if app.saved.volume <= 0.001 { "Unmute" } else { "Mute" });
+                if mute_resp.clicked() {
+                    let memory = Id::new("flyout-vol-before-mute");
+                    let restored = ui.data(|d| d.get_temp::<f32>(memory)).unwrap_or(0.8);
+                    ui.data_mut(|d| d.insert_temp(memory, if app.saved.volume > 0.001 { app.saved.volume } else { 0.8 }));
+                    out.push(Action::Volume(if app.saved.volume > 0.001 { 0.0 } else { restored }));
+                }
+
+                let vol_pct_w = 38.0;
+                let track_left = vol_bar_rect.left() + 34.0;
+                let track_right = vol_bar_rect.right() - vol_pct_w - 4.0;
+                let track_rect = Rect::from_min_max(pos2(track_left, vol_mid_y - 8.0), pos2(track_right, vol_mid_y + 8.0));
+                let slider_resp = ui.interact(track_rect, Id::new("flyout-vol-slider"), Sense::click_and_drag());
+                point_at(&slider_resp);
+                let slider_grip = ui.ctx().animate_bool_with_time(slider_resp.id, slider_resp.hovered() || slider_resp.dragged(), HOVER_TIME);
+
+                if let (true, Some(pointer)) = (slider_resp.dragged() || slider_resp.is_pointer_button_down_on(), slider_resp.interact_pointer_pos()) {
+                    let fraction = ((pointer.x - track_rect.left()) / track_rect.width()).clamp(0.0, 1.0);
+                    out.push(Action::Volume(fraction));
+                }
+                let wheel = ui.input(|i| i.smooth_scroll_delta.y);
+                if slider_resp.hovered() && wheel != 0.0 {
+                    let delta = wheel * 0.002;
+                    out.push(Action::Volume((app.saved.volume + delta).clamp(0.0, 1.0)));
+                }
+
+                let line = Rect::from_center_size(track_rect.center(), vec2(track_rect.width(), 4.0));
+                let level = Rect::from_min_size(line.min, vec2(line.width() * app.saved.volume.clamp(0.0, 1.0), 4.0));
+                ui.painter().rect_filled(line, 2.0, veil(0.14));
+                ui.painter().rect_filled(level, 2.0, TEXT.lerp_to_gamma(pal_color, slider_grip));
+                ui.painter().circle_filled(pos2(level.right(), vol_mid_y), 5.0 + 1.0 * slider_grip, TEXT);
+
+                let vol_pct = (app.saved.volume * 100.0).round() as u32;
+                ui.painter().text(
+                    pos2(vol_bar_rect.right() - 2.0, vol_mid_y),
+                    Align2::RIGHT_CENTER,
+                    format!("{vol_pct}%"),
+                    medium(11.5),
+                    TEXT,
+                );
             });
         });
     tool_right -= 34.0;
@@ -1267,7 +1380,7 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     ui.painter().text(
         team_rect.center(),
         Align2::CENTER_CENTER,
-        icon::HEADPHONES,
+        icon::USERS,
         if in_room { solid(16.0) } else { glyph(16.0) },
         if in_room || team_hov > 0.1 { pal_color } else { m_color },
     );
@@ -1493,7 +1606,7 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                         ui.horizontal(|ui| {
                             let (icon_rect, _) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::hover());
                             ui.painter().circle_filled(icon_rect.center(), 12.0, accent.gamma_multiply(0.18));
-                            ui.painter().text(icon_rect.center(), Align2::CENTER_CENTER, icon::HEADPHONES, solid(13.0), accent);
+                            ui.painter().text(icon_rect.center(), Align2::CENTER_CENTER, icon::USERS, solid(13.0), accent);
                             ui.vertical(|ui| {
                                 label(ui, pos2(ui.cursor().left(), ui.cursor().top() + 3.0), Align2::LEFT_CENTER, "Listen Together", bold(13.5), TEXT, panel_w - 32.0);
                                 label(ui, pos2(ui.cursor().left(), ui.cursor().top() + 17.0), Align2::LEFT_CENTER, "Stream synchronized audio with friends", sans(10.5), MUTED, panel_w - 32.0);
@@ -6811,7 +6924,7 @@ fn sync_together_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             crate::sync::SyncMode::Host => format!("Hosting room {} · {} listening. Broadcasting playback.", app.sync_room, listeners + 1),
             crate::sync::SyncMode::Guest => format!("Syncing in room {}. Listening along.", app.sync_room),
         };
-        let row = row_base(ui, icon::HEADPHONES, "Session status", &status_desc);
+        let row = row_base(ui, icon::USERS, "Session status", &status_desc);
         let host_btn = Rect::from_min_size(pos2(row.right() - 110.0, row.center().y - 14.0), vec2(104.0, 28.0));
         let host_resp = ui.interact(host_btn, Id::new("sync-host-btn"), Sense::click());
         let host_hov = hover_of(ui, &host_resp);
@@ -8632,7 +8745,7 @@ fn sync_invite_dialog(app: &mut App, ctx: &egui::Context, out: &mut Vec<Action>)
                 let (icon_rect, _) = ui.allocate_exact_size(vec2(52.0, 52.0), Sense::hover());
                 ui.painter().circle_filled(icon_rect.center(), 26.0, pal_color.gamma_multiply(0.20));
                 ui.painter().circle_stroke(icon_rect.center(), 26.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.5)));
-                ui.painter().text(icon_rect.center(), Align2::CENTER_CENTER, icon::HEADPHONES, solid(24.0), pal_color);
+                ui.painter().text(icon_rect.center(), Align2::CENTER_CENTER, icon::USERS, solid(24.0), pal_color);
 
                 ui.add_space(10.0);
                 ui.painter().text(pos2(icon_rect.center().x, ui.cursor().top() + 8.0), Align2::CENTER_CENTER, "Listen Together Invite", bold(17.5), TEXT);
