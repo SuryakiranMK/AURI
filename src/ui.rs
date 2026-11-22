@@ -1407,7 +1407,7 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                 .inner_margin(Margin::same(14));
 
             popup_frame.show(ui, |ui| {
-                let panel_w = 286.0;
+                let panel_w = 310.0;
                 ui.set_width(panel_w);
                 let accent = pal_color;
                 let red = Color32::from_rgb(244, 63, 94);
@@ -1417,49 +1417,45 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                         let hosting = app.sync_mode == crate::sync::SyncMode::Host;
 
                         // Header with status indicator
-                        ui.horizontal(|ui| {
-                            let (dot_rect, _) = ui.allocate_exact_size(vec2(16.0, 16.0), Sense::hover());
-                            let status_dot_color = if hosting {
-                                Color32::from_rgb(34, 197, 94)
-                            } else {
-                                Color32::from_rgb(96, 165, 250)
-                            };
-                            ui.painter().circle_filled(dot_rect.center(), 4.5, status_dot_color);
-                            ui.painter().circle_stroke(dot_rect.center(), 4.5, Stroke::new(1.0_f32, Color32::from_rgb(20, 21, 26)));
+                        let (header_rect, _) = ui.allocate_exact_size(vec2(panel_w, 36.0), Sense::hover());
+                        let status_dot_color = if hosting {
+                            Color32::from_rgb(34, 197, 94)
+                        } else {
+                            Color32::from_rgb(96, 165, 250)
+                        };
+                        let dot_center = pos2(header_rect.left() + 10.0, header_rect.center().y);
+                        ui.painter().circle_filled(dot_center, 5.0, status_dot_color);
+                        ui.painter().circle_stroke(dot_center, 5.0, Stroke::new(1.0_f32, Color32::from_rgb(20, 21, 26)));
 
-                            ui.vertical(|ui| {
-                                ui.horizontal(|ui| {
-                                    label(
-                                        ui,
-                                        pos2(ui.cursor().left(), ui.cursor().top() + 4.0),
-                                        Align2::LEFT_CENTER,
-                                        if hosting { "Broadcasting Session" } else { "Listening in Room" },
-                                        bold(13.0),
-                                        TEXT,
-                                        panel_w - 115.0,
-                                    );
-                                    if app.sync_is_p2p {
-                                        let p2p_badge = Rect::from_min_size(pos2(ui.cursor().left() + 4.0, ui.cursor().top() - 1.0), vec2(70.0, 16.0));
-                                        ui.painter().rect_filled(p2p_badge, 8.0, Color32::from_rgb(34, 197, 94).gamma_multiply(0.20));
-                                        ui.painter().text(p2p_badge.center(), Align2::CENTER_CENTER, "⚡ Direct P2P", bold(9.0), Color32::from_rgb(34, 197, 94));
-                                    }
-                                });
-                                label(
-                                    ui,
-                                    pos2(ui.cursor().left(), ui.cursor().top() + 18.0),
-                                    Align2::LEFT_CENTER,
-                                    if hosting {
-                                        if app.sync_is_p2p { "Direct P2P UDP (<15ms) active" } else { "You control playback & shared queue" }
-                                    } else {
-                                        if app.sync_is_p2p { "Direct P2P UDP (<15ms) synced" } else { "Playback is locked to host" }
-                                    },
-                                    sans(10.5),
-                                    MUTED,
-                                    panel_w - 30.0,
-                                );
-                            });
-                        });
-                        ui.add_space(24.0);
+                        label(
+                            ui,
+                            pos2(header_rect.left() + 24.0, header_rect.center().y - 8.0),
+                            Align2::LEFT_CENTER,
+                            if hosting { "Broadcasting Session" } else { "Listening in Room" },
+                            bold(13.0),
+                            TEXT,
+                            panel_w - (if app.sync_is_p2p { 110.0 } else { 30.0 }),
+                        );
+                        if app.sync_is_p2p {
+                            let p2p_badge = Rect::from_min_size(pos2(header_rect.right() - 74.0, header_rect.center().y - 17.0), vec2(74.0, 18.0));
+                            ui.painter().rect_filled(p2p_badge, 9.0, Color32::from_rgb(34, 197, 94).gamma_multiply(0.20));
+                            ui.painter().text(p2p_badge.center(), Align2::CENTER_CENTER, "⚡ Direct P2P", bold(9.5), Color32::from_rgb(34, 197, 94));
+                        }
+                        let sub_text = if hosting {
+                            if app.sync_is_p2p { "Direct P2P UDP (<15ms) active" } else { "You control playback & shared queue" }
+                        } else {
+                            if app.sync_is_p2p { "Direct P2P UDP (<15ms) synced" } else { "Playback is locked to host" }
+                        };
+                        label(
+                            ui,
+                            pos2(header_rect.left() + 24.0, header_rect.center().y + 8.5),
+                            Align2::LEFT_CENTER,
+                            sub_text,
+                            sans(10.5),
+                            FAINT,
+                            panel_w - 30.0,
+                        );
+                        ui.add_space(8.0);
 
                         // Room code chip: click to copy instantly
                         let copied_id = Id::new("team-code-copied");
@@ -1602,76 +1598,125 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                         }
                     }
                     crate::sync::SyncMode::Disconnected => {
-                        // Header
-                        ui.horizontal(|ui| {
-                            let (icon_rect, _) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::hover());
-                            ui.painter().circle_filled(icon_rect.center(), 12.0, accent.gamma_multiply(0.18));
-                            ui.painter().text(icon_rect.center(), Align2::CENTER_CENTER, icon::USERS, solid(13.0), accent);
-                            ui.vertical(|ui| {
-                                label(ui, pos2(ui.cursor().left(), ui.cursor().top() + 3.0), Align2::LEFT_CENTER, "Listen Together", bold(13.5), TEXT, panel_w - 32.0);
-                                label(ui, pos2(ui.cursor().left(), ui.cursor().top() + 17.0), Align2::LEFT_CENTER, "Stream synchronized audio with friends", sans(10.5), MUTED, panel_w - 32.0);
-                            });
-                        });
-                        ui.add_space(22.0);
+                        // Header: beautifully centered icon badge & typography
+                        let (header_rect, _) = ui.allocate_exact_size(vec2(panel_w, 36.0), Sense::hover());
+                        let icon_center = pos2(header_rect.left() + 16.0, header_rect.center().y);
+                        ui.painter().circle_filled(icon_center, 15.0, accent.gamma_multiply(0.20));
+                        ui.painter().text(icon_center, Align2::CENTER_CENTER, icon::USERS, solid(15.0), accent);
 
-                        // Host action card
-                        let (card_rect, card_resp) = ui.allocate_exact_size(vec2(panel_w, 48.0), Sense::click());
+                        label(ui, pos2(header_rect.left() + 38.0, header_rect.center().y - 8.0), Align2::LEFT_CENTER, "Listen Together", bold(13.5), TEXT, panel_w - 44.0);
+                        label(ui, pos2(header_rect.left() + 38.0, header_rect.center().y + 8.5), Align2::LEFT_CENTER, "Stream synchronized audio with friends", sans(10.5), FAINT, panel_w - 44.0);
+
+                        ui.add_space(10.0);
+
+                        // Host action card: sleek card matching audio device cards
+                        let (card_rect, card_resp) = ui.allocate_exact_size(vec2(panel_w, 52.0), Sense::click());
                         let chov = hover_of(ui, &card_resp);
-                        ui.painter().rect_filled(card_rect, 10.0, veil(0.06 + 0.06 * chov));
+                        let card_bg = if chov > 0.05 { veil(0.06 * chov) } else { veil(0.02) };
+                        ui.painter().rect_filled(card_rect, 8.0, card_bg);
                         ui.painter().rect_stroke(
                             card_rect,
-                            10.0,
+                            8.0,
                             Stroke::new(1.0_f32, accent.gamma_multiply(if chov > 0.1 { 0.65 } else { 0.22 })),
                             StrokeKind::Inside,
                         );
-                        ui.painter().text(pos2(card_rect.left() + 18.0, card_rect.center().y), Align2::CENTER_CENTER, icon::BROADCAST, glyph(16.0), accent);
-                        label(ui, pos2(card_rect.left() + 36.0, card_rect.top() + 14.0), Align2::LEFT_CENTER, "Host a Room", bold(12.5), TEXT, panel_w - 110.0);
-                        label(ui, pos2(card_rect.left() + 36.0, card_rect.bottom() - 14.0), Align2::LEFT_CENTER, "Get a shareable room code", sans(10.0), MUTED, panel_w - 110.0);
 
-                        let host_btn = Rect::from_min_size(pos2(card_rect.right() - 66.0, card_rect.center().y - 13.0), vec2(58.0, 26.0));
-                        ui.painter().rect_filled(host_btn, 13.0, accent.gamma_multiply(0.20 + 0.14 * chov));
-                        ui.painter().rect_stroke(host_btn, 13.0, Stroke::new(1.0_f32, accent), StrokeKind::Inside);
+                        // Broadcast icon badge
+                        let b_icon_center = pos2(card_rect.left() + 22.0, card_rect.center().y);
+                        ui.painter().circle_filled(b_icon_center, 13.0, accent.gamma_multiply(0.20));
+                        ui.painter().text(b_icon_center, Align2::CENTER_CENTER, icon::BROADCAST, glyph(15.0), accent);
+
+                        // Card text
+                        let text_w = panel_w - 110.0;
+                        label(ui, pos2(card_rect.left() + 44.0, card_rect.center().y - 7.5), Align2::LEFT_CENTER, "Host a Room", bold(12.5), TEXT, text_w);
+                        label(ui, pos2(card_rect.left() + 44.0, card_rect.center().y + 8.5), Align2::LEFT_CENTER, "Get a shareable room code", sans(10.5), FAINT, text_w);
+
+                        // Host pill button
+                        let host_btn = Rect::from_center_size(pos2(card_rect.right() - 38.0, card_rect.center().y), vec2(56.0, 28.0));
+                        ui.painter().rect_filled(host_btn, 14.0, accent.gamma_multiply(0.22 + 0.14 * chov));
+                        ui.painter().rect_stroke(host_btn, 14.0, Stroke::new(1.0_f32, accent), StrokeKind::Inside);
                         ui.painter().text(host_btn.center(), Align2::CENTER_CENTER, "Host", bold(11.5), if chov > 0.1 { TEXT } else { accent });
 
                         describe(&card_resp, "Host a new Listen Together room");
                         if card_resp.clicked() {
                             out.push(Action::StartSyncHost(crate::sync::new_room_code()));
                         }
-                        ui.add_space(12.0);
 
-                        // Divider
-                        let (div_rect, _) = ui.allocate_exact_size(vec2(panel_w, 14.0), Sense::hover());
-                        ui.painter().text(pos2(div_rect.left() + 2.0, div_rect.center().y), Align2::LEFT_CENTER, "OR JOIN WITH CODE", bold(9.0), FAINT);
-                        ui.add_space(4.0);
+                        ui.add_space(10.0);
 
-                        // Join row: text field + join button
-                        let (join_row, _) = ui.allocate_exact_size(vec2(panel_w, 34.0), Sense::hover());
-                        let field = Rect::from_min_max(join_row.min, pos2(join_row.right() - 72.0, join_row.bottom()));
-                        ui.painter().rect_filled(field, 8.0, veil(0.08));
-                        ui.painter().rect_stroke(field, 8.0, Stroke::new(1.0_f32, veil(0.16)), StrokeKind::Inside);
+                        // Section divider with "OR JOIN WITH CODE" rule
+                        let (div_rect, _) = ui.allocate_exact_size(vec2(panel_w, 16.0), Sense::hover());
+                        let mid_y = div_rect.center().y;
+                        let tag = "OR JOIN WITH CODE";
+                        let font = bold(8.5);
+                        let tag_galley = fit(ui, tag, font.clone(), FAINT, 120.0, 1);
+                        let tag_w = tag_galley.size().x;
+                        ui.painter().text(pos2(div_rect.left(), mid_y), Align2::LEFT_CENTER, tag, font, FAINT);
+                        ui.painter().hline(
+                            (div_rect.left() + tag_w + 10.0)..=div_rect.right(),
+                            mid_y,
+                            Stroke::new(1.0_f32, veil(0.08)),
+                        );
+
+                        ui.add_space(6.0);
+
+                        // Join row: text field + join button perfectly aligned
+                        let row_h = 36.0;
+                        let (join_row, _) = ui.allocate_exact_size(vec2(panel_w, row_h), Sense::hover());
+                        let btn_w = 64.0;
+                        let gap = 8.0;
+                        let field = Rect::from_min_max(join_row.min, pos2(join_row.right() - btn_w - gap, join_row.bottom()));
+                        let join_btn = Rect::from_min_max(pos2(join_row.right() - btn_w, join_row.min.y), join_row.max);
 
                         let join_id = Id::new("topbar-team-join-code");
                         let mut buffer = ui.data(|d| d.get_temp::<String>(join_id)).unwrap_or_default();
+
                         let edit = egui::TextEdit::singleline(&mut buffer)
                             .hint_text("e.g. K7QX-9M2T-B4")
-                            .desired_width(field.width() - 14.0)
-                            .font(sans(12.0))
-                            .frame(false);
-                        let edit_resp = ui.put(field.shrink2(vec2(8.0, 2.0)), edit);
+                            .font(medium(12.0))
+                            .frame(false)
+                            .margin(Margin::symmetric(10, 9));
+                        let edit_resp = ui.put(field, edit);
+                        let is_focused = edit_resp.has_focus();
+                        let field_hov = hover_of(ui, &edit_resp);
+
+                        ui.painter().rect_filled(field, 8.0, veil(0.06 + 0.04 * field_hov));
+                        ui.painter().rect_stroke(
+                            field,
+                            8.0,
+                            Stroke::new(1.0_f32, if is_focused { accent } else { veil(0.12 + 0.10 * field_hov) }),
+                            StrokeKind::Inside,
+                        );
+
                         if edit_resp.changed() {
                             ui.data_mut(|d| d.insert_temp(join_id, buffer.clone()));
                         }
                         let join_clicked = edit_resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter)) && !buffer.trim().is_empty();
 
-                        let join_btn = Rect::from_min_max(pos2(join_row.right() - 64.0, join_row.top()), join_row.max);
+                        let has_code = !buffer.trim().is_empty();
                         let join_resp = ui.interact(join_btn, Id::new("topbar-team-join-btn"), Sense::click());
                         let jhov = hover_of(ui, &join_resp);
-                        ui.painter().rect_filled(join_btn, 8.0, accent.gamma_multiply(0.18 + 0.12 * jhov));
-                        ui.painter().rect_stroke(join_btn, 8.0, Stroke::new(1.0_f32, accent), StrokeKind::Inside);
-                        ui.painter().text(join_btn.center(), Align2::CENTER_CENTER, "Join", bold(12.0), if jhov > 0.1 { TEXT } else { accent });
+                        let j_fill = if has_code {
+                            accent.gamma_multiply(0.24 + 0.16 * jhov)
+                        } else {
+                            veil(0.04 + 0.04 * jhov)
+                        };
+                        let j_stroke = if has_code {
+                            accent.gamma_multiply(0.85)
+                        } else {
+                            veil(0.12)
+                        };
+                        let j_text_color = if has_code {
+                            if jhov > 0.1 { TEXT } else { accent }
+                        } else {
+                            MUTED
+                        };
+                        ui.painter().rect_filled(join_btn, 8.0, j_fill);
+                        ui.painter().rect_stroke(join_btn, 8.0, Stroke::new(1.0_f32, j_stroke), StrokeKind::Inside);
+                        ui.painter().text(join_btn.center(), Align2::CENTER_CENTER, "Join", bold(12.0), j_text_color);
 
                         describe(&join_resp, "Join room using the entered code");
-                        if (join_resp.clicked() || join_clicked) && !buffer.trim().is_empty() {
+                        if (join_resp.clicked() || join_clicked) && has_code {
                             out.push(Action::StartSyncJoin(buffer.trim().to_uppercase()));
                             ui.data_mut(|d| d.remove_temp::<String>(join_id));
                         }

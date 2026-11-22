@@ -841,6 +841,81 @@ fn decode_loop(
     }
 }
 
+#[cfg(windows)]
+pub mod wasapi_mute {
+    use windows::Win32::System::Com::*;
+    use windows::Win32::Media::Audio::*;
+    use windows::Win32::Media::Audio::Endpoints::*;
+
+    const PKEY_DEVICE_FRIENDLY_NAME: windows::Win32::Foundation::PROPERTYKEY = windows::Win32::Foundation::PROPERTYKEY {
+        fmtid: windows::core::GUID::from_u128(0xa45c254e_df1c_4efd_8020_67d146a850e0),
+        pid: 14,
+    };
+
+    pub fn get_endpoint_mute(device_name: &str) -> Option<bool> {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let enumerator: IMMDeviceEnumerator = CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+            let collection = enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE).ok()?;
+            let count = collection.GetCount().ok()?;
+            for i in 0..count {
+                if let Ok(dev) = collection.Item(i) {
+                    if let Ok(store) = dev.OpenPropertyStore(STGM(0)) {
+                        if let Ok(val) = store.GetValue(&PKEY_DEVICE_FRIENDLY_NAME as *const _) {
+                            let name = val.to_string();
+                            if name == device_name {
+                                if let Ok(ep_vol) = dev.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None) {
+                                    return ep_vol.GetMute().ok().map(|m| m.as_bool());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            None
+        }
+    }
+
+    pub fn set_endpoint_mute(device_name: &str, mute: bool) -> bool {
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let enumerator: IMMDeviceEnumerator = match CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) {
+                Ok(e) => e,
+                Err(_) => return false,
+            };
+            let collection = match enumerator.EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE) {
+                Ok(c) => c,
+                Err(_) => return false,
+            };
+            let count = match collection.GetCount() {
+                Ok(c) => c,
+                Err(_) => return false,
+            };
+            for i in 0..count {
+                if let Ok(dev) = collection.Item(i) {
+                    if let Ok(store) = dev.OpenPropertyStore(STGM(0)) {
+                        if let Ok(val) = store.GetValue(&PKEY_DEVICE_FRIENDLY_NAME as *const _) {
+                            let name = val.to_string();
+                            if name == device_name {
+                                if let Ok(ep_vol) = dev.Activate::<IAudioEndpointVolume>(CLSCTX_ALL, None) {
+                                    return ep_vol.SetMute(mute, std::ptr::null()).is_ok();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub mod wasapi_mute {
+    pub fn get_endpoint_mute(_device_name: &str) -> Option<bool> { None }
+    pub fn set_endpoint_mute(_device_name: &str, _mute: bool) -> bool { false }
+}
+
 fn default_device() -> Option<String> {
     use rodio::cpal::traits::{DeviceTrait, HostTrait};
     rodio::cpal::default_host().default_output_device()?.name().ok()
@@ -873,6 +948,7 @@ pub struct Player {
     volume: f32,
     yt: Arc<ytm::Client>,
     urls: Urls,
+    unmuted_device: Option<String>,
 }
 
 impl Player {
@@ -897,6 +973,7 @@ impl Player {
             volume: 1.0,
             yt,
             urls,
+            unmuted_device: None,
         };
         player.open_output();
         if player.output.is_none() {
@@ -976,6 +1053,31 @@ impl Player {
         if self.target_device == target && self.output.is_some() && !self.device_lost.load(Relaxed) {
             return;
         }
+
+        // If AURI previously auto-unmuted an endpoint (e.g. laptop speakers while headphones
+        // were plugged in), restore its muted state in Windows when switching away so we do
+        // not disrupt the user's natural Windows / hardware jack flow.
+        if let Some(prev) = self.unmuted_device.take() {
+            if Some(&prev) != target.as_ref() {
+                crate::log_audio!("Audio", "Restoring Windows mute state for '{prev}'");
+                wasapi_mute::set_endpoint_mute(&prev, true);
+            } else {
+                // Switching to the same device, keep tracking
+                self.unmuted_device = Some(prev);
+            }
+        }
+
+        // If switching to an explicit device that Windows currently has muted,
+        // automatically unmute it for this playback session and record that we unmuted it.
+        if let Some(ref target_name) = target {
+            if wasapi_mute::get_endpoint_mute(target_name) == Some(true) {
+                crate::log_audio!("Audio", "Target endpoint '{target_name}' is muted in Windows; auto-unmuting for playback");
+                if wasapi_mute::set_endpoint_mute(target_name, false) {
+                    self.unmuted_device = Some(target_name.clone());
+                }
+            }
+        }
+
         crate::log_audio!("Audio", "Switching target audio device to: {:?}", target);
         self.target_device = target;
         let paused = self.paused();
@@ -1148,6 +1250,14 @@ impl Player {
 
     pub fn current_error(&self) -> Option<String> {
         self.shared.error.lock().unwrap().clone()
+    }
+}
+
+impl Drop for Player {
+    fn drop(&mut self) {
+        if let Some(prev) = self.unmuted_device.take() {
+            wasapi_mute::set_endpoint_mute(&prev, true);
+        }
     }
 }
 
@@ -1369,5 +1479,11 @@ mod tests {
         for window in devs.windows(2) {
             assert!(window[0] < window[1], "devices should be sorted and unique");
         }
+    }
+
+    #[test]
+    fn test_wasapi_mute_query_and_toggle() {
+        assert_eq!(wasapi_mute::get_endpoint_mute("NonExistentAudioDevice123"), None);
+        assert!(!wasapi_mute::set_endpoint_mute("NonExistentAudioDevice123", true));
     }
 }

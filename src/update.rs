@@ -27,7 +27,9 @@ pub fn plan() -> Plan {
 
 fn listed_checksum<'a>(checksums: &'a str, file: &str) -> Option<&'a str> {
     checksums.lines().find_map(|line| {
+        let line = line.trim_start_matches('\u{feff}').trim();
         let (checksum, name) = line.split_once(char::is_whitespace)?;
+        let checksum = checksum.trim();
         let complete = checksum.len() == 64 && checksum.chars().all(|c| c.is_ascii_hexdigit());
         (complete && name.trim().trim_start_matches('*') == file).then_some(checksum)
     })
@@ -133,6 +135,8 @@ mod tests {
             "a".repeat(64)
         );
         assert_eq!(listed_checksum(&list, "auri.exe"), Some(good.as_str()));
+        let bom_list = format!("\u{feff}{good}  auri.exe\n");
+        assert_eq!(listed_checksum(&bom_list, "auri.exe"), Some(good.as_str()));
         assert_eq!(listed_checksum(&list, "missing.exe"), None);
         assert_eq!(listed_checksum("abc  auri.exe", "auri.exe"), None);
     }
