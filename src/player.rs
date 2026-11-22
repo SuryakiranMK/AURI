@@ -846,11 +846,26 @@ fn default_device() -> Option<String> {
     rodio::cpal::default_host().default_output_device()?.name().ok()
 }
 
+pub fn available_output_devices() -> Vec<String> {
+    use rodio::cpal::traits::{DeviceTrait, HostTrait};
+    let host = rodio::cpal::default_host();
+    match host.output_devices() {
+        Ok(devices) => {
+            let mut list: Vec<String> = devices.filter_map(|d| d.name().ok()).collect();
+            list.sort();
+            list.dedup();
+            list
+        }
+        Err(_) => Vec::new(),
+    }
+}
+
 pub struct Player {
     commands: Sender<Cmd>,
     shared: Arc<Shared>,
     output: Option<(rodio::OutputStream, rodio::Sink)>,
     device: Option<String>,
+    target_device: Option<String>,
     device_lost: Arc<AtomicBool>,
     device_polled: Instant,
     chunks: Chunks,
@@ -874,6 +889,7 @@ impl Player {
             shared,
             output: None,
             device: None,
+            target_device: None,
             device_lost: Arc::default(),
             device_polled: Instant::now(),
             chunks: Arc::new(Mutex::new(chunks)),
@@ -898,9 +914,37 @@ impl Player {
         let notice_loss = move |error| {
             lost.fetch_or(matches!(error, rodio::cpal::StreamError::DeviceNotAvailable), Relaxed);
         };
-        let stream = rodio::OutputStreamBuilder::from_default_device()
-            .and_then(|device| device.with_error_callback(notice_loss).open_stream_or_fallback())
-            .or_else(|_| rodio::OutputStreamBuilder::open_default_stream());
+
+        use rodio::cpal::traits::{DeviceTrait, HostTrait};
+        let host = rodio::cpal::default_host();
+
+        let stream = if let Some(target_name) = &self.target_device {
+            let target_dev = host.output_devices().ok().and_then(|mut devs| {
+                devs.find(|d| d.name().map(|n| n == *target_name).unwrap_or(false))
+            });
+            if let Some(dev) = target_dev {
+                let lost_fallback = self.device_lost.clone();
+                rodio::OutputStreamBuilder::from_device(dev)
+                    .and_then(|b| b.with_error_callback(notice_loss).open_stream_or_fallback())
+                    .or_else(|_| {
+                        rodio::OutputStreamBuilder::from_default_device()
+                            .and_then(|device| device.with_error_callback(move |e| {
+                                lost_fallback.fetch_or(matches!(e, rodio::cpal::StreamError::DeviceNotAvailable), Relaxed);
+                            }).open_stream_or_fallback())
+                    })
+                    .or_else(|_| rodio::OutputStreamBuilder::open_default_stream())
+            } else {
+                crate::log_warn!("Audio", "Selected audio device '{target_name}' not available, falling back to default device");
+                rodio::OutputStreamBuilder::from_default_device()
+                    .and_then(|device| device.with_error_callback(notice_loss).open_stream_or_fallback())
+                    .or_else(|_| rodio::OutputStreamBuilder::open_default_stream())
+            }
+        } else {
+            rodio::OutputStreamBuilder::from_default_device()
+                .and_then(|device| device.with_error_callback(notice_loss).open_stream_or_fallback())
+                .or_else(|_| rodio::OutputStreamBuilder::open_default_stream())
+        };
+
         self.output = stream.ok().map(|mut stream| {
             stream.log_on_drop(false);
             let sink = rodio::Sink::connect_new(stream.mixer());
@@ -910,11 +954,37 @@ impl Player {
             sink.append(PcmSource::new(self.chunks.clone(), self.shared.clone(), self.wake.clone()));
             (stream, sink)
         });
-        self.device = default_device().filter(|_| self.output.is_some());
+        self.device = if self.target_device.is_some() {
+            self.target_device.clone()
+        } else {
+            default_device()
+        }.filter(|_| self.output.is_some());
+
         if let Some(dev) = &self.device {
             crate::log_audio!("Audio", "Bound audio output stream to device: {dev}");
         } else {
             crate::log_warn!("Audio", "Could not bind audio output device");
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn target_device(&self) -> Option<String> {
+        self.target_device.clone()
+    }
+
+    pub fn set_target_device(&mut self, target: Option<String>) {
+        if self.target_device == target && self.output.is_some() && !self.device_lost.load(Relaxed) {
+            return;
+        }
+        crate::log_audio!("Audio", "Switching target audio device to: {:?}", target);
+        self.target_device = target;
+        let paused = self.paused();
+        let played = self.output.take().is_some();
+        self.open_output();
+        self.set_paused(paused);
+        if played && self.output.is_none() {
+            crate::log_error!("Audio", "Failed to bind selected audio output device");
+            *self.shared.error.lock().unwrap() = Some(NO_OUTPUT.to_owned());
         }
     }
 
@@ -923,6 +993,21 @@ impl Player {
             return;
         }
         self.device_polled = Instant::now();
+        if self.target_device.is_some() {
+            if !self.device_lost.load(Relaxed) {
+                return;
+            }
+            crate::log_warn!("Audio", "Target audio device disconnected, reconnecting...");
+            let paused = self.paused();
+            let played = self.output.take().is_some();
+            self.open_output();
+            self.set_paused(paused);
+            if played && self.output.is_none() {
+                crate::log_error!("Audio", "Lost audio output device, no replacement device available");
+                *self.shared.error.lock().unwrap() = Some(NO_OUTPUT.to_owned());
+            }
+            return;
+        }
         if default_device() == self.device && !self.device_lost.load(Relaxed) {
             return;
         }
@@ -1275,5 +1360,14 @@ mod tests {
         }
         assert!(chunk_index > 1, "Expected multiple chunks for full song");
         assert_eq!(downloaded_bytes, stream.len);
+    }
+
+    #[test]
+    fn test_available_output_devices_query() {
+        let devs = available_output_devices();
+        // Enumeration should not panic and return a deduplicated, sorted list
+        for window in devs.windows(2) {
+            assert!(window[0] < window[1], "devices should be sorted and unique");
+        }
     }
 }

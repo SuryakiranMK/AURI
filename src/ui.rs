@@ -841,6 +841,31 @@ fn base_bg_color(saved: &crate::app::Saved) -> Color32 {
     }
 }
 
+pub fn device_icon(device_name: Option<&str>) -> &'static str {
+    let Some(name) = device_name else { return icon::SPEAKER_HIGH };
+    let lower = name.to_lowercase();
+    if lower.contains("headphone")
+        || lower.contains("headset")
+        || lower.contains("arctis")
+        || lower.contains("cloud")
+        || lower.contains("buds")
+        || lower.contains("earphone")
+        || lower.contains("airpod")
+    {
+        icon::HEADPHONES
+    } else if lower.contains("bluetooth") || lower.contains("wireless") {
+        icon::BLUETOOTH
+    } else if lower.contains("hdmi")
+        || lower.contains("display")
+        || lower.contains("tv")
+        || lower.contains("monitor")
+    {
+        icon::TELEVISION
+    } else {
+        icon::SPEAKER_HIGH
+    }
+}
+
 fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     let bar = ui.max_rect();
     let mid = bar.center().y;
@@ -1035,6 +1060,149 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     if eq_resp.clicked() {
         out.push(Action::SetSettingsTab(SettingsTab::Equalizer));
     }
+    tool_right -= 34.0;
+
+    // Audio Output Source Selector Button & Flyout
+    let cur_dev_name = app.player.device_name();
+    let dev_icon = device_icon(cur_dev_name.as_deref());
+    let dev_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
+    let dev_resp = ui.interact(dev_rect, Id::new("win-tool-audio-dev"), Sense::click());
+    let dev_hov = hover_of(ui, &dev_resp);
+    let dev_open = egui::Popup::menu(&dev_resp).is_open();
+    ui.painter().rect_filled(dev_rect, 6.0, if dev_open { pal_color.gamma_multiply(0.20) } else { veil(0.04 * dev_hov) });
+    if dev_open {
+        ui.painter().rect_stroke(dev_rect, 6.0, Stroke::new(1.0_f32, pal_color), StrokeKind::Inside);
+    }
+    let dev_color = if dev_open || dev_hov > 0.1 { pal_color } else { m_color };
+    ui.painter().text(dev_rect.center(), Align2::CENTER_CENTER, dev_icon, solid(16.0), dev_color);
+
+    let tip_text = match &cur_dev_name {
+        Some(name) => format!("Audio Output: {name} (Click to switch)"),
+        None => "Audio Output: System Default (Click to switch)".to_string(),
+    };
+    describe(&dev_resp, &tip_text);
+
+    egui::Popup::menu(&dev_resp)
+        .gap(6.0)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            let popup_frame = Frame::new()
+                .fill(Color32::from_rgb(20, 22, 28))
+                .stroke(Stroke::new(1.0_f32, veil(0.18)))
+                .corner_radius(12.0)
+                .shadow(Shadow {
+                    offset: [0, 8],
+                    blur: 24,
+                    spread: 0,
+                    color: shade(0.70),
+                })
+                .inner_margin(Margin::same(12));
+
+            popup_frame.show(ui, |ui| {
+                let panel_w = 300.0;
+                ui.set_width(panel_w);
+
+                // Header
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("Audio Output Source").size(13.0).strong().color(TEXT));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(RichText::new(icon::ARROWS_CLOCKWISE).size(13.0).color(MUTED)).on_hover_text("Refresh device list").clicked() {
+                            out.push(Action::RefreshAudioDevices);
+                        }
+                    });
+                });
+
+                let active_name = app.player.device_name().unwrap_or_else(|| "Default Device".to_string());
+                ui.label(RichText::new(format!("Active: {active_name}")).size(11.0).color(FAINT));
+
+                ui.add_space(6.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // Devices list
+                egui::ScrollArea::vertical().max_height(200.0).show(ui, |ui| {
+                    ui.set_width(panel_w);
+
+                    // Option: System Default
+                    let is_default_selected = app.saved.audio_device.is_none();
+                    let def_bg = if is_default_selected { pal_color.gamma_multiply(0.18) } else { Color32::TRANSPARENT };
+                    let def_btn = Frame::new().fill(def_bg).corner_radius(6.0).inner_margin(Margin::symmetric(8, 6));
+                    let def_inner = def_btn.show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(icon::SPEAKER_SIMPLE_HIGH).size(14.0).color(if is_default_selected { pal_color } else { MUTED }));
+                            ui.vertical(|ui| {
+                                ui.label(RichText::new("System Default").size(12.0).strong().color(if is_default_selected { pal_color } else { TEXT }));
+                                ui.label(RichText::new("Follows Windows default device").size(10.5).color(FAINT));
+                            });
+                            if is_default_selected {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new(icon::CHECK).size(13.0).strong().color(pal_color));
+                                });
+                            }
+                        });
+                    });
+
+                    if ui.interact(def_inner.response.rect, Id::new("sel-dev-default"), Sense::click()).clicked() {
+                        out.push(Action::SetAudioDevice(None));
+                        ui.close();
+                    }
+
+                    ui.add_space(2.0);
+
+                    // Detected devices
+                    for (idx, dev) in app.audio_devices.iter().enumerate() {
+                        let is_selected = app.saved.audio_device.as_deref() == Some(dev.as_str());
+                        let dev_bg = if is_selected { pal_color.gamma_multiply(0.18) } else { Color32::TRANSPARENT };
+                        let dev_frame = Frame::new().fill(dev_bg).corner_radius(6.0).inner_margin(Margin::symmetric(8, 6));
+
+                        let dev_inner = dev_frame.show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(device_icon(Some(dev.as_str()))).size(14.0).color(if is_selected { pal_color } else { MUTED }));
+                                ui.vertical(|ui| {
+                                    ui.add(egui::Label::new(RichText::new(dev).size(12.0).strong().color(if is_selected { pal_color } else { TEXT })).truncate());
+                                    ui.label(RichText::new("WASAPI Endpoint").size(10.5).color(FAINT));
+                                });
+                                if is_selected {
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        ui.label(RichText::new(icon::CHECK).size(13.0).strong().color(pal_color));
+                                    });
+                                }
+                            });
+                        });
+
+                        if ui.interact(dev_inner.response.rect, Id::new(("sel-dev", idx)), Sense::click()).clicked() {
+                            out.push(Action::SetAudioDevice(Some(dev.clone())));
+                            ui.close();
+                        }
+                        ui.add_space(2.0);
+                    }
+                });
+
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
+
+                // Quick Volume Bar
+                ui.horizontal(|ui| {
+                    let vol_icon = if app.saved.volume <= 0.001 {
+                        icon::SPEAKER_X
+                    } else if app.saved.volume < 0.5 {
+                        icon::SPEAKER_LOW
+                    } else {
+                        icon::SPEAKER_HIGH
+                    };
+                    if ui.button(RichText::new(vol_icon).size(13.0).color(MUTED)).clicked() {
+                        let new_vol = if app.saved.volume > 0.001 { 0.0 } else { 0.8 };
+                        out.push(Action::Volume(new_vol));
+                    }
+                    let mut vol_percent = (app.saved.volume * 100.0).round();
+                    if ui.add(egui::Slider::new(&mut vol_percent, 0.0..=100.0).show_value(false)).changed() {
+                        out.push(Action::Volume(vol_percent / 100.0));
+                    }
+                    ui.label(RichText::new(format!("{}%", vol_percent as u32)).size(11.0).color(TEXT));
+                });
+            });
+        });
     tool_right -= 34.0;
 
     // Extreme Performance Mode Pill (⚡ Perf)
@@ -5355,6 +5523,52 @@ fn hotkey_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 
 fn audio_dsp_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
     let pal_color = app.saved.theme_palette.color();
+    settings_card_panel(
+        ui,
+        "audio-output-card",
+        "Audio output device",
+        "Select the physical sound endpoint or follow the Windows default device.",
+        |ui| {
+            let row = row_base(
+                ui,
+                device_icon(app.player.device_name().as_deref()),
+                "Playback endpoint",
+                "Choose where AURI routes all music audio.",
+            );
+            let combo_w = 230.0;
+            let combo_rect = Rect::from_min_size(
+                pos2(row.right() - combo_w - 4.0, row.center().y - 14.0),
+                vec2(combo_w, 28.0),
+            );
+            let mut combo_ui = ui.new_child(
+                egui::UiBuilder::new()
+                    .id_salt("audio-device-picker-combo")
+                    .max_rect(combo_rect)
+                    .layout(egui::Layout::right_to_left(Align::Center)),
+            );
+
+            let current_label = match &app.saved.audio_device {
+                Some(target) => target.as_str(),
+                None => "System Default",
+            };
+
+            egui::ComboBox::from_id_salt("settings-audio-device-combo")
+                .selected_text(RichText::new(current_label).font(sans(12.0)).color(TEXT))
+                .width(combo_w)
+                .show_ui(&mut combo_ui, |ui| {
+                    let is_default = app.saved.audio_device.is_none();
+                    if ui.selectable_label(is_default, "System Default (Follows Windows)").clicked() {
+                        out.push(Action::SetAudioDevice(None));
+                    }
+                    for dev in &app.audio_devices {
+                        let is_active = app.saved.audio_device.as_deref() == Some(dev.as_str());
+                        if ui.selectable_label(is_active, dev).clicked() {
+                            out.push(Action::SetAudioDevice(Some(dev.clone())));
+                        }
+                    }
+                });
+        },
+    );
     settings_card_panel(ui, "eq-loudness", "Loudness & limiting", "Uniform, clipping-free volume across every track.", |ui| {
         if toggle_row(
             ui,
@@ -10955,5 +11169,15 @@ mod tests {
                 paint_glass_grain(ui.painter(), Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, 40.0)), 6.0, 0.0);
             });
         });
+    }
+
+    #[test]
+    fn test_device_icon_categorization() {
+        assert_eq!(device_icon(Some("Realtek High Definition Audio")), icon::SPEAKER_HIGH);
+        assert_eq!(device_icon(Some("SteelSeries Arctis Nova 7")), icon::HEADPHONES);
+        assert_eq!(device_icon(Some("HyperX Cloud II Wireless")), icon::HEADPHONES);
+        assert_eq!(device_icon(Some("Bluetooth Audio Receiver")), icon::BLUETOOTH);
+        assert_eq!(device_icon(Some("NVIDIA High Definition Audio (HDMI/DisplayPort)")), icon::TELEVISION);
+        assert_eq!(device_icon(None), icon::SPEAKER_HIGH);
     }
 }

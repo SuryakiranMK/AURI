@@ -828,6 +828,8 @@ pub struct Saved {
     pub discord_headline: Headline,
     pub discord_name: String,
     pub mini_mode: bool,
+    #[serde(default)]
+    pub audio_device: Option<String>,
     pub loudness_normalizer: bool,
     pub hotkeys: bool,
     pub hotkey_combos: [Option<Combo>; 5],
@@ -1185,6 +1187,7 @@ impl Default for Saved {
             discord_headline: Headline::App,
             discord_name: String::new(),
             mini_mode: false,
+            audio_device: None,
             loudness_normalizer: true,
             hotkeys: false,
             hotkey_combos: hotkeys::standard_combos(),
@@ -1343,6 +1346,8 @@ pub enum Action {
     ToggleMiniCapsuleRetractable,
     ToggleShuffle,
     CycleRepeat,
+    SetAudioDevice(Option<String>),
+    RefreshAudioDevices,
     OpenSignIn,
     CloseSignIn,
     BrowserSignIn,
@@ -1644,6 +1649,8 @@ pub struct App {
     pub diagnostics_filter: usize,
     pub diagnostics_auto_scroll: bool,
     consecutive_skips: usize,
+    pub audio_devices: Vec<String>,
+    pub last_device_scan: Instant,
     restart: Option<PathBuf>,
 }
 
@@ -1805,8 +1812,13 @@ impl App {
             diagnostics_filter: 0,
             diagnostics_auto_scroll: true,
             consecutive_skips: 0,
+            audio_devices: crate::player::available_output_devices(),
+            last_device_scan: Instant::now(),
             restart: None,
         };
+        if let Some(target) = &app.saved.audio_device {
+            app.player.set_target_device(Some(target.clone()));
+        }
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
         app.yt.set_low_quality(app.saved.stream_quality == StreamQuality::Low);
         if app.saved.mini_mode {
@@ -3172,6 +3184,19 @@ impl App {
             Action::SetSettingsTab(tab) => {
                 self.expanded = false;
                 self.go(Route::Settings(tab));
+            }
+            Action::SetAudioDevice(target) => {
+                self.saved.audio_device = target.clone();
+                self.player.set_target_device(target.clone());
+                if let Some(name) = target {
+                    self.notify(format!("Audio Output: {name}"));
+                } else {
+                    self.notify("Audio Output: System Default (Follows Windows)");
+                }
+            }
+            Action::RefreshAudioDevices => {
+                self.audio_devices = crate::player::available_output_devices();
+                self.last_device_scan = Instant::now();
             }
             Action::SetMiniPalette(p) => self.saved.mini_palette = p,
             Action::SetMiniOpacity(o) => self.saved.mini_opacity = o.clamp(0.55, 1.0),
