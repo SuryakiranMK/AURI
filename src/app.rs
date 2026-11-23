@@ -1663,6 +1663,8 @@ pub struct App {
     pub game_overlay_open: bool,
     pub game_hud_queue_open: bool,
     pub game_hud_opened_at: Instant,
+    pub game_hud_has_focused: bool,
+    pub game_hud_drag_pos: Option<egui::Pos2>,
     pub last_game_hwnd: isize,
     pub game_mode_start_time: Option<Instant>,
     game_hotkey_stop: Arc<AtomicBool>,
@@ -1834,6 +1836,8 @@ impl App {
             game_overlay_open: false,
             game_hud_queue_open: false,
             game_hud_opened_at: Instant::now(),
+            game_hud_has_focused: false,
+            game_hud_drag_pos: None,
             last_game_hwnd: 0,
             game_mode_start_time: None,
             game_hotkey_stop: Arc::default(),
@@ -2496,7 +2500,7 @@ impl App {
                         ctx.request_repaint();
                     }
                     was_down = down;
-                    std::thread::sleep(Duration::from_millis(30));
+                    std::thread::sleep(Duration::from_millis(15));
                 }
             });
         }
@@ -2507,14 +2511,20 @@ impl App {
         #[cfg(windows)]
         {
             use windows_sys::Win32::UI::WindowsAndMessaging::{
-                GetForegroundWindow, SetForegroundWindow, SetWindowPos,
-                SWP_SHOWWINDOW, HWND_TOPMOST,
+                GetForegroundWindow, SetForegroundWindow, SetWindowPos, ShowWindow, IsZoomed,
+                SWP_SHOWWINDOW, HWND_TOPMOST, SW_RESTORE,
             };
             use windows_sys::Win32::Graphics::Gdi::{
                 GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
             };
 
             let auri_hwnd = crate::tray::main_hwnd();
+            if !auri_hwnd.is_null() && unsafe { IsZoomed(auri_hwnd) } != 0 {
+                unsafe {
+                    ShowWindow(auri_hwnd, SW_RESTORE);
+                }
+            }
+
             let target_hwnd = if self.last_game_hwnd != 0 {
                 self.last_game_hwnd as windows_sys::Win32::Foundation::HWND
             } else {
@@ -2525,40 +2535,46 @@ impl App {
             let w_px = (380.0 * ppp).round() as i32;
             let h_px = (h_points * ppp).round() as i32;
 
-            let mut x = 40;
-            let mut y = 40;
+            let (x, y) = if let Some(drag_pos) = self.game_hud_drag_pos {
+                ((drag_pos.x * ppp).round() as i32, (drag_pos.y * ppp).round() as i32)
+            } else {
+                let (screen_w, _screen_h) = screen_size();
+                let mut calc_x = (screen_w - 380.0 - 24.0) as i32;
+                let mut calc_y = 24;
 
-            let hmon = unsafe { MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONEAREST) };
-            if !hmon.is_null() {
-                let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
-                info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-                if unsafe { GetMonitorInfoW(hmon, &mut info) } != 0 {
-                    let work = info.rcWork;
-                    let margin = (24.0 * ppp).round() as i32;
-                    match self.saved.game_hud_position {
-                        GameHudPosition::TopLeft => {
-                            x = work.left + margin;
-                            y = work.top + margin;
-                        }
-                        GameHudPosition::TopCenter => {
-                            x = work.left + (work.right - work.left - w_px) / 2;
-                            y = work.top + margin;
-                        }
-                        GameHudPosition::TopRight => {
-                            x = work.right - w_px - margin;
-                            y = work.top + margin;
-                        }
-                        GameHudPosition::BottomRight => {
-                            x = work.right - w_px - margin;
-                            y = work.bottom - h_px - margin;
-                        }
-                        GameHudPosition::BottomCenter => {
-                            x = work.left + (work.right - work.left - w_px) / 2;
-                            y = work.bottom - h_px - margin;
+                let hmon = unsafe { MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONEAREST) };
+                if !hmon.is_null() {
+                    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+                    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                    if unsafe { GetMonitorInfoW(hmon, &mut info) } != 0 {
+                        let work = info.rcWork;
+                        let margin = (24.0 * ppp).round() as i32;
+                        match self.saved.game_hud_position {
+                            GameHudPosition::TopLeft => {
+                                calc_x = work.left + margin;
+                                calc_y = work.top + margin;
+                            }
+                            GameHudPosition::TopCenter => {
+                                calc_x = work.left + (work.right - work.left - w_px) / 2;
+                                calc_y = work.top + margin;
+                            }
+                            GameHudPosition::TopRight => {
+                                calc_x = work.right - w_px - margin;
+                                calc_y = work.top + margin;
+                            }
+                            GameHudPosition::BottomRight => {
+                                calc_x = work.right - w_px - margin;
+                                calc_y = work.bottom - h_px - margin;
+                            }
+                            GameHudPosition::BottomCenter => {
+                                calc_x = work.left + (work.right - work.left - w_px) / 2;
+                                calc_y = work.bottom - h_px - margin;
+                            }
                         }
                     }
                 }
-            }
+                (calc_x, calc_y)
+            };
 
             if !auri_hwnd.is_null() {
                 unsafe {
@@ -3851,6 +3867,8 @@ impl App {
                 self.in_game_mode = false;
                 self.game_overlay_open = false;
                 self.game_hud_queue_open = false;
+                self.game_hud_drag_pos = None;
+                self.game_hud_has_focused = false;
                 self.last_game_hwnd = 0;
                 self.game_mode_start_time = None;
                 self.game_hotkey_stop.store(true, Relaxed);
@@ -3865,8 +3883,7 @@ impl App {
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 }
 
-                self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(100.0, 100.0)));
-                self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -3876,6 +3893,8 @@ impl App {
                 self.in_game_mode = false;
                 self.game_overlay_open = false;
                 self.game_hud_queue_open = false;
+                self.game_hud_drag_pos = None;
+                self.game_hud_has_focused = false;
                 self.last_game_hwnd = 0;
                 self.game_mode_start_time = None;
                 self.game_hotkey_stop.store(true, Relaxed);
@@ -3900,13 +3919,14 @@ impl App {
                 }
                 if self.game_overlay_open {
                     self.game_overlay_open = false;
+                    self.game_hud_has_focused = false;
                     #[cfg(windows)]
                     {
-                        use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SetForegroundWindow, SW_HIDE};
+                        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SetForegroundWindow, SWP_NOACTIVATE, SWP_NOZORDER, SWP_NOSIZE, SWP_FRAMECHANGED};
                         let auri_hwnd = crate::tray::main_hwnd();
                         if !auri_hwnd.is_null() {
                             unsafe {
-                                ShowWindow(auri_hwnd, SW_HIDE);
+                                SetWindowPos(auri_hwnd, std::ptr::null_mut(), -32000, -32000, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE | SWP_FRAMECHANGED);
                             }
                         }
                         if self.last_game_hwnd != 0 {
@@ -3923,6 +3943,7 @@ impl App {
                 } else {
                     self.game_overlay_open = true;
                     self.game_hud_opened_at = Instant::now();
+                    self.game_hud_has_focused = false;
                     #[cfg(windows)]
                     {
                         let auri_hwnd = crate::tray::main_hwnd();
@@ -4294,7 +4315,8 @@ impl eframe::App for App {
                 }
             }
         }
-        if !minimized && !self.in_game_mode && !self.saved.mini_mode && (size.x < WINDOW_MIN[0] - 1.0 || size.y < WINDOW_MIN[1] - 1.0) {
+        let is_maximized = ctx.input(|i| i.viewport().maximized == Some(true));
+        if !minimized && !self.in_game_mode && !self.saved.mini_mode && !is_maximized && size.x > 50.0 && size.y > 50.0 && (size.x < WINDOW_MIN[0] - 1.0 || size.y < WINDOW_MIN[1] - 1.0) {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
         }
         self.art.begin_frame(ctx);
@@ -4303,21 +4325,16 @@ impl eframe::App for App {
 
         if self.in_game_mode {
             if self.game_overlay_open {
+                if window_focused {
+                    self.game_hud_has_focused = true;
+                }
                 if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                     actions.push(Action::ToggleGameOverlay);
                 }
-                // Auto-close overlay when clicking outside / losing focus (after 200ms grace period)
-                let outside_clicked = if self.game_hud_opened_at.elapsed() >= Duration::from_millis(200) {
-                    #[cfg(windows)]
-                    {
-                        let auri_hwnd = crate::tray::main_hwnd();
-                        let fg = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
-                        !window_focused || (!auri_hwnd.is_null() && !fg.is_null() && fg != auri_hwnd)
-                    }
-                    #[cfg(not(windows))]
-                    {
-                        !window_focused
-                    }
+                // Auto-close overlay when clicking outside / losing focus:
+                // Only trigger if HUD had gained focus and then lost it, preventing false closes from Windows game foreground locks.
+                let outside_clicked = if self.game_hud_opened_at.elapsed() >= Duration::from_millis(300) {
+                    self.game_hud_has_focused && !window_focused
                 } else {
                     false
                 };

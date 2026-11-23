@@ -202,7 +202,7 @@ pub fn start_ipc_server(_sender: std::sync::mpsc::Sender<app::Event>, _ctx: egui
 fn enforce_single_instance(join_code: Option<&str>) {
     use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
     use windows_sys::Win32::System::Threading::CreateMutexW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow, SW_RESTORE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{FindWindowW, SetForegroundWindow, ShowWindow};
 
     let profile = app_id();
     let name: Vec<u16> = format!("Local\\AURI.{profile}\0").encode_utf16().collect();
@@ -240,7 +240,12 @@ fn enforce_single_instance(join_code: Option<&str>) {
         let window = unsafe { FindWindowW(std::ptr::null(), title.as_ptr()) } as isize;
         if window != 0 {
             unsafe {
-                ShowWindow(window as _, SW_RESTORE);
+                use windows_sys::Win32::UI::WindowsAndMessaging::{IsZoomed, SW_RESTORE, SW_SHOWMAXIMIZED};
+                if IsZoomed(window as _) != 0 {
+                    ShowWindow(window as _, SW_SHOWMAXIMIZED);
+                } else {
+                    ShowWindow(window as _, SW_RESTORE);
+                }
                 SetForegroundWindow(window as _);
             }
         }
@@ -312,9 +317,13 @@ fn main() -> eframe::Result {
         _ => (None, false),
     };
     enforce_single_instance(pending_join.as_deref());
+    let (screen_w, screen_h) = app::screen_size();
+    let center_x = ((screen_w - app::WINDOW_SIZE[0]) / 2.0).max(0.0);
+    let center_y = ((screen_h - app::WINDOW_SIZE[1]) / 2.0).max(0.0);
     let viewport = egui::ViewportBuilder::default()
         .with_title(APP_NAME)
         .with_app_id(app_id())
+        .with_position([center_x, center_y])
         .with_inner_size(app::WINDOW_SIZE)
         .with_min_inner_size(app::WINDOW_MIN)
         .with_maximized(true)
