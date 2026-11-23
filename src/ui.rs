@@ -456,18 +456,10 @@ struct Scrub {
 
 #[cfg(windows)]
 pub struct TitleBar {
-    window: isize,
+    pub window: isize,
     painted: Option<Color32>,
 }
 
-#[cfg(windows)]
-#[repr(C)]
-struct Margins {
-    cx_left_width: i32,
-    cx_right_width: i32,
-    cy_top_height: i32,
-    cy_bottom_height: i32,
-}
 
 #[cfg(windows)]
 impl TitleBar {
@@ -499,173 +491,7 @@ impl TitleBar {
         }
     }
 
-    /// While Gaming Mode keeps the window on-screen but idle, this makes it
-    /// ignore mouse input so the game beneath stays playable. Flipping an
-    /// extended style is instant: no move, resize, z-order or repaint churn.
-    pub fn set_click_through(&self, through: bool) {
-        use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_TRANSPARENT};
-        if self.window != 0 {
-            unsafe {
-                let style = GetWindowLongPtrW(self.window as _, GWL_EXSTYLE);
-                let next = if through { style | WS_EX_TRANSPARENT as isize } else { style & !(WS_EX_TRANSPARENT as isize) };
-                SetWindowLongPtrW(self.window as _, GWL_EXSTYLE, next);
-            }
-        }
-    }
 
-    pub fn enable_transparency(&self) {
-        #[link(name = "dwmapi")]
-        unsafe extern "system" {
-            fn DwmExtendFrameIntoClientArea(hwnd: isize, pMarInset: *const Margins) -> i32;
-            fn DwmSetWindowAttribute(hwnd: isize, dwAttribute: u32, pvAttribute: *const std::ffi::c_void, cbAttribute: u32) -> i32;
-        }
-
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_STYLE, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOMOVE,
-            SWP_NOSIZE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME, WS_POPUP,
-            WS_EX_TOOLWINDOW, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOPMOST, SW_SHOW, HWND_TOPMOST,
-        };
-        use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
-        use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
-        use windows::Win32::Foundation::HWND;
-
-        if self.window != 0 {
-            unsafe {
-                // 1. Remove tab from Windows taskbar via COM interface
-                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-                if let Ok(taskbar) = CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER) {
-                    let _ = taskbar.HrInit();
-                    let _ = taskbar.DeleteTab(HWND(self.window as _));
-                }
-
-                // 2. Strip all window caption and button styles so Windows DWM never renders minimize/maximize/close buttons
-                let style = GetWindowLongPtrW(self.window as _, GWL_STYLE) as u32;
-                let new_style = (style | WS_POPUP) & !(WS_CAPTION | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_THICKFRAME);
-                SetWindowLongPtrW(self.window as _, GWL_STYLE, new_style as isize);
-
-                // 3. Set WS_EX_TOOLWINDOW & WS_EX_TOPMOST, clear WS_EX_APPWINDOW & WS_EX_NOACTIVATE.
-                // Keeping the window activated allows immediate mouse interaction and dragging on first frame.
-                let ex_style = GetWindowLongPtrW(self.window as _, GWL_EXSTYLE) as u32;
-                let new_ex_style = (ex_style | WS_EX_TOOLWINDOW | WS_EX_TOPMOST) & !(WS_EX_APPWINDOW | WS_EX_NOACTIVATE);
-                SetWindowLongPtrW(self.window as _, GWL_EXSTYLE, new_ex_style as isize);
-
-                SetWindowPos(self.window as _, HWND_TOPMOST as _, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_FRAMECHANGED);
-
-                // Disable Windows 11 system outer border (DWMWA_BORDER_COLOR = 34, 0xFFFFFFFE is DWMWA_COLOR_NONE)
-                let border_color: u32 = 0xFFFFFFFE;
-                DwmSetWindowAttribute(self.window as _, 34, (&raw const border_color).cast(), 4);
-
-                // Ensure DWM non-client rendering policy is always ENABLED (DWMWA_NCRENDERING_POLICY = 2, DWMNCRP_ENABLED = 2).
-                // Never disable it (1), which caused Windows to fall back to the legacy Windows 95/XP GDI frame!
-                let nc_policy: u32 = 2;
-                DwmSetWindowAttribute(self.window as _, 2, (&raw const nc_policy).cast(), 4);
-
-                // Disable Windows 11 rounded window frame (DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_DONOTROUND = 1)
-                let corner_pref: u32 = 1;
-                DwmSetWindowAttribute(self.window as _, 33, (&raw const corner_pref).cast(), 4);
-
-                // Disable Windows 11 compositor backdrop (DWMWA_SYSTEMBACKDROP_TYPE = 38, DWMSBT_NONE = 1)
-                let backdrop_type: u32 = 1;
-                DwmSetWindowAttribute(self.window as _, 38, (&raw const backdrop_type).cast(), 4);
-
-                let margins = Margins {
-                    cx_left_width: -1,
-                    cx_right_width: -1,
-                    cy_top_height: -1,
-                    cy_bottom_height: -1,
-                };
-                DwmExtendFrameIntoClientArea(self.window, &margins);
-
-                // 4. Ensure window is visible and ready for interaction
-                ShowWindow(self.window as _, SW_SHOW);
-            }
-        }
-    }
-
-    pub fn restore_decorations(&self) {
-        #[link(name = "dwmapi")]
-        unsafe extern "system" {
-            fn DwmExtendFrameIntoClientArea(hwnd: isize, pMarInset: *const Margins) -> i32;
-            fn DwmSetWindowAttribute(hwnd: isize, dwAttribute: u32, pvAttribute: *const std::ffi::c_void, cbAttribute: u32) -> i32;
-        }
-
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_STYLE, GWL_EXSTYLE, SWP_FRAMECHANGED,
-            WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME, WS_POPUP,
-            WS_EX_TOOLWINDOW, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOPMOST, HWND_NOTOPMOST,
-        };
-        use windows_sys::Win32::Foundation::RECT;
-        use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
-        use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
-        use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
-        use windows::Win32::Foundation::HWND;
-
-        if self.window != 0 {
-            unsafe {
-                // 1. Window styles, applied live.
-                let style = GetWindowLongPtrW(self.window as _, GWL_STYLE) as u32;
-                let new_style = (style | WS_THICKFRAME) & !(WS_CAPTION | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU | WS_POPUP);
-                SetWindowLongPtrW(self.window as _, GWL_STYLE, new_style as isize);
-
-                // Restore to standard application window on the Windows taskbar, remove TOOLWINDOW and NOACTIVATE
-                let ex_style = GetWindowLongPtrW(self.window as _, GWL_EXSTYLE) as u32;
-                let new_ex_style = (ex_style & !(WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE)) | WS_EX_APPWINDOW;
-                SetWindowLongPtrW(self.window as _, GWL_EXSTYLE, new_ex_style as isize);
-
-                // 2. DWM state first, so the frame change below is rendered
-                // with the final look. Ensure DWM non-client rendering policy is explicitly ENABLED (2)
-                // so Windows never falls back to the legacy classic GDI frame.
-                let nc_policy: u32 = 2;
-                DwmSetWindowAttribute(self.window as _, 2, (&raw const nc_policy).cast(), 4);
-
-                let border_color: u32 = 0xFFFFFFFF;
-                DwmSetWindowAttribute(self.window as _, 34, (&raw const border_color).cast(), 4);
-
-                let corner_pref: u32 = 0;
-                DwmSetWindowAttribute(self.window as _, 33, (&raw const corner_pref).cast(), 4);
-
-                let backdrop_type: u32 = 0;
-                DwmSetWindowAttribute(self.window as _, 38, (&raw const backdrop_type).cast(), 4);
-
-                let margins = Margins {
-                    cx_left_width: 0,
-                    cx_right_width: 0,
-                    cy_top_height: 0,
-                    cy_bottom_height: 0,
-                };
-                DwmExtendFrameIntoClientArea(self.window, &margins);
-
-                // 3. Taskbar re-registration.
-                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-                if let Ok(taskbar) = CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER) {
-                    let _ = taskbar.HrInit();
-                    let _ = taskbar.AddTab(HWND(self.window as _));
-                }
-
-                // 4. Atomic geometry + frame change: ONE SetWindowPos jumps
-                // straight from the mini overlay to the full monitor work
-                // area while applying the new frame. Windows never gets the
-                // chance to draw a small framed intermediate window.
-                let monitor = MonitorFromWindow(self.window as _, MONITOR_DEFAULTTONEAREST);
-                let mut info: MONITORINFO = std::mem::zeroed();
-                info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-                let work = if GetMonitorInfoW(monitor, &mut info) != 0 {
-                    info.rcWork
-                } else {
-                    RECT { left: 0, top: 0, right: 1920, bottom: 1080 }
-                };
-                SetWindowPos(
-                    self.window as _,
-                    HWND_NOTOPMOST as _,
-                    work.left,
-                    work.top,
-                    work.right - work.left,
-                    work.bottom - work.top,
-                    SWP_FRAMECHANGED,
-                );
-            }
-        }
-    }
 
     /// Default resting spot for the mini HUD: the bottom-right of the
     /// monitor's work area, clear of the taskbar. Entering mini mode from a
@@ -811,11 +637,6 @@ impl TitleBar {
 
     fn paint(&mut self, _color: Color32) {}
 
-    pub fn enable_transparency(&self) {}
-
-    pub fn set_click_through(&self, _through: bool) {}
-
-    pub fn restore_decorations(&self) {}
 
     pub fn mini_anchor(&self, _size: egui::Vec2, _points_per_pixel: f32) -> egui::Pos2 {
         egui::pos2(120.0, 120.0)
@@ -978,6 +799,23 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
     ui.painter().vline(sep_x, bar.y_range().shrink(8.0), Stroke::new(1.0_f32, veil(0.08)));
 
     let mut tool_right = sep_x - 8.0;
+
+    // Gaming Mode Icon Button
+    let is_game = app.in_game_mode;
+    let game_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
+    let game_resp = ui.interact(game_rect, Id::new("win-tool-gamemode"), Sense::click());
+    let game_hov = hover_of(ui, &game_resp);
+    ui.painter().rect_filled(game_rect, 6.0, if is_game { pal_color.gamma_multiply(0.20) } else { veil(0.04 * game_hov) });
+    if is_game {
+        ui.painter().rect_stroke(game_rect, 6.0, Stroke::new(1.0_f32, pal_color), StrokeKind::Inside);
+    }
+    let game_color = if is_game || game_hov > 0.1 { pal_color } else { m_color };
+    ui.painter().text(game_rect.center(), Align2::CENTER_CENTER, icon::GAME_CONTROLLER, solid(16.0), game_color);
+    describe(&game_resp, "Gaming Mode (Zero-Overhead Player & HUD)");
+    if game_resp.clicked() {
+        out.push(Action::ToggleGameMode);
+    }
+    tool_right -= 34.0;
 
     // Mini Mode Icon Button
     let mini_rect = Rect::from_center_size(pos2(tool_right - 14.0, mid), Vec2::splat(28.0));
@@ -5208,137 +5046,37 @@ fn discord_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
 
 fn render_gaming_preview(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32) {
     let pal_color = app.saved.theme_palette.color();
+    let card_h = if app.game_hud_queue_open { 350.0 } else { 144.0 };
     ui.vertical(|ui| {
         ui.set_width(w);
 
-        ui.label(RichText::new("OVERLAY PREVIEW").font(bold(11.5)).color(MUTED));
-        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("1:1 LIVE QUICK HUD PREVIEW").font(bold(11.5)).color(MUTED));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let (badge_rect, _) = ui.allocate_exact_size(vec2(86.0, 18.0), Sense::hover());
+                ui.painter().rect_filled(badge_rect, 9.0, pal_color.gamma_multiply(0.20));
+                ui.painter().text(badge_rect.center(), Align2::CENTER_CENTER, &format!("380 × {} px", card_h as u32), bold(9.5), pal_color);
+            });
+        });
+        ui.add_space(6.0);
 
         let frame = Frame::new()
-            .fill(veil(0.05))
+            .fill(veil(0.04))
             .stroke(Stroke::new(1.0_f32, veil(0.08)))
             .corner_radius(CARD_RADIUS as u8)
-            .inner_margin(Margin::same(12));
+            .inner_margin(Margin::same(14));
 
         frame.show(ui, |ui| {
-            ui.horizontal(|ui| {
-                let (badge_rect, _) = ui.allocate_exact_size(vec2(100.0, 18.0), Sense::hover());
-                ui.painter().rect_filled(badge_rect, 9.0, pal_color.gamma_multiply(0.20));
-                ui.painter().text(badge_rect.center(), Align2::CENTER_CENTER, "Translucent HUD", bold(10.0), pal_color);
+            ui.vertical_centered(|ui| {
+                let (card_rect, _) = ui.allocate_exact_size(vec2(380.0, card_h), Sense::hover());
+                render_quick_hud_card(ui, app, out, card_rect, true);
             });
-            ui.add_space(6.0);
-
-            // Mockup Screen Container
-            let card_w = w - 24.0;
-            let (screen_rect, _) = ui.allocate_exact_size(vec2(card_w, 240.0), Sense::hover());
-            let alpha = (app.saved.game_overlay_opacity.clamp(0.15, 0.95) * 255.0) as u8;
-            ui.painter().rect_filled(screen_rect, 10.0, Color32::from_black_alpha(alpha));
-            ui.painter().rect_stroke(screen_rect, 10.0, Stroke::new(1.0_f32, Color32::from_rgb(43, 45, 52)), StrokeKind::Inside);
-
-            // Clock & Title in mockup
-            label(ui, pos2(screen_rect.left() + 12.0, screen_rect.top() + 14.0), Align2::LEFT_CENTER, "14:25", bold(15.0), Color32::WHITE, 80.0);
-            label(ui, pos2(screen_rect.left() + 12.0, screen_rect.top() + 28.0), Align2::LEFT_CENTER, "SESSION 00:42 · ZERO LAG", bold(8.0), pal_color, 140.0);
-
-            let current_song = app.saved.current.and_then(|c| app.saved.queue.get(c));
-            let live_title = current_song.map_or("Mangal Rang (From \"Ramayana\")", |s| s.title.as_str());
-            let live_artist = current_song.map_or("A.R. Rahman, Arijit Singh", |s| s.subtitle.as_str());
-
-            let mut cur_y = screen_rect.top() + 44.0;
-
-            // Mini Music Widget Mockup
-            if app.saved.game_show_music_widget {
-                let m_rect = Rect::from_min_size(pos2(screen_rect.left() + 8.0, cur_y), vec2(card_w - 16.0, 52.0));
-                ui.painter().rect_filled(m_rect, 8.0, Color32::from_rgba_premultiplied(18, 20, 26, 240));
-                ui.painter().rect_stroke(m_rect, 8.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.35)), StrokeKind::Inside);
-
-                let m_thumb = Rect::from_min_size(pos2(m_rect.left() + 6.0, m_rect.top() + 6.0), Vec2::splat(40.0));
-                let mut drew = false;
-                if let Some(cover_str) = current_song.map(|s| app.saved.covers.of(s)) {
-                    if let Some(pic) = app.art.get(ui.ctx(), cover_str, 1.0) {
-                        egui::Image::from_texture((pic.id, m_thumb.size())).corner_radius(4.0).paint_at(ui, m_thumb);
-                        drew = true;
-                    }
-                }
-                if !drew {
-                    ui.painter().rect_filled(m_thumb, 4.0, Color32::from_rgb(30, 32, 40));
-                    ui.painter().text(m_thumb.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(14.0), MUTED);
-                }
-
-                label(ui, pos2(m_thumb.right() + 8.0, m_rect.top() + 12.0), Align2::LEFT_CENTER, live_title, bold(10.5), TEXT, m_rect.width() - 85.0);
-                label(ui, pos2(m_thumb.right() + 8.0, m_rect.top() + 25.0), Align2::LEFT_CENTER, live_artist, sans(9.0), MUTED, m_rect.width() - 85.0);
-
-                let scrob_x1 = m_thumb.right() + 8.0;
-                let scrob_x2 = m_rect.right() - 32.0;
-                let scrob_fill = scrob_x1 + (scrob_x2 - scrob_x1) * 0.35;
-                ui.painter().hline(scrob_x1..=scrob_x2, m_rect.top() + 39.0, Stroke::new(2.0_f32, veil(0.15)));
-                ui.painter().hline(scrob_x1..=scrob_fill, m_rect.top() + 39.0, Stroke::new(2.0_f32, pal_color));
-
-                ui.painter().circle_filled(pos2(m_rect.right() - 16.0, m_rect.center().y), 10.0, pal_color);
-                ui.painter().text(pos2(m_rect.right() - 16.0, m_rect.center().y), Align2::CENTER_CENTER, icon::PLAY, glyph(9.0), contrast_text_for(pal_color));
-
-                cur_y += 58.0;
-            }
-
-            // Mini Audio & Hardware widget
-            if app.saved.game_show_audio_widget {
-                let a_rect = Rect::from_min_size(pos2(screen_rect.left() + 8.0, cur_y), vec2(card_w - 16.0, 40.0));
-                ui.painter().rect_filled(a_rect, 8.0, Color32::from_rgba_premultiplied(18, 20, 26, 240));
-                ui.painter().rect_stroke(a_rect, 8.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-
-                ui.painter().text(pos2(a_rect.left() + 14.0, a_rect.center().y), Align2::CENTER_CENTER, icon::SPEAKER_HIGH, glyph(12.0), pal_color);
-                let v_x1 = a_rect.left() + 28.0;
-                let v_x2 = a_rect.right() - 96.0;
-                let v_fill = v_x1 + (v_x2 - v_x1) * app.saved.volume.clamp(0.0, 1.0);
-                ui.painter().hline(v_x1..=v_x2, a_rect.center().y, Stroke::new(2.0_f32, veil(0.15)));
-                ui.painter().hline(v_x1..=v_fill, a_rect.center().y, Stroke::new(2.0_f32, pal_color));
-
-                let clean_pill = Rect::from_min_size(pos2(a_rect.right() - 86.0, a_rect.center().y - 10.0), vec2(76.0, 20.0));
-                ui.painter().rect_filled(clean_pill, 5.0, veil(0.10));
-                ui.painter().text(clean_pill.center(), Align2::CENTER_CENTER, "⚡ Clean RAM", bold(9.0), pal_color);
-
-                cur_y += 46.0;
-            }
-
-            // Mini Queue widget
-            if app.saved.game_show_queue_widget && cur_y < screen_rect.bottom() - 50.0 {
-                let q_rect = Rect::from_min_size(pos2(screen_rect.left() + 8.0, cur_y), vec2(card_w - 16.0, (screen_rect.bottom() - cur_y - 36.0).max(34.0)));
-                ui.painter().rect_filled(q_rect, 8.0, Color32::from_rgba_premultiplied(18, 20, 26, 240));
-                ui.painter().rect_stroke(q_rect, 8.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-
-                label(ui, pos2(q_rect.left() + 10.0, q_rect.top() + 10.0), Align2::LEFT_CENTER, &format!("QUEUE ({} songs)", app.saved.queue.len()), bold(8.5), MUTED, q_rect.width() - 20.0);
-                for (i, song) in app.saved.queue.iter().take(1).enumerate() {
-                    let sy = q_rect.top() + 22.0 + i as f32 * 12.0;
-                    if sy < q_rect.bottom() - 6.0 {
-                        label(ui, pos2(q_rect.left() + 10.0, sy), Align2::LEFT_CENTER, &format!("{} · {}", song.title, song.subtitle), sans(8.0), TEXT, q_rect.width() - 20.0);
-                    }
-                }
-            }
-
-            // Mini Bottom Dock
-            let dock_r = Rect::from_min_size(pos2(screen_rect.left() + 10.0, screen_rect.bottom() - 30.0), vec2(card_w - 20.0, 24.0));
-            ui.painter().rect_filled(dock_r, 12.0, Color32::from_rgba_premultiplied(22, 24, 32, 248));
-            ui.painter().rect_stroke(dock_r, 12.0, Stroke::new(1.0_f32, veil(0.15)), StrokeKind::Inside);
-
-            let d_center = dock_r.center();
-            ui.painter().text(pos2(dock_r.left() + 14.0, d_center.y), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(11.0), if app.saved.game_show_music_widget { pal_color } else { MUTED });
-            ui.painter().text(pos2(dock_r.left() + 30.0, d_center.y), Align2::CENTER_CENTER, icon::LIST_NUMBERS, glyph(11.0), if app.saved.game_show_queue_widget { pal_color } else { MUTED });
-            ui.painter().text(pos2(dock_r.left() + 46.0, d_center.y), Align2::CENTER_CENTER, icon::SPEAKER_HIGH, glyph(11.0), if app.saved.game_show_audio_widget { pal_color } else { MUTED });
-
-            ui.painter().text(pos2(d_center.x + 16.0, d_center.y), Align2::CENTER_CENTER, "RETURN TO GAME", bold(8.5), pal_color);
-            ui.painter().text(pos2(dock_r.right() - 14.0, d_center.y), Align2::CENTER_CENTER, icon::SIGN_OUT, glyph(11.0), Color32::from_rgb(239, 68, 68));
-
-            ui.add_space(10.0);
-            ui.label(RichText::new("Overlay widgets can be freely dragged in-game. Positions are saved automatically.").font(sans(10.5)).color(MUTED));
             ui.add_space(8.0);
-
-            // Reset Widget Positions button
-            let (pos_btn, pos_resp) = ui.allocate_exact_size(vec2(card_w, 28.0), Sense::click());
-            let p_hov = hover_of(ui, &pos_resp);
-            ui.painter().rect_filled(pos_btn, 6.0, veil(0.06 * p_hov));
-            ui.painter().text(pos_btn.center(), Align2::CENTER_CENTER, "↺ Reset Widget Positions", medium(11.5), if p_hov > 0.1 { pal_color } else { MUTED });
-            if pos_resp.clicked() {
-                out.push(Action::ResetGameWidgetPositions);
-            }
+            ui.label(
+                RichText::new("Live 1:1 interactive card: dynamically reflects your selected background, accent theme, corner rounding, widget toggles, and expandable queue.")
+                    .font(sans(10.5))
+                    .color(MUTED),
+            );
         });
     });
 }
@@ -5376,15 +5114,26 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
                 out.push(Action::ToggleGameMode);
             }
             ui.add_space(6.0);
-            ui.label(RichText::new("Minimizes AURI and detaches from the taskbar. Music continues in the background with ~0% CPU. Press the hotkey in-game to access the HUD.").font(sans(11.0)).color(MUTED));
+            ui.label(RichText::new("Minimizes AURI to background with 2MB RAM and 0% GPU composition. Press the hotkey in-game to summon the Quick HUD.").font(sans(11.0)).color(MUTED));
             ui.add_space(10.0);
+
+            if toggle_row(
+                ui,
+                "game-close-to-game-mode",
+                icon::GAME_CONTROLLER,
+                "Close to Gaming Mode",
+                "Closing the main window while audio is playing seamlessly enters Gaming Mode.",
+                app.saved.close_to_game_mode,
+            ) {
+                out.push(Action::SetCloseToGameMode(!app.saved.close_to_game_mode));
+            }
 
             if let Some(hotkey) = combo_row(
                 ui,
                 "game-overlay-hotkey-sel",
                 icon::KEYBOARD,
-                "Overlay hotkey",
-                "System hotkey that toggles the translucent overlay in-game.",
+                "Quick HUD hotkey",
+                "Global system hotkey that summons the 380×144 Quick HUD over your game.",
                 app.saved.game_overlay_hotkey,
                 &[
                     (crate::app::GameOverlayHotkey::CtrlShiftG, "Ctrl + Shift + G (Recommended)"),
@@ -5396,38 +5145,95 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
             ) {
                 out.push(Action::SetGameOverlayHotkey(hotkey));
             }
+        });
 
-            if let Some(op) = slider_row(
+        // Card 2: QUICK HUD CUSTOMIZATION
+        settings_card_panel(ui, "game-card-hud-style", "Quick HUD appearance & positioning", "Customize where and how the Quick HUD appears when summoned.", |ui| {
+            if let Some(pos) = combo_row(
                 ui,
-                "game-overlay-opacity",
-                icon::EYEDROPPER,
-                "Backdrop opacity",
-                "Darkness of the translucent game backdrop when the overlay is active.",
-                app.saved.game_overlay_opacity,
-                0.15..=0.90,
-                |v| format!("{:.0}%", v * 100.0),
-            ) {
-                out.push(Action::SetGameOverlayOpacity(op));
-            }
-
-            if let Some(size) = segmented_row(
-                ui,
-                "game-overlay-size",
+                "game-hud-pos-picker",
                 icon::ARROWS_OUT_SIMPLE,
-                "Overlay size",
-                "How much of the screen the overlay covers when opened: full, bottom half, or a compact card.",
-                app.saved.game_overlay_size,
+                "HUD screen position",
+                "Display corner/edge where the Quick HUD card parks on the active game monitor.",
+                app.saved.game_hud_position,
                 &[
-                    (crate::app::GameOverlaySize::Full, "Full screen"),
-                    (crate::app::GameOverlaySize::Half, "Half screen"),
-                    (crate::app::GameOverlaySize::Compact, "Compact"),
+                    (crate::app::GameHudPosition::TopRight, "Top-Right (Default)"),
+                    (crate::app::GameHudPosition::TopCenter, "Top-Center"),
+                    (crate::app::GameHudPosition::TopLeft, "Top-Left"),
+                    (crate::app::GameHudPosition::BottomRight, "Bottom-Right"),
+                    (crate::app::GameHudPosition::BottomCenter, "Bottom-Center"),
                 ],
             ) {
-                out.push(Action::SetGameOverlaySize(size));
+                out.push(Action::SetGameHudPosition(pos));
+            }
+
+            if let Some(bg) = segmented_row(
+                ui,
+                "game-hud-bg-style",
+                icon::PALETTE,
+                "HUD background style",
+                "Material and color palette for the 380×144 Quick HUD card.",
+                app.saved.game_hud_background,
+                &[
+                    (crate::app::MiniBackground::Obsidian, "Obsidian"),
+                    (crate::app::MiniBackground::MidnightNavy, "Midnight"),
+                    (crate::app::MiniBackground::SlateCarbon, "Carbon"),
+                    (crate::app::MiniBackground::FrostedSlate, "Frosted"),
+                    (crate::app::MiniBackground::PureOled, "Pure OLED"),
+                    (crate::app::MiniBackground::MatchAccent, "Accent Tint"),
+                ],
+            ) {
+                out.push(Action::SetGameHudBackground(bg));
+            }
+
+            if let Some(cr) = slider_row(
+                ui,
+                "game-hud-corner-radius",
+                icon::SQUARE,
+                "Corner rounding",
+                "Curvature of the Quick HUD popup card borders (6px to 20px).",
+                app.saved.game_hud_corner_radius,
+                6.0..=20.0,
+                |v| format!("{:.0} px", v),
+            ) {
+                out.push(Action::SetGameHudCornerRadius(cr));
+            }
+
+            if toggle_row(
+                ui,
+                "game-hud-show-volume",
+                icon::SPEAKER_HIGH,
+                "Show volume slider & mute",
+                "Displays the interactive volume bar and mute toggle in the Quick HUD controls row.",
+                app.saved.game_hud_show_volume,
+            ) {
+                out.push(Action::SetGameHudShowVolume(!app.saved.game_hud_show_volume));
+            }
+
+            if toggle_row(
+                ui,
+                "game-hud-show-audio-picker",
+                icon::HEADPHONES,
+                "Show audio output switcher",
+                "Header icon allowing instant hot-swapping between headphones and speakers.",
+                app.saved.game_hud_show_audio_picker,
+            ) {
+                out.push(Action::SetGameHudShowAudioPicker(!app.saved.game_hud_show_audio_picker));
+            }
+
+            if toggle_row(
+                ui,
+                "game-hud-show-heart",
+                icon::HEART,
+                "Show heart / favorite button",
+                "Controls button to quickly favorite or remove current track from Liked Songs.",
+                app.saved.game_hud_show_heart,
+            ) {
+                out.push(Action::SetGameHudShowHeart(!app.saved.game_hud_show_heart));
             }
         });
 
-        // Card 2: AUTO GAME DETECTION, WHITELIST & BLACKLIST
+        // Card 3: AUTO GAME DETECTION, WHITELIST & BLACKLIST
         settings_card_panel(ui, "game-card-detection", "Auto game detection & lists", "Automatically activates Gaming Mode when you launch a game.", |ui| {
             if toggle_row(
                 ui,
@@ -5489,40 +5295,6 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
             ui.add_space(6.0);
 
             running_app_picker(ui, app, out, false, MUTED);
-        });
-
-        // Card 3: FLOATING OVERLAY WIDGETS
-        settings_card_panel(ui, "game-card-widgets", "Floating overlay widgets", "Enable or disable the individual movable HUD widgets.", |ui| {
-            if toggle_row(
-                ui,
-                "game-widget-music",
-                icon::MUSIC_NOTE,
-                "Now Playing music widget",
-                "Draggable floating card with song cover art, title, seek scrubber and media controls.",
-                app.saved.game_show_music_widget,
-            ) {
-                out.push(Action::ToggleGameMusicWidget);
-            }
-            if toggle_row(
-                ui,
-                "game-widget-queue",
-                icon::LIST,
-                "Upcoming queue widget",
-                "Draggable floating card with upcoming songs and one-click track jumping.",
-                app.saved.game_show_queue_widget,
-            ) {
-                out.push(Action::ToggleGameQueueWidget);
-            }
-            if toggle_row(
-                ui,
-                "game-widget-audio",
-                icon::SPEAKER_HIGH,
-                "Audio & performance widget",
-                "Draggable floating card with the master volume slider and an instant RAM purge button.",
-                app.saved.game_show_audio_widget,
-            ) {
-                out.push(Action::ToggleGameAudioWidget);
-            }
         });
     });
 }
@@ -7281,8 +7053,8 @@ fn general_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             ui,
             "gen-close-to-tray",
             icon::MINUS_CIRCLE,
-            "Minimize to system tray on window close",
-            "Closing the window keeps AURI running in the tray.",
+            "Run in background on window close (System Tray)",
+            "Closing the window keeps AURI running silently in the background.",
             app.saved.close_to_tray,
         ) {
             out.push(Action::SetCloseToTray(!app.saved.close_to_tray));
@@ -7390,13 +7162,14 @@ fn settings_header_and_tabs(ui: &mut Ui, app: &App, active_tab: SettingsTab, out
     label(ui, at, Align2::LEFT_BOTTOM, "Settings", display(38.0), TEXT, width);
     ui.add_space(10.0);
 
-    // Tab switchers in 2 clean rows (Gaming Mode is hidden while frozen).
-    let tab_items: [(SettingsTab, &str, &str); 10] = [
+    // Tab switchers in 2 clean rows.
+    let tab_items: [(SettingsTab, &str, &str); 11] = [
         (SettingsTab::General, "General", icon::GEAR_SIX),
         (SettingsTab::Appearance, "Appearance", icon::PALETTE),
         (SettingsTab::Playback, "Playback", icon::PLAY),
         (SettingsTab::Equalizer, "Equalizer", icon::SLIDERS),
         (SettingsTab::Performance, "Performance", icon::LIGHTNING),
+        (SettingsTab::GamingMode, "Gaming Mode", icon::GAME_CONTROLLER),
         (SettingsTab::MiniMode, "Mini Mode", icon::PICTURE_IN_PICTURE),
         (SettingsTab::Discord, "Discord", icon::DISCORD_LOGO),
         (SettingsTab::GlobalHotkeys, "Hotkeys", icon::KEYBOARD),
@@ -10796,474 +10569,450 @@ fn format_ms(ms: u64) -> String {
     format!("{:02}:{:02}", mins, secs)
 }
 
-#[cfg(windows)]
-pub fn current_local_time_str() -> (String, String) {
-    use windows_sys::Win32::Foundation::SYSTEMTIME;
-    use windows_sys::Win32::System::SystemInformation::GetLocalTime;
-    unsafe {
-        let mut st = std::mem::MaybeUninit::<SYSTEMTIME>::zeroed();
-        GetLocalTime(st.as_mut_ptr());
-        let st = st.assume_init();
-        let time_str = format!("{:02}:{:02}", st.wHour, st.wMinute);
-        let date_str = format!("{:02}/{:02}/{}", st.wDay, st.wMonth, st.wYear);
-        (time_str, date_str)
-    }
-}
 
-#[cfg(not(windows))]
-pub fn current_local_time_str() -> (String, String) {
-    #[cfg(windows)]
-    {
-        use windows_sys::Win32::Foundation::SYSTEMTIME;
-        use windows_sys::Win32::System::SystemInformation::GetLocalTime;
-        unsafe {
-            let mut st: SYSTEMTIME = std::mem::zeroed();
-            GetLocalTime(&mut st);
-            let time = format!("{:02}:{:02}", st.wHour, st.wMinute);
-            let day_name = match st.wDayOfWeek {
-                0 => "Sunday",
-                1 => "Monday",
-                2 => "Tuesday",
-                3 => "Wednesday",
-                4 => "Thursday",
-                5 => "Friday",
-                _ => "Saturday",
-            };
-            let month_name = match st.wMonth {
-                1 => "Jan", 2 => "Feb", 3 => "Mar", 4 => "Apr",
-                5 => "May", 6 => "Jun", 7 => "Jul", 8 => "Aug",
-                9 => "Sep", 10 => "Oct", 11 => "Nov", _ => "Dec",
-            };
-            let date = format!("{}, {} {}", day_name, month_name, st.wDay);
-            (time, date)
+pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, rect: Rect, is_preview: bool) {
+    let accent = app.saved.theme_palette.color();
+    let bg_color = app.saved.game_hud_background.color(accent);
+    let radius = app.saved.game_hud_corner_radius;
+
+    // Background & Accent Border
+    ui.painter().rect_filled(rect, radius, bg_color);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        Stroke::new(1.0_f32, accent.gamma_multiply(0.35)),
+        StrokeKind::Inside,
+    );
+
+    // Drag handle across the top bar
+    let drag_rect = Rect::from_min_size(rect.min, vec2(rect.width(), 30.0));
+    let drag_id = if is_preview { Id::new("game-hud-drag-prev") } else { Id::new("game-hud-drag-top") };
+    let drag_resp = ui.interact(drag_rect, drag_id, Sense::drag());
+    if !is_preview && drag_resp.dragged() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+
+    // Row 1 (Header): mid_y around rect.top() + 18.0
+    let header_mid_y = rect.top() + 18.0;
+
+    // Lightning badge + "GAMING HUD"
+    let badge_rect = Rect::from_min_size(pos2(rect.left() + 10.0, rect.top() + 7.0), vec2(88.0, 20.0));
+    ui.painter().rect_filled(badge_rect, 4.0, accent.gamma_multiply(0.18));
+    ui.painter().text(
+        pos2(badge_rect.left() + 8.0, badge_rect.center().y),
+        Align2::LEFT_CENTER,
+        icon::LIGHTNING,
+        glyph(11.0),
+        accent,
+    );
+    ui.painter().text(
+        pos2(badge_rect.left() + 22.0, badge_rect.center().y),
+        Align2::LEFT_CENTER,
+        "GAMING HUD",
+        bold(9.5),
+        accent,
+    );
+
+    // Drag grip "⋮⋮"
+    ui.painter().text(
+        pos2(rect.left() + 106.0, header_mid_y),
+        Align2::LEFT_CENTER,
+        "⋮⋮",
+        bold(12.0),
+        MUTED.gamma_multiply(0.6),
+    );
+
+    // Right header buttons: Close (X), Exit Gaming Mode (SIGN_OUT), Audio Device Selector (Headphones vs Speakers)
+    let mut right_x = rect.right() - 8.0;
+
+    // Close HUD button (X)
+    let close_id = if is_preview { Id::new("game-hud-close-prev") } else { Id::new("game-hud-close") };
+    let close_r = Rect::from_center_size(pos2(right_x - 10.0, header_mid_y), Vec2::splat(22.0));
+    let c_resp = ui.interact(close_r, close_id, Sense::click());
+    let c_hov = hover_of(ui, &c_resp);
+    ui.painter().circle_filled(close_r.center(), 11.0, veil(0.08 * c_hov));
+    ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(13.0), if c_hov > 0.1 { TEXT } else { MUTED });
+    describe(&c_resp, if is_preview { "Close HUD (Ctrl+Shift+G in-game)" } else { "Hide HUD (Ctrl+Shift+G to reopen)" });
+    if c_resp.clicked() {
+        if !is_preview {
+            actions.push(Action::ToggleGameOverlay);
         }
     }
-    #[cfg(not(windows))]
-    ("16:20".to_string(), "Today".to_string())
+    right_x -= 26.0;
+
+    // Exit Gaming Mode button (SIGN_OUT)
+    let exit_id = if is_preview { Id::new("game-hud-exit-prev") } else { Id::new("game-hud-exit-mode") };
+    let exit_r = Rect::from_center_size(pos2(right_x - 10.0, header_mid_y), Vec2::splat(22.0));
+    let e_resp = ui.interact(exit_r, exit_id, Sense::click());
+    let e_hov = hover_of(ui, &e_resp);
+    ui.painter().circle_filled(exit_r.center(), 11.0, veil(0.08 * e_hov));
+    ui.painter().text(exit_r.center(), Align2::CENTER_CENTER, icon::SIGN_OUT, glyph(13.0), if e_hov > 0.1 { Color32::from_rgb(239, 68, 68) } else { MUTED });
+    describe(&e_resp, "Exit Gaming Mode (Restore Normal AURI)");
+    if e_resp.clicked() {
+        actions.push(Action::ExitGameMode);
+    }
+    right_x -= 26.0;
+
+    // Audio Device Selector (Headphones vs Speakers)
+    if app.saved.game_hud_show_audio_picker {
+        let cur_dev = app.player.device_name();
+        let dev_sym = device_icon(cur_dev.as_deref());
+        let dev_id = if is_preview { Id::new("game-hud-audio-prev") } else { Id::new("game-hud-audio-dev-btn") };
+        let dev_r = Rect::from_center_size(pos2(right_x - 10.0, header_mid_y), Vec2::splat(22.0));
+        let dev_resp = ui.interact(dev_r, dev_id, Sense::click());
+        let dev_hov = hover_of(ui, &dev_resp);
+        let dev_open = egui::Popup::menu(&dev_resp).is_open();
+        ui.painter().circle_filled(dev_r.center(), 11.0, if dev_open { accent.gamma_multiply(0.25) } else { veil(0.08 * dev_hov) });
+        ui.painter().text(dev_r.center(), Align2::CENTER_CENTER, dev_sym, glyph(13.0), if dev_open || dev_hov > 0.1 { accent } else { MUTED });
+        describe(&dev_resp, "Switch Audio Output Device");
+
+        egui::Popup::menu(&dev_resp)
+            .gap(4.0)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                let frame = Frame::new()
+                    .fill(Color32::from_rgb(18, 20, 26))
+                    .stroke(Stroke::new(1.0_f32, veil(0.20)))
+                    .corner_radius(8.0)
+                    .inner_margin(Margin::same(6));
+                frame.show(ui, |ui| {
+                    let w = 220.0;
+                    ui.set_width(w);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Audio Output").font(bold(11.0)).color(TEXT));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let (r_rect, r_resp) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::click());
+                            ui.painter().text(r_rect.center(), Align2::CENTER_CENTER, icon::ARROWS_CLOCKWISE, glyph(11.0), MUTED);
+                            describe(&r_resp, "Refresh devices");
+                            if r_resp.clicked() {
+                                actions.push(Action::RefreshAudioDevices);
+                            }
+                        });
+                    });
+                    ui.add_space(3.0);
+
+                    // System default option
+                    let is_def = app.saved.audio_device.is_none();
+                    let (row_r, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
+                    let hov = hover_of(ui, &resp);
+                    let bg = if is_def { accent.gamma_multiply(0.20) } else { veil(0.04 * hov) };
+                    ui.painter().rect_filled(row_r, 4.0, bg);
+                    ui.painter().text(pos2(row_r.left() + 12.0, row_r.center().y), Align2::CENTER_CENTER, icon::SPEAKER_SIMPLE_HIGH, glyph(12.0), if is_def { accent } else { MUTED });
+                    ui.painter().text(pos2(row_r.left() + 26.0, row_r.center().y), Align2::LEFT_CENTER, "System Default", medium(11.0), if is_def { accent } else { TEXT });
+                    if is_def {
+                        ui.painter().text(pos2(row_r.right() - 12.0, row_r.center().y), Align2::CENTER_CENTER, icon::CHECK, glyph(11.0), accent);
+                    }
+                    if resp.clicked() {
+                        actions.push(Action::SetAudioDevice(None));
+                        ui.close();
+                    }
+
+                    // Other devices
+                    for dev in &app.audio_devices {
+                        let is_active = app.saved.audio_device.as_deref() == Some(dev.as_str());
+                        let (row_r, resp) = ui.allocate_exact_size(vec2(w, 24.0), Sense::click());
+                        let hov = hover_of(ui, &resp);
+                        let bg = if is_active { accent.gamma_multiply(0.20) } else { veil(0.04 * hov) };
+                        ui.painter().rect_filled(row_r, 4.0, bg);
+                        let d_sym = device_icon(Some(dev.as_str()));
+                        ui.painter().text(pos2(row_r.left() + 12.0, row_r.center().y), Align2::CENTER_CENTER, d_sym, glyph(12.0), if is_active { accent } else { MUTED });
+                        label(ui, pos2(row_r.left() + 26.0, row_r.center().y), Align2::LEFT_CENTER, dev, medium(11.0), if is_active { accent } else { TEXT }, w - 44.0);
+                        if is_active {
+                            ui.painter().text(pos2(row_r.right() - 12.0, row_r.center().y), Align2::CENTER_CENTER, icon::CHECK, glyph(11.0), accent);
+                        }
+                        if resp.clicked() {
+                            actions.push(Action::SetAudioDevice(Some(dev.clone())));
+                            ui.close();
+                        }
+                    }
+                });
+            });
+        right_x -= 26.0;
+    }
+
+    // Queue toggle button (icon::QUEUE)
+    let q_id = if is_preview { Id::new("game-hud-queue-prev") } else { Id::new("game-hud-queue-btn") };
+    let q_r = Rect::from_center_size(pos2(right_x - 10.0, header_mid_y), Vec2::splat(22.0));
+    let q_resp = ui.interact(q_r, q_id, Sense::click());
+    let q_hov = hover_of(ui, &q_resp);
+    let q_open = app.game_hud_queue_open;
+    ui.painter().circle_filled(q_r.center(), 11.0, if q_open { accent.gamma_multiply(0.25) } else { veil(0.08 * q_hov) });
+    ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(13.0), if q_open || q_hov > 0.1 { accent } else { MUTED });
+    describe(&q_resp, if q_open { "Hide Queue" } else { "View & Manipulate Queue" });
+    if q_resp.clicked() {
+        actions.push(Action::ToggleGameHudQueue);
+    }
+
+    // Row 2 (Track Details): 60x60 album art, song title & artist with ellipsis, mini progress scrubber with duration labels
+    let item = app.saved.current.and_then(|c| app.saved.queue.get(c)).cloned();
+    let art_rect = Rect::from_min_size(pos2(rect.left() + 10.0, rect.top() + 33.0), vec2(60.0, 60.0));
+    if let Some(ref it) = item {
+        artwork(ui, &app.art, app.saved.covers.of(it), art_rect, 6.0);
+    } else {
+        ui.painter().rect_filled(art_rect, 6.0, veil(0.08));
+        ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(24.0), accent);
+    }
+
+    let text_left = art_rect.right() + 10.0;
+    let text_avail = rect.right() - text_left - 10.0;
+
+    if let Some(ref it) = item {
+        label(ui, pos2(text_left, rect.top() + 42.0), Align2::LEFT_CENTER, &it.title, bold(12.5), TEXT, text_avail);
+        label(ui, pos2(text_left, rect.top() + 57.0), Align2::LEFT_CENTER, &it.subtitle, sans(10.5), MUTED, text_avail);
+    } else {
+        label(ui, pos2(text_left, rect.top() + 48.0), Align2::LEFT_CENTER, "No track playing", medium(12.0), MUTED, text_avail);
+    }
+
+    // Mini progress scrubber with duration labels
+    let dur_ms = app.player.duration_ms();
+    let pos_ms = app.player.position_ms();
+    let scrob_y = rect.top() + 79.0;
+    let time_w = 30.0;
+    let scrob_left = text_left + time_w + 4.0;
+    let scrob_right = rect.right() - 10.0 - time_w - 4.0;
+
+    let pos_str = format_ms(pos_ms);
+    let dur_str = format_ms(dur_ms);
+    label(ui, pos2(text_left, scrob_y), Align2::LEFT_CENTER, &pos_str, sans(9.0), MUTED, time_w);
+    label(ui, pos2(rect.right() - 10.0, scrob_y), Align2::RIGHT_CENTER, &dur_str, sans(9.0), MUTED, time_w);
+
+    let scrob_id = if is_preview { Id::new("game-hud-scrubber-prev") } else { Id::new("game-hud-scrubber") };
+    let bar_rect = Rect::from_min_max(pos2(scrob_left, scrob_y - 6.0), pos2(scrob_right, scrob_y + 6.0));
+    let bar_resp = ui.interact(bar_rect, scrob_id, Sense::click_and_drag());
+    let bar_hov = hover_of(ui, &bar_resp);
+    let pointed = bar_resp.interact_pointer_pos().map(|pos| ((pos.x - scrob_left) / (scrob_right - scrob_left)).clamp(0.0, 1.0));
+
+    let mut scrub_pos_ms = pos_ms;
+    if let (true, Some(frac)) = (bar_resp.dragged() || bar_resp.is_pointer_button_down_on(), pointed) {
+        if dur_ms > 0 {
+            scrub_pos_ms = (frac * dur_ms as f32) as u64;
+        }
+    }
+    let last_seek_id = if is_preview { Id::new("game-hud-scrub-last-seek-prev") } else { Id::new("game-hud-scrub-last-seek") };
+    let now = ui.input(|i| i.time);
+    let is_commit = bar_resp.clicked() || bar_resp.drag_stopped();
+    let should_drag_seek = bar_resp.dragged() && ui.data(|d| d.get_temp::<f64>(last_seek_id)).map_or(true, |t| now - t > 0.20);
+    if (is_commit || should_drag_seek) && dur_ms > 0 {
+        if let Some(frac) = pointed {
+            let target_ms = (frac * dur_ms as f32) as u64;
+            actions.push(Action::Seek(target_ms));
+            ui.data_mut(|d| d.insert_temp(last_seek_id, now));
+        }
+    }
+
+    let frac = if dur_ms > 0 { (scrub_pos_ms as f32 / dur_ms as f32).clamp(0.0, 1.0) } else { 0.0 };
+    ui.painter().hline(scrob_left..=scrob_right, scrob_y, Stroke::new(2.5_f32, veil(0.15)));
+    let fill_x = scrob_left + (scrob_right - scrob_left) * frac;
+    ui.painter().hline(scrob_left..=fill_x, scrob_y, Stroke::new(2.5_f32, accent));
+    ui.painter().circle_filled(pos2(fill_x, scrob_y), 3.5 + 1.0 * bar_hov, accent);
+
+    // Row 3 (Controls): Heart/favorite button (if game_hud_show_heart), Prev, Play/Pause, Next, Volume slider & mute (if game_hud_show_volume)
+    let ctrl_y = rect.top() + 117.0;
+
+    // Heart / Favorite button
+    if app.saved.game_hud_show_heart {
+        let heart_x = rect.left() + 20.0;
+        let heart_r = Rect::from_center_size(pos2(heart_x, ctrl_y), Vec2::splat(24.0));
+        let heart_id = if is_preview { Id::new("game-hud-heart-prev") } else { Id::new("game-hud-heart") };
+        if let Some(ref it) = item {
+            let liked = it.is_song() && app.saved.liked.iter().any(|l| l.video_id == it.video_id);
+            let (heart_font, heart_col, hint) = if liked {
+                (solid(15.0), accent, "Remove from Liked")
+            } else {
+                (glyph(15.0), MUTED, "Add to Liked")
+            };
+            if icon_button(ui, heart_r, heart_id, icon::HEART, heart_font, heart_col, hint).clicked() {
+                actions.push(Action::Like(it.clone()));
+            }
+        } else {
+            ui.painter().text(heart_r.center(), Align2::CENTER_CENTER, icon::HEART, glyph(15.0), FAINT.gamma_multiply(0.3));
+        }
+    }
+
+    // Center Playback controls (Prev, Play/Pause, Next)
+    let play_center_x = if app.saved.game_hud_show_volume {
+        if app.saved.game_hud_show_heart { rect.left() + 115.0 } else { rect.left() + 90.0 }
+    } else {
+        rect.center().x
+    };
+
+    // Prev
+    let prev_r = Rect::from_center_size(pos2(play_center_x - 32.0, ctrl_y), Vec2::splat(24.0));
+    let prev_id = if is_preview { Id::new("game-hud-prev-prev") } else { Id::new("game-hud-prev") };
+    if icon_button(ui, prev_r, prev_id, icon::SKIP_BACK, solid(14.0), TEXT, "Previous track").clicked() {
+        actions.push(Action::Previous);
+    }
+
+    // Play / Pause
+    let is_playing = app.playing();
+    let play_rect = Rect::from_center_size(pos2(play_center_x, ctrl_y), Vec2::splat(28.0));
+    let play_id = if is_preview { Id::new("game-hud-play-prev") } else { Id::new("game-hud-play") };
+    let play_resp = ui.interact(play_rect, play_id, Sense::click());
+    let play_hov = hover_of(ui, &play_resp);
+    ui.painter().circle_filled(play_rect.center(), 14.0, accent.lerp_to_gamma(Color32::WHITE, 0.15 * play_hov));
+    let p_sym = if is_playing { icon::PAUSE } else { icon::PLAY };
+    ui.painter().text(play_rect.center(), Align2::CENTER_CENTER, p_sym, solid(14.0), contrast_text_for(accent));
+    if play_resp.clicked() {
+        actions.push(Action::Toggle);
+    }
+
+    // Next
+    let next_r = Rect::from_center_size(pos2(play_center_x + 32.0, ctrl_y), Vec2::splat(24.0));
+    let next_id = if is_preview { Id::new("game-hud-next-prev") } else { Id::new("game-hud-next") };
+    if icon_button(ui, next_r, next_id, icon::SKIP_FORWARD, solid(14.0), TEXT, "Next track").clicked() {
+        actions.push(Action::Next);
+    }
+
+    // Volume slider & mute (if game_hud_show_volume)
+    if app.saved.game_hud_show_volume {
+        let vol_icon_x = play_center_x + 58.0;
+        let vol_muted = app.saved.volume <= 0.001;
+        let v_sym = if vol_muted { icon::SPEAKER_SLASH } else { icon::SPEAKER_HIGH };
+        let v_icon_r = Rect::from_center_size(pos2(vol_icon_x, ctrl_y), Vec2::splat(22.0));
+        let vi_id = if is_preview { Id::new("game-hud-vol-mute-prev") } else { Id::new("game-hud-vol-mute") };
+        let vi_resp = ui.interact(v_icon_r, vi_id, Sense::click());
+        ui.painter().text(v_icon_r.center(), Align2::CENTER_CENTER, v_sym, glyph(13.0), if vol_muted { MUTED } else { accent });
+        describe(&vi_resp, if vol_muted { "Unmute" } else { "Mute" });
+        if vi_resp.clicked() {
+            let last_vol_id = Id::new("game-hud-unmute-vol");
+            if vol_muted {
+                let restore_v = ui.data(|d| d.get_temp::<f32>(last_vol_id)).unwrap_or(0.8);
+                actions.push(Action::Volume(restore_v));
+            } else {
+                ui.data_mut(|d| d.insert_temp(last_vol_id, app.saved.volume));
+                actions.push(Action::Volume(0.0));
+            }
+        }
+
+        let vol_bar_left = vol_icon_x + 14.0;
+        let vol_bar_right = rect.right() - 44.0;
+        let vol_bar_r = Rect::from_min_max(pos2(vol_bar_left, ctrl_y - 6.0), pos2(vol_bar_right, ctrl_y + 6.0));
+        let vol_id = if is_preview { Id::new("game-hud-vol-bar-prev") } else { Id::new("game-hud-vol-bar") };
+        let vol_resp = ui.interact(vol_bar_r, vol_id, Sense::click_and_drag());
+        let vol_hov = hover_of(ui, &vol_resp);
+        let vol_frac = app.saved.volume.clamp(0.0, 1.0);
+        ui.painter().hline(vol_bar_left..=vol_bar_right, ctrl_y, Stroke::new(2.5_f32, veil(0.15)));
+        let v_fill = vol_bar_left + (vol_bar_right - vol_bar_left) * vol_frac;
+        ui.painter().hline(vol_bar_left..=v_fill, ctrl_y, Stroke::new(2.5_f32, accent));
+        ui.painter().circle_filled(pos2(v_fill, ctrl_y), 3.5 + 1.0 * vol_hov, accent);
+
+        label(ui, pos2(rect.right() - 10.0, ctrl_y), Align2::RIGHT_CENTER, &format!("{:.0}%", vol_frac * 100.0), sans(9.5), TEXT, 30.0);
+
+        if vol_resp.clicked() || vol_resp.dragged() {
+            if let Some(pos) = vol_resp.interact_pointer_pos() {
+                let new_v = ((pos.x - vol_bar_left) / (vol_bar_right - vol_bar_left)).clamp(0.0, 1.0);
+                actions.push(Action::Volume(new_v));
+            }
+        }
+    }
+
+    // Expandable Queue Section (View & Manipulate Upcoming Queue)
+    if app.game_hud_queue_open && rect.height() > 180.0 {
+        let div_y = rect.top() + 144.0;
+        ui.painter().hline(rect.x_range().shrink(10.0), div_y, Stroke::new(1.0_f32, veil(0.12)));
+
+        let q_head_y = div_y + 14.0;
+        ui.painter().text(pos2(rect.left() + 12.0, q_head_y), Align2::LEFT_CENTER, "UPCOMING QUEUE", bold(10.0), accent);
+
+        let upcoming_start = app.saved.current.map_or(0, |c| c + 1);
+        let upcoming_count = app.saved.queue.len().saturating_sub(upcoming_start);
+        ui.painter().text(pos2(rect.left() + 116.0, q_head_y), Align2::LEFT_CENTER, &format!("({} tracks)", upcoming_count), sans(9.5), MUTED);
+
+        // Header Action: Clear Upcoming Queue
+        let clr_r = Rect::from_center_size(pos2(rect.right() - 18.0, q_head_y), Vec2::splat(20.0));
+        let clr_id = if is_preview { Id::new("game-hud-clr-prev") } else { Id::new("game-hud-clr") };
+        let clr_resp = ui.interact(clr_r, clr_id, Sense::click());
+        let clr_hov = hover_of(ui, &clr_resp);
+        ui.painter().circle_filled(clr_r.center(), 10.0, veil(0.08 * clr_hov));
+        ui.painter().text(clr_r.center(), Align2::CENTER_CENTER, icon::TRASH, glyph(12.0), if clr_hov > 0.1 { Color32::from_rgb(239, 68, 68) } else { MUTED });
+        describe(&clr_resp, "Clear upcoming tracks");
+        if clr_resp.clicked() {
+            actions.push(Action::ClearUpcomingQueue);
+        }
+
+        // Header Action: Shuffle Upcoming Queue
+        let shuf_r = Rect::from_center_size(pos2(rect.right() - 42.0, q_head_y), Vec2::splat(20.0));
+        let shuf_id = if is_preview { Id::new("game-hud-shuf-prev") } else { Id::new("game-hud-shuf") };
+        let shuf_resp = ui.interact(shuf_r, shuf_id, Sense::click());
+        let shuf_hov = hover_of(ui, &shuf_resp);
+        let is_shuf = app.saved.shuffle;
+        ui.painter().circle_filled(shuf_r.center(), 10.0, if is_shuf { accent.gamma_multiply(0.20) } else { veil(0.08 * shuf_hov) });
+        ui.painter().text(shuf_r.center(), Align2::CENTER_CENTER, icon::SHUFFLE, glyph(12.0), if is_shuf || shuf_hov > 0.1 { accent } else { MUTED });
+        describe(&shuf_resp, if is_shuf { "Shuffle active" } else { "Shuffle upcoming tracks" });
+        if shuf_resp.clicked() {
+            actions.push(Action::ToggleShuffle);
+        }
+
+        // Scrollable Queue List
+        let list_rect = Rect::from_min_max(pos2(rect.left() + 6.0, div_y + 26.0), pos2(rect.right() - 6.0, rect.bottom() - 6.0));
+        let mut list_ui = ui.new_child(UiBuilder::new().max_rect(list_rect));
+        egui::ScrollArea::vertical()
+            .id_salt(if is_preview { "game-hud-q-scroll-prev" } else { "game-hud-q-scroll" })
+            .auto_shrink(false)
+            .show(&mut list_ui, |ui| {
+                ui.set_width(ui.available_width());
+                let total = app.saved.queue.len();
+                if total == 0 || upcoming_start >= total {
+                    ui.add_space(30.0);
+                    ui.vertical_centered(|ui| {
+                        ui.label(RichText::new("Queue is empty").font(medium(11.0)).color(MUTED));
+                        ui.label(RichText::new("No upcoming tracks lined up").font(sans(9.5)).color(FAINT));
+                    });
+                } else {
+                    for idx in upcoming_start..total {
+                        let song = &app.saved.queue[idx];
+                        let (row_rect, row_resp) = ui.allocate_exact_size(vec2(ui.available_width(), 32.0), Sense::click());
+                        let hov = hover_of(ui, &row_resp);
+                        if hov > 0.0 {
+                            ui.painter().rect_filled(row_rect, 5.0, veil(0.06 * hov));
+                        }
+
+                        // Artwork thumbnail
+                        let thumb_r = Rect::from_center_size(pos2(row_rect.left() + 16.0, row_rect.center().y), Vec2::splat(22.0));
+                        artwork(ui, &app.art, app.saved.covers.of(song), thumb_r, 4.0);
+
+                        // Song title & artist
+                        let title_left = thumb_r.right() + 8.0;
+                        let text_w = row_rect.width() - 84.0;
+                        label(ui, pos2(title_left, row_rect.center().y - 6.0), Align2::LEFT_CENTER, &song.title, medium(11.0), TEXT, text_w);
+                        label(ui, pos2(title_left, row_rect.center().y + 6.0), Align2::LEFT_CENTER, &song.subtitle, sans(9.0), MUTED, text_w);
+
+                        // Remove button [X]
+                        let rm_r = Rect::from_center_size(pos2(row_rect.right() - 14.0, row_rect.center().y), Vec2::splat(18.0));
+                        let rm_id = if is_preview { Id::new(("game-hud-rm-prev", idx)) } else { Id::new(("game-hud-rm", idx)) };
+                        let rm_resp = ui.interact(rm_r, rm_id, Sense::click());
+                        let rm_hov = hover_of(ui, &rm_resp);
+                        ui.painter().circle_filled(rm_r.center(), 9.0, veil(0.08 * rm_hov));
+                        ui.painter().text(rm_r.center(), Align2::CENTER_CENTER, icon::X, glyph(10.0), if rm_hov > 0.1 { Color32::from_rgb(239, 68, 68) } else { MUTED.gamma_multiply(0.7) });
+                        describe(&rm_resp, "Remove track from queue");
+                        if rm_resp.clicked() {
+                            actions.push(Action::Remove(idx));
+                        }
+
+                        // Jump to song on row click
+                        if row_resp.clicked() && !rm_resp.clicked() {
+                            actions.push(Action::Jump(idx));
+                        }
+                    }
+                }
+            });
+    }
 }
 
-pub fn draw_game_overlay(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
+pub fn draw_game_hud(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
     let mut actions = Vec::new();
-    let pal_color = app.saved.theme_palette.color();
-
     egui::CentralPanel::default()
         .frame(Frame::NONE)
         .show(ctx, |ui| {
-            let full = ui.max_rect();
-            // Size variants crop the overlay UI to a region of the always
-            // fullscreen window, so toggling never resizes the swapchain.
-            let rect = match app.saved.game_overlay_size {
-                crate::app::GameOverlaySize::Full => full,
-                crate::app::GameOverlaySize::Half => Rect::from_min_max(pos2(full.left(), full.center().y), full.max),
-                crate::app::GameOverlaySize::Compact => Rect::from_center_size(
-                    pos2(full.center().x, full.center().y + full.height() * 0.25),
-                    vec2(full.width() * 0.5, full.height() * 0.5),
-                ),
-            };
-
-            // 1. Translucent backdrop (customizable opacity), cropped to the
-            // overlay region; the rest of the window stays fully transparent.
-            let alpha = (app.saved.game_overlay_opacity.clamp(0.15, 0.95) * 255.0) as u8;
-            ui.painter().rect_filled(rect, 0.0, Color32::from_black_alpha(alpha));
-
-            // Clicking outside a shrunken overlay returns to the game.
-            if app.saved.game_overlay_size != crate::app::GameOverlaySize::Full {
-                let outside = ui.interact(full, Id::new("game-overlay-outside-click"), Sense::click());
-                if outside.clicked() {
-                    actions.push(Action::ToggleGameOverlay);
-                }
-            }
-
-            // Background click to dismiss overlay
-            let bg_resp = ui.interact(rect, Id::new("game-overlay-backdrop-click"), Sense::click());
-            if bg_resp.clicked() {
-                actions.push(Action::ToggleGameOverlay);
-            }
-
-            // 2. Top Bar: Digital Clock & Session Info (Image 5 style)
-            let (clock_str, date_str) = current_local_time_str();
-            label(ui, pos2(rect.left() + 60.0, rect.top() + 42.0), Align2::LEFT_CENTER, &clock_str, bold(44.0), Color32::WHITE, 200.0);
-
-            let session_str = if let Some(st) = app.game_mode_start_time {
-                let el = st.elapsed().as_secs();
-                format!("SESSION {:02}:{:02}", el / 60, el % 60)
-            } else {
-                "SESSION 00:00".to_string()
-            };
-            label(
-                ui,
-                pos2(rect.left() + 62.0, rect.top() + 74.0),
-                Align2::LEFT_CENTER,
-                &format!("{} · {}", session_str, date_str),
-                bold(11.5),
-                pal_color,
-                320.0,
-            );
-
-            // Top Right Close button
-            let top_close_rect = Rect::from_center_size(pos2(rect.right() - 45.0, rect.top() + 48.0), Vec2::splat(28.0));
-            let top_close_resp = ui.interact(top_close_rect, Id::new("game-overlay-top-close"), Sense::click());
-            let tc_hov = hover_of(ui, &top_close_resp);
-            ui.painter().circle_filled(top_close_rect.center(), 14.0, veil(0.10 * tc_hov));
-            ui.painter().text(top_close_rect.center(), Align2::CENTER_CENTER, icon::X, glyph(16.0), if tc_hov > 0.1 { TEXT } else { MUTED });
-            if top_close_resp.clicked() {
-                actions.push(Action::ToggleGameOverlay);
-            }
-
-            let item = app.saved.current.and_then(|c| app.saved.queue.get(c)).cloned();
-            let is_playing = app.playing();
-
-            // 3. FLOATING WIDGET: MUSIC / NOW PLAYING (Draggable)
-            if app.saved.game_show_music_widget {
-                let music_pos = pos2(
-                    rect.left() + app.saved.game_music_pos[0].clamp(0.0, (rect.width() - 480.0).max(0.0)),
-                    rect.top() + app.saved.game_music_pos[1].clamp(0.0, (rect.height() - 230.0).max(0.0)),
-                );
-                let music_rect = Rect::from_min_size(music_pos, vec2(460.0, 215.0));
-                ui.painter().rect_filled(music_rect, 14.0, Color32::from_rgba_premultiplied(18, 20, 26, 240));
-                ui.painter().rect_stroke(music_rect, 14.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.35)), StrokeKind::Inside);
-
-                // Draggable Header
-                let m_header = Rect::from_min_size(music_pos, vec2(460.0, 32.0));
-                let m_drag = ui.interact(m_header, Id::new("drag-music-widget"), Sense::click_and_drag());
-                if m_drag.dragged() {
-                    let delta = m_drag.drag_delta();
-                    actions.push(Action::SetGameMusicPos(
-                        app.saved.game_music_pos[0] + delta.x,
-                        app.saved.game_music_pos[1] + delta.y,
-                    ));
-                }
-
-                label(ui, pos2(music_rect.left() + 16.0, music_rect.top() + 16.0), Align2::LEFT_CENTER, "⋮⋮  NOW PLAYING", bold(11.0), MUTED, 200.0);
-                let m_close = Rect::from_center_size(pos2(music_rect.right() - 18.0, music_rect.top() + 16.0), Vec2::splat(20.0));
-                let mc_resp = ui.interact(m_close, Id::new("close-music-widget"), Sense::click());
-                if mc_resp.clicked() {
-                    actions.push(Action::ToggleGameMusicWidget);
-                }
-                ui.painter().text(m_close.center(), Align2::CENTER_CENTER, icon::X, glyph(13.0), MUTED);
-
-                // Cover art & Title
-                let art_rect = Rect::from_min_size(pos2(music_rect.left() + 16.0, music_rect.top() + 36.0), vec2(70.0, 70.0));
-                if let Some(ref it) = item {
-                    artwork(ui, &app.art, app.saved.covers.of(it), art_rect, 8.0);
-                } else {
-                    ui.painter().rect_filled(art_rect, 8.0, veil(0.08));
-                    ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(28.0), pal_color);
-                }
-
-                let text_x = art_rect.right() + 14.0;
-                let text_w = music_rect.right() - text_x - 16.0;
-                if let Some(ref it) = item {
-                    label(ui, pos2(text_x, music_rect.top() + 52.0), Align2::LEFT_CENTER, &it.title, bold(15.0), TEXT, text_w);
-                    label(ui, pos2(text_x, music_rect.top() + 74.0), Align2::LEFT_CENTER, &it.subtitle, sans(12.0), MUTED, text_w);
-                } else {
-                    label(ui, pos2(text_x, music_rect.top() + 64.0), Align2::LEFT_CENTER, "No track playing", sans(13.0), MUTED, text_w);
-                }
-
-                // Scrubber Bar
-                let pos_ms = app.player.position_ms();
-                let dur_ms = app.player.duration_ms();
-                let pos_str = format_ms(pos_ms);
-                let dur_str = format_ms(dur_ms);
-
-                let scrob_y = music_rect.top() + 124.0;
-                label(ui, pos2(music_rect.left() + 16.0, scrob_y), Align2::LEFT_CENTER, &pos_str, sans(10.5), MUTED, 40.0);
-                label(ui, pos2(music_rect.right() - 16.0, scrob_y), Align2::RIGHT_CENTER, &dur_str, sans(10.5), MUTED, 40.0);
-
-                let line_left = music_rect.left() + 58.0;
-                let line_right = music_rect.right() - 58.0;
-                let bar_rect = Rect::from_min_max(pos2(line_left, scrob_y - 6.0), pos2(line_right, scrob_y + 6.0));
-                let bar_resp = ui.interact(bar_rect, Id::new("game-overlay-scrubber"), Sense::click_and_drag());
-                let bar_hov = hover_of(ui, &bar_resp);
-
-                let frac = if dur_ms > 0 { (pos_ms as f32 / dur_ms as f32).clamp(0.0, 1.0) } else { 0.0 };
-                ui.painter().hline(line_left..=line_right, scrob_y, Stroke::new(3.0_f32, veil(0.15)));
-                let fill_x = line_left + (line_right - line_left) * frac;
-                ui.painter().hline(line_left..=fill_x, scrob_y, Stroke::new(3.0_f32, pal_color));
-                ui.painter().circle_filled(pos2(fill_x, scrob_y), 4.5 + 1.5 * bar_hov, pal_color);
-
-                if bar_resp.clicked() || bar_resp.dragged() {
-                    if let Some(pos) = bar_resp.interact_pointer_pos() {
-                        let new_frac = ((pos.x - line_left) / (line_right - line_left)).clamp(0.0, 1.0);
-                        let target_ms = (new_frac * dur_ms as f32) as u64;
-                        actions.push(Action::Seek(target_ms));
-                    }
-                }
-
-                // Controls Row
-                let ctrl_y = music_rect.top() + 168.0;
-                let center_x = music_rect.center().x;
-
-                // Play / Pause Circle
-                let play_rect = Rect::from_center_size(pos2(center_x, ctrl_y), Vec2::splat(36.0));
-                let play_resp = ui.interact(play_rect, Id::new("game-overlay-play"), Sense::click());
-                let play_hov = hover_of(ui, &play_resp);
-                ui.painter().circle_filled(play_rect.center(), 18.0, pal_color.lerp_to_gamma(Color32::WHITE, 0.15 * play_hov));
-                let p_sym = if is_playing { icon::PAUSE } else { icon::PLAY };
-                ui.painter().text(play_rect.center(), Align2::CENTER_CENTER, p_sym, solid(18.0), contrast_text_for(pal_color));
-                if play_resp.clicked() {
-                    actions.push(Action::Toggle);
-                }
-
-                // Prev & Next
-                let prev_r = Rect::from_center_size(pos2(center_x - 48.0, ctrl_y), Vec2::splat(28.0));
-                if icon_button(ui, prev_r, Id::new("game-overlay-prev"), icon::SKIP_BACK, solid(16.0), TEXT, "Previous track").clicked() {
-                    actions.push(Action::Previous);
-                }
-
-                let next_r = Rect::from_center_size(pos2(center_x + 48.0, ctrl_y), Vec2::splat(28.0));
-                if icon_button(ui, next_r, Id::new("game-overlay-next"), icon::SKIP_FORWARD, solid(16.0), TEXT, "Next track").clicked() {
-                    actions.push(Action::Next);
-                }
-
-                // Shuffle & Repeat
-                let shuf_r = Rect::from_center_size(pos2(center_x - 90.0, ctrl_y), Vec2::splat(24.0));
-                let shuf_col = if app.saved.shuffle { pal_color } else { MUTED };
-                if icon_button(ui, shuf_r, Id::new("game-overlay-shuf"), icon::SHUFFLE, glyph(15.0), shuf_col, "Shuffle").clicked() {
-                    actions.push(Action::ToggleShuffle);
-                }
-
-                let rep_r = Rect::from_center_size(pos2(center_x + 90.0, ctrl_y), Vec2::splat(24.0));
-                let (rep_sym, rep_col) = match app.saved.repeat {
-                    Repeat::Off => (icon::REPEAT, MUTED),
-                    Repeat::All => (icon::REPEAT, pal_color),
-                    Repeat::One => (icon::REPEAT_ONCE, pal_color),
-                };
-                if icon_button(ui, rep_r, Id::new("game-overlay-rep"), rep_sym, glyph(15.0), rep_col, "Repeat").clicked() {
-                    actions.push(Action::CycleRepeat);
-                }
-            }
-
-            // 4. FLOATING WIDGET: AUDIO & PERFORMANCE (Draggable)
-            if app.saved.game_show_audio_widget {
-                let aud_pos = pos2(
-                    rect.left() + app.saved.game_audio_pos[0].clamp(0.0, (rect.width() - 480.0).max(0.0)),
-                    rect.top() + app.saved.game_audio_pos[1].clamp(0.0, (rect.height() - 130.0).max(0.0)),
-                );
-                let aud_rect = Rect::from_min_size(aud_pos, vec2(460.0, 115.0));
-                ui.painter().rect_filled(aud_rect, 14.0, Color32::from_rgba_premultiplied(18, 20, 26, 240));
-                ui.painter().rect_stroke(aud_rect, 14.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-
-                // Draggable Header
-                let a_header = Rect::from_min_size(aud_pos, vec2(460.0, 32.0));
-                let a_drag = ui.interact(a_header, Id::new("drag-audio-widget"), Sense::click_and_drag());
-                if a_drag.dragged() {
-                    let delta = a_drag.drag_delta();
-                    actions.push(Action::SetGameAudioPos(
-                        app.saved.game_audio_pos[0] + delta.x,
-                        app.saved.game_audio_pos[1] + delta.y,
-                    ));
-                }
-
-                label(ui, pos2(aud_rect.left() + 16.0, aud_rect.top() + 16.0), Align2::LEFT_CENTER, "⋮⋮  AUDIO & HARDWARE", bold(11.0), MUTED, 240.0);
-                let a_close = Rect::from_center_size(pos2(aud_rect.right() - 18.0, aud_rect.top() + 16.0), Vec2::splat(20.0));
-                if ui.interact(a_close, Id::new("close-audio-widget"), Sense::click()).clicked() {
-                    actions.push(Action::ToggleGameAudioWidget);
-                }
-                ui.painter().text(a_close.center(), Align2::CENTER_CENTER, icon::X, glyph(13.0), MUTED);
-
-                // Volume slider
-                let vol_icon_r = Rect::from_min_size(pos2(aud_rect.left() + 16.0, aud_rect.top() + 42.0), vec2(24.0, 24.0));
-                ui.painter().text(vol_icon_r.center(), Align2::CENTER_CENTER, icon::SPEAKER_HIGH, glyph(16.0), pal_color);
-
-                let vol_left = aud_rect.left() + 46.0;
-                let vol_right = aud_rect.right() - 75.0;
-                let vol_bar_r = Rect::from_min_max(pos2(vol_left, aud_rect.top() + 44.0), pos2(vol_right, aud_rect.top() + 62.0));
-                let vol_resp = ui.interact(vol_bar_r, Id::new("game-overlay-volume-bar"), Sense::click_and_drag());
-                let vol_frac = app.saved.volume.clamp(0.0, 1.0);
-                let mid_vy = aud_rect.top() + 54.0;
-                ui.painter().hline(vol_left..=vol_right, mid_vy, Stroke::new(3.0_f32, veil(0.15)));
-                let v_fill = vol_left + (vol_right - vol_left) * vol_frac;
-                ui.painter().hline(vol_left..=v_fill, mid_vy, Stroke::new(3.0_f32, pal_color));
-                ui.painter().circle_filled(pos2(v_fill, mid_vy), 4.5, pal_color);
-                label(ui, pos2(aud_rect.right() - 16.0, mid_vy), Align2::RIGHT_CENTER, &format!("{:.0}%", vol_frac * 100.0), sans(11.5), TEXT, 50.0);
-
-                if vol_resp.clicked() || vol_resp.dragged() {
-                    if let Some(pos) = vol_resp.interact_pointer_pos() {
-                        let new_v = ((pos.x - vol_left) / (vol_right - vol_left)).clamp(0.0, 1.0);
-                        actions.push(Action::Volume(new_v));
-                    }
-                }
-
-                // RAM Clean button & badge
-                let clean_r = Rect::from_min_size(pos2(aud_rect.left() + 16.0, aud_rect.top() + 76.0), vec2(100.0, 24.0));
-                let clean_resp = ui.interact(clean_r, Id::new("game-overlay-clean-ram"), Sense::click());
-                let c_hov = hover_of(ui, &clean_resp);
-                ui.painter().rect_filled(clean_r, 6.0, veil(0.08 + 0.08 * c_hov));
-                ui.painter().text(clean_r.center(), Align2::CENTER_CENTER, "⚡ Clean RAM", bold(11.0), if c_hov > 0.1 { pal_color } else { TEXT });
-                if clean_resp.clicked() {
-                    actions.push(Action::PurgeMemory);
-                }
-            }
-
-            // 5. FLOATING WIDGET: QUEUE (Draggable)
-            if app.saved.game_show_queue_widget {
-                let queue_w = 400.0_f32.min(rect.width() * 0.35);
-                let q_pos = pos2(
-                    rect.left() + app.saved.game_queue_pos[0].clamp(0.0, (rect.width() - queue_w - 20.0).max(0.0)),
-                    rect.top() + app.saved.game_queue_pos[1].clamp(0.0, (rect.height() - 360.0).max(0.0)),
-                );
-                let q_rect = Rect::from_min_size(q_pos, vec2(queue_w, 345.0));
-                ui.painter().rect_filled(q_rect, 14.0, Color32::from_rgba_premultiplied(18, 20, 26, 240));
-                ui.painter().rect_stroke(q_rect, 14.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-
-                // Draggable Header
-                let q_header = Rect::from_min_size(q_pos, vec2(queue_w, 32.0));
-                let q_drag = ui.interact(q_header, Id::new("drag-queue-widget"), Sense::click_and_drag());
-                if q_drag.dragged() {
-                    let delta = q_drag.drag_delta();
-                    actions.push(Action::SetGameQueuePos(
-                        app.saved.game_queue_pos[0] + delta.x,
-                        app.saved.game_queue_pos[1] + delta.y,
-                    ));
-                }
-
-                let count_str = format!("⋮⋮  UPCOMING QUEUE ({} songs)", app.saved.queue.len());
-                label(ui, pos2(q_rect.left() + 16.0, q_rect.top() + 16.0), Align2::LEFT_CENTER, &count_str, bold(11.0), MUTED, queue_w - 40.0);
-                let q_close = Rect::from_center_size(pos2(q_rect.right() - 18.0, q_rect.top() + 16.0), Vec2::splat(20.0));
-                if ui.interact(q_close, Id::new("close-queue-widget"), Sense::click()).clicked() {
-                    actions.push(Action::ToggleGameQueueWidget);
-                }
-                ui.painter().text(q_close.center(), Align2::CENTER_CENTER, icon::X, glyph(13.0), MUTED);
-
-                // Queue song list
-                let list_rect = q_rect.shrink2(vec2(8.0, 0.0));
-                let list_rect = Rect::from_min_max(pos2(list_rect.left(), q_rect.top() + 34.0), pos2(list_rect.right(), q_rect.bottom() - 10.0));
-                let mut child_ui = ui.new_child(UiBuilder::new().max_rect(list_rect));
-                egui::ScrollArea::vertical()
-                    .id_salt("game-overlay-queue-scroll")
-                    .show(&mut child_ui, |ui| {
-                        for (idx, song) in app.saved.queue.iter().enumerate() {
-                            let is_cur = app.saved.current == Some(idx);
-                            let (row_r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::click());
-                            let r_hov = hover_of(ui, &resp);
-                            if is_cur {
-                                ui.painter().rect_filled(row_r, 6.0, pal_color.gamma_multiply(0.20));
-                                ui.painter().circle_filled(pos2(row_r.left() + 14.0, row_r.center().y), 3.5, pal_color);
-                            } else {
-                                ui.painter().rect_filled(row_r, 6.0, veil(0.04 * r_hov));
-                                label(ui, pos2(row_r.left() + 10.0, row_r.center().y), Align2::LEFT_CENTER, &format!("{}", idx + 1), sans(10.5), MUTED, 18.0);
-                            }
-
-                            let text_w = row_r.width() - 40.0;
-                            let title_col = if is_cur { pal_color } else { TEXT };
-                            label(ui, pos2(row_r.left() + 32.0, row_r.center().y - 7.0), Align2::LEFT_CENTER, &song.title, medium(12.0), title_col, text_w);
-                            label(ui, pos2(row_r.left() + 32.0, row_r.center().y + 8.0), Align2::LEFT_CENTER, &song.subtitle, sans(10.5), MUTED, text_w);
-
-                            if resp.clicked() {
-                                actions.push(Action::Jump(idx));
-                            }
-                        }
-                    });
-            }
-
-            // 6. BOTTOM DOCK (Steam Overlay Style - Image 5)
-            let dock_w = 700.0_f32.min(rect.width() - 40.0);
-            let dock_rect = Rect::from_center_size(pos2(rect.center().x, rect.bottom() - 55.0), vec2(dock_w, 48.0));
-            ui.painter().rect_filled(dock_rect, 24.0, Color32::from_rgba_premultiplied(22, 24, 32, 248));
-            ui.painter().rect_stroke(dock_rect, 24.0, Stroke::new(1.0_f32, veil(0.15)), StrokeKind::Inside);
-
-            let mut dock_x = dock_rect.left() + 18.0;
-
-            // Widget toggles
-            let mut widget_icon = |id_str: &str, sym: &str, active: bool, tooltip: &str, act: Action| {
-                let r = Rect::from_center_size(pos2(dock_x, dock_rect.center().y), Vec2::splat(32.0));
-                let resp = ui.interact(r, Id::new(id_str), Sense::click());
-                let hov = hover_of(&ui, &resp);
-                let col = if active { pal_color } else { MUTED.lerp_to_gamma(TEXT, hov) };
-                if active {
-                    ui.painter().circle_filled(r.center(), 14.0, pal_color.gamma_multiply(0.18));
-                }
-                ui.painter().text(r.center(), Align2::CENTER_CENTER, sym, glyph(17.0), col);
-                describe(&resp, tooltip);
-                if resp.clicked() {
-                    actions.push(act);
-                }
-                dock_x += 38.0;
-            };
-
-            widget_icon("dock-music-btn", icon::MUSIC_NOTE, app.saved.game_show_music_widget, "Toggle Music Widget", Action::ToggleGameMusicWidget);
-            widget_icon("dock-queue-btn", icon::LIST_NUMBERS, app.saved.game_show_queue_widget, "Toggle Queue Widget", Action::ToggleGameQueueWidget);
-            widget_icon("dock-audio-btn", icon::SPEAKER_HIGH, app.saved.game_show_audio_widget, "Toggle Audio & Hardware Widget", Action::ToggleGameAudioWidget);
-
-            // Divider
-            dock_x += 4.0;
-            ui.painter().vline(dock_x, dock_rect.shrink2(vec2(0.0, 12.0)).y_range(), Stroke::new(1.0_f32, veil(0.12)));
-            dock_x += 16.0;
-
-            // Center Big Button: CLICK HERE TO RETURN TO THE GAME
-            let center_btn_w = (dock_rect.right() - dock_x - 146.0).max(190.0);
-            let center_btn_r = Rect::from_min_size(pos2(dock_x, dock_rect.top() + 6.0), vec2(center_btn_w, 36.0));
-            let ret_resp = ui.interact(center_btn_r, Id::new("return-to-game-dock-btn"), Sense::click());
-            let ret_hov = hover_of(ui, &ret_resp);
-            ui.painter().rect_filled(center_btn_r, 18.0, veil(0.08 + 0.10 * ret_hov));
-            ui.painter().rect_stroke(center_btn_r, 18.0, Stroke::new(1.0_f32, pal_color.gamma_multiply(0.30 + 0.30 * ret_hov)), StrokeKind::Inside);
-
-            ui.painter().text(
-                pos2(center_btn_r.center().x, center_btn_r.center().y - 6.0),
-                Align2::CENTER_CENTER,
-                "CLICK HERE TO RETURN TO THE GAME",
-                bold(11.0),
-                if ret_hov > 0.1 { pal_color } else { TEXT },
-            );
-            ui.painter().text(
-                pos2(center_btn_r.center().x, center_btn_r.center().y + 8.0),
-                Align2::CENTER_CENTER,
-                format!("Esc or {} also closes the overlay", app.saved.game_overlay_hotkey.label()),
-                sans(9.5),
-                MUTED,
-            );
-
-            if ret_resp.clicked() {
-                actions.push(Action::ToggleGameOverlay);
-            }
-
-            dock_x += center_btn_w + 14.0;
-
-            // Divider
-            ui.painter().vline(dock_x, dock_rect.shrink2(vec2(0.0, 12.0)).y_range(), Stroke::new(1.0_f32, veil(0.12)));
-            dock_x += 16.0;
-
-            // Settings button
-            let set_r = Rect::from_center_size(pos2(dock_x, dock_rect.center().y), Vec2::splat(32.0));
-            let set_resp = ui.interact(set_r, Id::new("dock-settings-btn"), Sense::click());
-            let s_hov = hover_of(ui, &set_resp);
-            ui.painter().text(set_r.center(), Align2::CENTER_CENTER, icon::GEAR_SIX, glyph(17.0), if s_hov > 0.1 { pal_color } else { MUTED });
-            describe(&set_resp, "Open Settings");
-            if set_resp.clicked() {
-                actions.push(Action::ToggleGameOverlay);
-                actions.push(Action::Go(Route::Settings(SettingsTab::GamingMode)));
-            }
-            dock_x += 38.0;
-
-            // Mini Mode button
-            let mini_r = Rect::from_center_size(pos2(dock_x, dock_rect.center().y), Vec2::splat(32.0));
-            let mini_resp = ui.interact(mini_r, Id::new("dock-mini-btn"), Sense::click());
-            let m_hov = hover_of(ui, &mini_resp);
-            ui.painter().text(mini_r.center(), Align2::CENTER_CENTER, icon::PICTURE_IN_PICTURE, glyph(17.0), if m_hov > 0.1 { pal_color } else { MUTED });
-            describe(&mini_resp, "Switch to Mini Player Mode");
-            if mini_resp.clicked() {
-                actions.push(Action::ExitGameModeToMini);
-            }
-            dock_x += 38.0;
-
-            // Exit Gaming Mode button
-            let exit_r = Rect::from_center_size(pos2(dock_x, dock_rect.center().y), Vec2::splat(32.0));
-            let exit_resp = ui.interact(exit_r, Id::new("dock-exit-btn"), Sense::click());
-            let e_hov = hover_of(ui, &exit_resp);
-            ui.painter().text(exit_r.center(), Align2::CENTER_CENTER, icon::SIGN_OUT, glyph(17.0), if e_hov > 0.1 { Color32::from_rgb(239, 68, 68) } else { MUTED });
-            describe(&exit_resp, "Exit Gaming Mode & Restore Normal UI");
-            if exit_resp.clicked() {
-                actions.push(Action::ExitGameMode);
-            }
+            let rect = ui.max_rect();
+            render_quick_hud_card(ui, app, &mut actions, rect, false);
         });
-
     actions
 }
 
 #[allow(dead_code)]
-pub fn draw_game_hud(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
-    draw_game_overlay(app, ctx)
+pub fn draw_game_overlay(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
+    draw_game_hud(app, ctx)
 }
 
 #[cfg(test)]

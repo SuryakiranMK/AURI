@@ -703,10 +703,6 @@ impl DiscordButtonOption {
     }
 }
 
-/// Feature freeze: Gaming Mode is too buggy right now, so all entry points
-/// (top-bar button, settings tab, manual toggle, auto detection) are disabled.
-/// The implementation stays in the codebase, dormant, until it returns.
-pub const GAMING_MODE_FROZEN: bool = true;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GameOverlayHotkey {
@@ -716,6 +712,36 @@ pub enum GameOverlayHotkey {
     F9,
     F12,
     CtrlF1,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum GameHudPosition {
+    #[default]
+    TopRight,
+    TopCenter,
+    TopLeft,
+    BottomRight,
+    BottomCenter,
+}
+
+impl GameHudPosition {
+    pub const ALL: [GameHudPosition; 5] = [
+        GameHudPosition::TopRight,
+        GameHudPosition::TopCenter,
+        GameHudPosition::TopLeft,
+        GameHudPosition::BottomRight,
+        GameHudPosition::BottomCenter,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            GameHudPosition::TopRight => "Top-Right",
+            GameHudPosition::TopCenter => "Top-Center",
+            GameHudPosition::TopLeft => "Top-Left",
+            GameHudPosition::BottomRight => "Bottom-Right",
+            GameHudPosition::BottomCenter => "Bottom-Center",
+        }
+    }
 }
 
 /// How much of the screen the in-game overlay covers when opened.
@@ -775,7 +801,7 @@ fn default_discord_line1() -> DiscordLineContent { DiscordLineContent::Title }
 fn default_discord_line2() -> DiscordLineContent { DiscordLineContent::Artist }
 fn default_discord_line3() -> DiscordLineContent { DiscordLineContent::Album }
 fn default_discord_button2() -> DiscordButtonOption { DiscordButtonOption::GetApp }
-fn default_game_overlay_opacity() -> f32 { 0.55 }
+fn default_game_hud_corner_radius() -> f32 { 14.0 }
 fn default_corner_roundness() -> f32 { 12.0 }
 fn default_background_tint_shade() -> f32 { 0.0 }
 fn default_game_whitelist() -> Vec<String> {
@@ -802,9 +828,6 @@ fn default_game_blacklist() -> Vec<String> {
         "auri.exe".into(),
     ]
 }
-fn default_game_music_pos() -> [f32; 2] { [60.0, 105.0] }
-fn default_game_audio_pos() -> [f32; 2] { [60.0, 335.0] }
-fn default_game_queue_pos() -> [f32; 2] { [760.0, 105.0] }
 
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
@@ -890,25 +913,21 @@ pub struct Saved {
     #[serde(default)]
     pub game_overlay_hotkey: GameOverlayHotkey,
     #[serde(default)]
-    pub game_overlay_size: GameOverlaySize,
-    #[serde(default = "default_game_overlay_opacity")]
-    pub game_overlay_opacity: f32,
+    pub game_hud_position: GameHudPosition,
+    #[serde(default)]
+    pub game_hud_background: MiniBackground,
+    #[serde(default = "default_game_hud_corner_radius")]
+    pub game_hud_corner_radius: f32,
     #[serde(default = "default_true")]
-    pub game_show_music_widget: bool,
+    pub game_hud_show_volume: bool,
     #[serde(default = "default_true")]
-    pub game_show_audio_widget: bool,
+    pub game_hud_show_audio_picker: bool,
     #[serde(default = "default_true")]
-    pub game_show_queue_widget: bool,
+    pub game_hud_show_heart: bool,
     #[serde(default = "default_game_whitelist")]
     pub game_whitelist: Vec<String>,
     #[serde(default = "default_game_blacklist")]
     pub game_blacklist: Vec<String>,
-    #[serde(default = "default_game_music_pos")]
-    pub game_music_pos: [f32; 2],
-    #[serde(default = "default_game_audio_pos")]
-    pub game_audio_pos: [f32; 2],
-    #[serde(default = "default_game_queue_pos")]
-    pub game_queue_pos: [f32; 2],
 
     #[serde(default)]
     pub mini_palette: MiniPalette,
@@ -945,8 +964,10 @@ pub struct Saved {
     pub corner_roundness: f32,
     #[serde(default = "default_background_tint_shade")]
     pub background_tint_shade: f32,
-    #[serde(default = "default_false")]
+    #[serde(default = "default_true")]
     pub close_to_tray: bool,
+    #[serde(default = "default_true")]
+    pub close_to_game_mode: bool,
     #[serde(default = "default_false")]
     pub song_notifications: bool,
     #[serde(default = "default_false")]
@@ -1221,16 +1242,14 @@ impl Default for Saved {
             discord_button1: DiscordButtonOption::ListenOnYtm,
             discord_button2: DiscordButtonOption::GetApp,
             game_overlay_hotkey: GameOverlayHotkey::CtrlShiftG,
-            game_overlay_size: GameOverlaySize::Full,
-            game_overlay_opacity: 0.55,
-            game_show_music_widget: true,
-            game_show_audio_widget: true,
-            game_show_queue_widget: true,
+            game_hud_position: GameHudPosition::TopRight,
+            game_hud_background: MiniBackground::Obsidian,
+            game_hud_corner_radius: default_game_hud_corner_radius(),
+            game_hud_show_volume: true,
+            game_hud_show_audio_picker: true,
+            game_hud_show_heart: true,
             game_whitelist: default_game_whitelist(),
             game_blacklist: default_game_blacklist(),
-            game_music_pos: default_game_music_pos(),
-            game_audio_pos: default_game_audio_pos(),
-            game_queue_pos: default_game_queue_pos(),
             mini_palette: MiniPalette::CyberViolet,
             mini_opacity: 0.92,
             mini_show_shuffle_repeat: true,
@@ -1248,7 +1267,8 @@ impl Default for Saved {
             theme_preset: ThemePreset::Default,
             corner_roundness: 12.0,
             background_tint_shade: 0.0,
-            close_to_tray: false,
+            close_to_tray: true,
+            close_to_game_mode: true,
             song_notifications: false,
             launch_on_startup: false,
             history_enabled: true,
@@ -1461,6 +1481,8 @@ pub enum Action {
     #[allow(dead_code)]
     SetCloseToTray(bool),
     #[allow(dead_code)]
+    SetCloseToGameMode(bool),
+    #[allow(dead_code)]
     SetSongNotifications(bool),
     #[allow(dead_code)]
     SetLaunchOnStartup(bool),
@@ -1484,13 +1506,16 @@ pub enum Action {
     ToggleGameOverlay,
     #[allow(dead_code)]
     ToggleGameHud,
+    ToggleGameHudQueue,
+    ClearUpcomingQueue,
     SetAutoGameMode(bool),
     SetGameOverlayHotkey(GameOverlayHotkey),
-    SetGameOverlayOpacity(f32),
-    SetGameOverlaySize(GameOverlaySize),
-    ToggleGameMusicWidget,
-    ToggleGameAudioWidget,
-    ToggleGameQueueWidget,
+    SetGameHudPosition(GameHudPosition),
+    SetGameHudBackground(MiniBackground),
+    SetGameHudCornerRadius(f32),
+    SetGameHudShowVolume(bool),
+    SetGameHudShowAudioPicker(bool),
+    SetGameHudShowHeart(bool),
     #[allow(dead_code)]
     AddGameWhitelist(String),
     #[allow(dead_code)]
@@ -1499,14 +1524,6 @@ pub enum Action {
     AddGameBlacklist(String),
     #[allow(dead_code)]
     RemoveGameBlacklist(usize),
-    #[allow(dead_code)]
-    SetGameMusicPos(f32, f32),
-    #[allow(dead_code)]
-    SetGameAudioPos(f32, f32),
-    #[allow(dead_code)]
-    SetGameQueuePos(f32, f32),
-    #[allow(dead_code)]
-    ResetGameWidgetPositions,
     ResetDiscordDefaults,
     SetDiscordShowWhenPaused(bool),
     SetDiscordHideDetails(bool),
@@ -1644,6 +1661,9 @@ pub struct App {
     #[allow(dead_code)]
     pub game_hud_visible: bool,
     pub game_overlay_open: bool,
+    pub game_hud_queue_open: bool,
+    pub game_hud_opened_at: Instant,
+    pub last_game_hwnd: isize,
     pub game_mode_start_time: Option<Instant>,
     game_hotkey_stop: Arc<AtomicBool>,
     pub last_game_check: Instant,
@@ -1812,6 +1832,9 @@ impl App {
             in_game_mode: false,
             game_hud_visible: false,
             game_overlay_open: false,
+            game_hud_queue_open: false,
+            game_hud_opened_at: Instant::now(),
+            last_game_hwnd: 0,
             game_mode_start_time: None,
             game_hotkey_stop: Arc::default(),
             last_game_check: Instant::now(),
@@ -1833,7 +1856,6 @@ impl App {
         app.art.set_budget_bytes(app.saved.perf_art_cache_mb * 1024 * 1024);
         app.yt.set_low_quality(app.saved.stream_quality == StreamQuality::Low);
         if app.saved.mini_mode {
-            app.title_bar.enable_transparency();
             app.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
             app.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
             app.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
@@ -2478,6 +2500,84 @@ impl App {
                 }
             });
         }
+    }
+
+    pub fn reposition_game_hud(&self) {
+        let h_points = if self.game_hud_queue_open { 350.0 } else { 144.0 };
+        #[cfg(windows)]
+        {
+            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                GetForegroundWindow, SetForegroundWindow, SetWindowPos,
+                SWP_SHOWWINDOW, HWND_TOPMOST,
+            };
+            use windows_sys::Win32::Graphics::Gdi::{
+                GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+            };
+
+            let auri_hwnd = crate::tray::main_hwnd();
+            let target_hwnd = if self.last_game_hwnd != 0 {
+                self.last_game_hwnd as windows_sys::Win32::Foundation::HWND
+            } else {
+                unsafe { GetForegroundWindow() }
+            };
+
+            let ppp = self.ctx.input(|i| i.viewport().native_pixels_per_point.unwrap_or(1.0)) as f32;
+            let w_px = (380.0 * ppp).round() as i32;
+            let h_px = (h_points * ppp).round() as i32;
+
+            let mut x = 40;
+            let mut y = 40;
+
+            let hmon = unsafe { MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONEAREST) };
+            if !hmon.is_null() {
+                let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+                info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                if unsafe { GetMonitorInfoW(hmon, &mut info) } != 0 {
+                    let work = info.rcWork;
+                    let margin = (24.0 * ppp).round() as i32;
+                    match self.saved.game_hud_position {
+                        GameHudPosition::TopLeft => {
+                            x = work.left + margin;
+                            y = work.top + margin;
+                        }
+                        GameHudPosition::TopCenter => {
+                            x = work.left + (work.right - work.left - w_px) / 2;
+                            y = work.top + margin;
+                        }
+                        GameHudPosition::TopRight => {
+                            x = work.right - w_px - margin;
+                            y = work.top + margin;
+                        }
+                        GameHudPosition::BottomRight => {
+                            x = work.right - w_px - margin;
+                            y = work.bottom - h_px - margin;
+                        }
+                        GameHudPosition::BottomCenter => {
+                            x = work.left + (work.right - work.left - w_px) / 2;
+                            y = work.bottom - h_px - margin;
+                        }
+                    }
+                }
+            }
+
+            if !auri_hwnd.is_null() {
+                unsafe {
+                    SetWindowPos(auri_hwnd, HWND_TOPMOST as _, x, y, w_px, h_px, SWP_SHOWWINDOW);
+                    SetForegroundWindow(auri_hwnd);
+                }
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        }
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, h_points)));
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.ctx.request_repaint();
     }
 
     fn drain(&mut self, ctx: &egui::Context) {
@@ -3129,7 +3229,6 @@ impl App {
             Action::ToggleMiniMode => {
                 self.saved.mini_mode = !self.saved.mini_mode;
                 if self.saved.mini_mode {
-                    self.title_bar.enable_transparency();
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
@@ -3150,7 +3249,6 @@ impl App {
                     // Restore without any intermediate size: maximize directly
                     // so the expansion is a single smooth morph from the mini
                     // window, never a small framed window in between.
-                    self.title_bar.restore_decorations();
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
@@ -3605,6 +3703,9 @@ impl App {
                 self.saved.close_to_tray = val;
                 self.refresh_tray_visibility();
             }
+            Action::SetCloseToGameMode(val) => {
+                self.saved.close_to_game_mode = val;
+            }
             Action::SetSongNotifications(val) => {
                 self.saved.song_notifications = val;
                 self.refresh_tray_visibility();
@@ -3724,50 +3825,46 @@ impl App {
                 self.notify(format!("Disliked and removed: {}", item.title));
             }
             Action::ToggleGameMode => {
-                if GAMING_MODE_FROZEN {
-                    self.notify("Gaming Mode is temporarily disabled in this build");
-                } else if self.in_game_mode {
+                if self.in_game_mode {
                     self.apply(Action::ExitGameMode);
                 } else {
                     self.in_game_mode = true;
                     self.game_overlay_open = false;
                     self.game_mode_start_time = Some(Instant::now());
-                    self.apply(Action::PurgeMemory);
-                    // Idle footprint: a tiny artwork cache plus the dedicated
-                    // hotkey thread keeps RAM in single digits and CPU/GPU idle.
                     self.art.set_budget_bytes(1024 * 1024);
+                    self.apply(Action::PurgeMemory);
                     self.start_game_hotkey();
-                    self.title_bar.enable_transparency();
-                    // The window STAYS on-screen for the whole game session:
-                    // transparent and click-through while the overlay is closed,
-                    // painted only while it is open. Toggling never moves,
-                    // resizes or restacks the window — those DWM / swapchain
-                    // occlusion transitions were behind the black flashes.
-                    let maximized = self.ctx.input(|i| i.viewport().maximized == Some(true));
-                    if !maximized {
-                        // An already-maximized window needs no geometry change,
-                        // so entering game mode causes no surface reconfigure.
-                        let (sw, sh) = screen_size();
-                        let ppp = self.ctx.pixels_per_point().max(0.5);
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(sw / ppp, sh / ppp)));
-                        self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(0.0, 0.0)));
+
+                    #[cfg(windows)]
+                    {
+                        crate::tray::hide_main_window_to_tray();
                     }
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
-                    self.title_bar.set_click_through(true);
-                    self.notify(format!("⚡ Gaming Mode Active ({})", self.saved.game_overlay_hotkey.label()));
+                    #[cfg(not(windows))]
+                    {
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    }
+
+                    self.notify("⚡ Gaming Mode Active · Press Ctrl+Shift+G for Quick HUD");
                 }
             }
             Action::ExitGameMode => {
                 self.in_game_mode = false;
                 self.game_overlay_open = false;
+                self.game_hud_queue_open = false;
+                self.last_game_hwnd = 0;
                 self.game_mode_start_time = None;
                 self.game_hotkey_stop.store(true, Relaxed);
                 self.art.set_budget_bytes(self.saved.perf_art_cache_mb * 1024 * 1024);
-                self.title_bar.set_click_through(false);
-                self.title_bar.restore_decorations();
-                // Reset the restore geometry first so un-maximizing later has
-                // something sane to come back to, then return maximized —
-                // matching how AURI launches.
+
+                #[cfg(windows)]
+                {
+                    crate::tray::restore_main_window();
+                }
+                #[cfg(not(windows))]
+                {
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                }
+
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(100.0, 100.0)));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(WINDOW_SIZE.into()));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
@@ -3778,11 +3875,15 @@ impl App {
             Action::ExitGameModeToMini => {
                 self.in_game_mode = false;
                 self.game_overlay_open = false;
+                self.game_hud_queue_open = false;
+                self.last_game_hwnd = 0;
                 self.game_mode_start_time = None;
                 self.game_hotkey_stop.store(true, Relaxed);
                 self.art.set_budget_bytes(self.saved.perf_art_cache_mb * 1024 * 1024);
-                self.title_bar.set_click_through(false);
-                self.title_bar.restore_decorations();
+                #[cfg(windows)]
+                {
+                    crate::tray::restore_main_window();
+                }
                 self.saved.mini_mode = true;
                 let (w, h) = self.saved.mini_variant.size(self.mini_queue_open);
                 let ppp = self.ctx.input(|i| i.viewport().native_pixels_per_point.unwrap_or(1.0)) as f32;
@@ -3793,24 +3894,55 @@ impl App {
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 self.notify("Switched to Mini Player Mode");
             }
-            Action::ToggleGameOverlay => {
-                if self.in_game_mode {
-                    self.game_overlay_open = !self.game_overlay_open;
-                    // Only the hit-testing style and the paint state flip:
-                    // geometry, size and z-order are untouched, so the overlay
-                    // appears instantly with no DWM occlusion transition.
-                    self.title_bar.set_click_through(!self.game_overlay_open);
-                    if self.game_overlay_open {
-                        self.ctx.request_repaint();
-                    } else {
-                        // Drop back to a minimal working set once the overlay
-                        // closes; the next open re-faults what it needs.
-                        self.apply(Action::PurgeMemory);
+            Action::ToggleGameOverlay | Action::ToggleGameHud => {
+                if !self.in_game_mode {
+                    self.apply(Action::ToggleGameMode);
+                }
+                if self.game_overlay_open {
+                    self.game_overlay_open = false;
+                    #[cfg(windows)]
+                    {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SetForegroundWindow, SW_HIDE};
+                        let auri_hwnd = crate::tray::main_hwnd();
+                        if !auri_hwnd.is_null() {
+                            unsafe {
+                                ShowWindow(auri_hwnd, SW_HIDE);
+                            }
+                        }
+                        if self.last_game_hwnd != 0 {
+                            unsafe {
+                                SetForegroundWindow(self.last_game_hwnd as windows_sys::Win32::Foundation::HWND);
+                            }
+                        }
                     }
+                    #[cfg(not(windows))]
+                    {
+                        self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    }
+                    self.apply(Action::PurgeMemory);
+                } else {
+                    self.game_overlay_open = true;
+                    self.game_hud_opened_at = Instant::now();
+                    #[cfg(windows)]
+                    {
+                        let auri_hwnd = crate::tray::main_hwnd();
+                        let fg = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+                        if !fg.is_null() && (auri_hwnd.is_null() || fg != auri_hwnd) {
+                            self.last_game_hwnd = fg as isize;
+                        }
+                    }
+                    self.reposition_game_hud();
                 }
             }
-            Action::ToggleGameHud => {
-                self.apply(Action::ToggleGameOverlay);
+            Action::ToggleGameHudQueue => {
+                self.game_hud_queue_open = !self.game_hud_queue_open;
+                if self.in_game_mode && self.game_overlay_open {
+                    self.reposition_game_hud();
+                }
+            }
+            Action::ClearUpcomingQueue => {
+                let upcoming = self.saved.current.map_or(0, |c| c + 1);
+                self.saved.queue.truncate(upcoming);
             }
             Action::SetAutoGameMode(on) => {
                 self.saved.auto_game_mode = on;
@@ -3822,20 +3954,26 @@ impl App {
                     self.start_game_hotkey();
                 }
             }
-            Action::SetGameOverlayOpacity(op) => {
-                self.saved.game_overlay_opacity = op.clamp(0.15, 0.95);
+            Action::SetGameHudPosition(pos) => {
+                self.saved.game_hud_position = pos;
+                if self.in_game_mode && self.game_overlay_open {
+                    self.reposition_game_hud();
+                }
             }
-            Action::SetGameOverlaySize(size) => {
-                self.saved.game_overlay_size = size;
+            Action::SetGameHudBackground(bg) => {
+                self.saved.game_hud_background = bg;
             }
-            Action::ToggleGameMusicWidget => {
-                self.saved.game_show_music_widget = !self.saved.game_show_music_widget;
+            Action::SetGameHudCornerRadius(radius) => {
+                self.saved.game_hud_corner_radius = radius.clamp(0.0, 32.0);
             }
-            Action::ToggleGameAudioWidget => {
-                self.saved.game_show_audio_widget = !self.saved.game_show_audio_widget;
+            Action::SetGameHudShowVolume(val) => {
+                self.saved.game_hud_show_volume = val;
             }
-            Action::ToggleGameQueueWidget => {
-                self.saved.game_show_queue_widget = !self.saved.game_show_queue_widget;
+            Action::SetGameHudShowAudioPicker(val) => {
+                self.saved.game_hud_show_audio_picker = val;
+            }
+            Action::SetGameHudShowHeart(val) => {
+                self.saved.game_hud_show_heart = val;
             }
             Action::AddGameWhitelist(exe) => {
                 let trimmed = exe.trim().to_string();
@@ -3862,21 +4000,6 @@ impl App {
                     let removed = self.saved.game_blacklist.remove(idx);
                     self.notify(format!("Removed \"{}\" from blacklist", removed));
                 }
-            }
-            Action::SetGameMusicPos(x, y) => {
-                self.saved.game_music_pos = [x.max(0.0), y.max(0.0)];
-            }
-            Action::SetGameAudioPos(x, y) => {
-                self.saved.game_audio_pos = [x.max(0.0), y.max(0.0)];
-            }
-            Action::SetGameQueuePos(x, y) => {
-                self.saved.game_queue_pos = [x.max(0.0), y.max(0.0)];
-            }
-            Action::ResetGameWidgetPositions => {
-                self.saved.game_music_pos = default_game_music_pos();
-                self.saved.game_audio_pos = default_game_audio_pos();
-                self.saved.game_queue_pos = default_game_queue_pos();
-                self.notify("Overlay widget positions reset to default");
             }
             Action::ResetDiscordDefaults => {
                 self.saved.discord_show_when_paused = false;
@@ -4051,6 +4174,7 @@ pub fn is_overlay_hotkey_pressed(hotkey: GameOverlayHotkey) -> bool {
 }
 
 /// Primary monitor size in physical pixels.
+#[allow(dead_code)]
 pub fn screen_size() -> (f32, f32) {
     #[cfg(windows)]
     {
@@ -4084,16 +4208,23 @@ impl eframe::App for App {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Close-to-tray: OS-level close requests (Alt+F4, taskbar) hide the
-        // window instead of quitting, unless the user chose to really quit.
+        // Close interception: Close-to-GameMode or Close-to-tray.
+        // OS-level close requests (Alt+F4, taskbar, X button) are intercepted
+        // unless the user chose to really quit (tray Quit).
         let force_quit = self.force_quit || crate::tray::is_force_quit();
-        if self.saved.close_to_tray
-            && !force_quit
-            && ctx.input(|input| input.viewport().close_requested())
-        {
-            self.hidden_in_tray = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            crate::tray::hide_main_window_to_tray();
+        if !force_quit && ctx.input(|input| input.viewport().close_requested()) {
+            if self.saved.close_to_game_mode && (self.playing() || self.player.loading() || self.in_game_mode) {
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                if !self.in_game_mode {
+                    self.apply(Action::ToggleGameMode);
+                } else if self.game_overlay_open {
+                    self.apply(Action::ToggleGameOverlay);
+                }
+            } else if self.saved.close_to_tray {
+                self.hidden_in_tray = true;
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                crate::tray::hide_main_window_to_tray();
+            }
         }
         let (size, minimized) = ctx.input(|input| (input.content_rect().size(), input.viewport().minimized == Some(true)));
         let window_focused = ctx.input(|input| input.focused);
@@ -4109,7 +4240,7 @@ impl eframe::App for App {
             self.last_purge = Instant::now();
         }
         #[cfg(windows)]
-        if !GAMING_MODE_FROZEN && self.saved.auto_game_mode && self.last_game_check.elapsed() >= Duration::from_millis(2500) {
+        if self.saved.auto_game_mode && self.last_game_check.elapsed() >= Duration::from_millis(2500) {
             self.last_game_check = Instant::now();
             let is_gaming = detect_fullscreen_game(&self.saved.game_whitelist, &self.saved.game_blacklist);
             if is_gaming && !self.in_game_mode {
@@ -4175,13 +4306,31 @@ impl eframe::App for App {
                 if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                     actions.push(Action::ToggleGameOverlay);
                 }
-                actions.extend(ui::draw_game_overlay(self, ctx));
+                // Auto-close overlay when clicking outside / losing focus (after 200ms grace period)
+                let outside_clicked = if self.game_hud_opened_at.elapsed() >= Duration::from_millis(200) {
+                    #[cfg(windows)]
+                    {
+                        let auri_hwnd = crate::tray::main_hwnd();
+                        let fg = unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() };
+                        !window_focused || (!auri_hwnd.is_null() && !fg.is_null() && fg != auri_hwnd)
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        !window_focused
+                    }
+                } else {
+                    false
+                };
+                if outside_clicked {
+                    actions.push(Action::ToggleGameOverlay);
+                }
+                actions.extend(ui::draw_game_hud(self, ctx));
                 // Light idle tick for the clock and scrubber; input events
                 // repaint on their own. When the overlay is closed there is no
                 // fast repaint loop at all: the hotkey thread and player events
                 // wake the UI, so idle CPU/GPU stay near zero. The slow 1s tick
                 // only services auto game detection and the idle RAM trim.
-                ctx.request_repaint_after(Duration::from_millis(250));
+                ctx.request_repaint_after(Duration::from_millis(200));
             } else {
                 ctx.request_repaint_after(Duration::from_millis(1000));
                 if self.last_purge.elapsed() >= Duration::from_secs(15) {
@@ -4211,13 +4360,14 @@ impl eframe::App for App {
         for action in actions {
             self.apply(action);
         }
-        if !self.hidden_in_tray {
+        let hud_closed = self.in_game_mode && !self.game_overlay_open;
+        if !self.hidden_in_tray && !hud_closed {
             self.look_up_covers();
             self.look_up_lyrics();
         }
         let minimized = self.ctx.input(|input| input.viewport().minimized == Some(true)) || self.hidden_in_tray;
         if self.playing() || self.player.loading() {
-            let tick = if self.hidden_in_tray {
+            let tick = if self.hidden_in_tray || hud_closed {
                 Duration::from_millis(1000)
             } else if minimized || self.in_game_mode {
                 Duration::from_millis(500)
@@ -4743,5 +4893,48 @@ mod tests {
         assert_eq!(extract_join_code("chill-room-123"), Some("CHILL-ROOM-123".to_string()));
         assert_eq!(extract_join_code(""), None);
         assert_eq!(extract_join_code("invalid string with spaces"), None);
+    }
+
+    #[test]
+    fn test_close_to_game_mode_and_gaming_settings() {
+        let saved = Saved::default();
+        assert!(saved.close_to_game_mode);
+        assert!(saved.close_to_tray);
+        assert_eq!(saved.game_hud_position, GameHudPosition::TopRight);
+        assert_eq!(saved.game_hud_background, MiniBackground::Obsidian);
+        assert_eq!(saved.game_hud_corner_radius, 14.0);
+        assert!(saved.game_hud_show_volume);
+        assert!(saved.game_hud_show_audio_picker);
+        assert!(saved.game_hud_show_heart);
+
+        // Deserializing empty JSON should default close_to_game_mode and HUD fields
+        let empty_json = "{}";
+        let deserialized: Saved = serde_json::from_str(empty_json).unwrap();
+        assert!(deserialized.close_to_game_mode);
+        assert!(deserialized.close_to_tray);
+        assert_eq!(deserialized.game_hud_position, GameHudPosition::TopRight);
+        assert_eq!(deserialized.game_hud_background, MiniBackground::Obsidian);
+        assert_eq!(deserialized.game_hud_corner_radius, 14.0);
+        assert!(deserialized.game_hud_show_volume);
+        assert!(deserialized.game_hud_show_audio_picker);
+        assert!(deserialized.game_hud_show_heart);
+
+        // Deserializing explicit custom values
+        let custom_json = r#"{"close_to_game_mode": false, "game_hud_position": "BottomCenter", "game_hud_background": "SlateCarbon", "game_hud_corner_radius": 18.5, "game_hud_show_volume": false}"#;
+        let deserialized_custom: Saved = serde_json::from_str(custom_json).unwrap();
+        assert!(!deserialized_custom.close_to_game_mode);
+        assert_eq!(deserialized_custom.game_hud_position, GameHudPosition::BottomCenter);
+        assert_eq!(deserialized_custom.game_hud_background, MiniBackground::SlateCarbon);
+        assert_eq!(deserialized_custom.game_hud_corner_radius, 18.5);
+        assert!(!deserialized_custom.game_hud_show_volume);
+        assert!(deserialized_custom.game_hud_show_audio_picker);
+        assert!(deserialized_custom.game_hud_show_heart);
+
+        // Test position labels
+        assert_eq!(GameHudPosition::TopRight.label(), "Top-Right");
+        assert_eq!(GameHudPosition::TopCenter.label(), "Top-Center");
+        assert_eq!(GameHudPosition::TopLeft.label(), "Top-Left");
+        assert_eq!(GameHudPosition::BottomRight.label(), "Bottom-Right");
+        assert_eq!(GameHudPosition::BottomCenter.label(), "Bottom-Center");
     }
 }
