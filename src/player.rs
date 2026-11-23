@@ -171,7 +171,7 @@ impl Fetch {
         let cache_dir = crate::cache::get_cache_dir();
         let target_file = cache_dir.join(format!("{}.{}", self.video_id, self.target_ext));
         let part_file = crate::cache::temp_part_path(&self.video_id, "fetch");
-        let mut cache_writer = if !target_file.exists() && !self.video_id.is_empty() {
+        let mut cache_writer = if crate::cache::is_auto_cache() && !target_file.exists() && !self.video_id.is_empty() {
             std::fs::File::create(&part_file).ok()
         } else {
             None
@@ -1142,6 +1142,9 @@ impl Player {
     }
 
     pub fn preload(&self, video_id: &str) {
+        if !crate::cache::is_auto_cache() {
+            return;
+        }
         let (yt, urls, video_id) = (self.yt.clone(), self.urls.clone(), video_id.to_owned());
         std::thread::spawn(move || {
             if crate::cache::get_cached_track_path(&video_id).is_some() {

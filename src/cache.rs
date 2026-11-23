@@ -1,5 +1,31 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
+
+static AUTO_CACHE_ENABLED: AtomicBool = AtomicBool::new(true);
+static CACHE_LIMIT_BYTES: AtomicU64 = AtomicU64::new(200 * 1024 * 1024);
+
+pub fn set_auto_cache(enabled: bool) {
+    AUTO_CACHE_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+pub fn is_auto_cache() -> bool {
+    AUTO_CACHE_ENABLED.load(Ordering::Relaxed)
+}
+
+pub fn set_cache_limit_mb(mb: u32) {
+    let bytes = (mb as u64) * 1024 * 1024;
+    CACHE_LIMIT_BYTES.store(bytes, Ordering::Relaxed);
+}
+
+pub fn get_cache_limit_bytes() -> u64 {
+    CACHE_LIMIT_BYTES.load(Ordering::Relaxed)
+}
+
+#[allow(dead_code)]
+pub fn get_cache_limit_mb() -> u32 {
+    (CACHE_LIMIT_BYTES.load(Ordering::Relaxed) / (1024 * 1024)) as u32
+}
 
 pub fn get_cache_dir() -> PathBuf {
     #[cfg(windows)]
@@ -228,6 +254,10 @@ pub fn is_valid_track_file(path: &Path) -> bool {
 /// Verifies expected file length and container integrity before renaming.
 /// Automatically cleans up the temp file if validation fails.
 pub fn commit_temp_track(part_path: &Path, video_id: &str, ext: &str, expected_len: u64) -> bool {
+    if !is_auto_cache() {
+        let _ = std::fs::remove_file(part_path);
+        return false;
+    }
     let dir = get_cache_dir();
     let target = dir.join(format!("{video_id}.{ext}"));
 
@@ -251,7 +281,7 @@ pub fn commit_temp_track(part_path: &Path, video_id: &str, ext: &str, expected_l
 
     if std::fs::rename(part_path, &target).is_ok() {
         touch_file(&target);
-        trim_cache_if_needed(1024 * 1024 * 1024);
+        trim_cache_if_needed(get_cache_limit_bytes());
         true
     } else {
         let _ = std::fs::remove_file(part_path);

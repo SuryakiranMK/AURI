@@ -744,6 +744,79 @@ impl GameHudPosition {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+pub enum GameHudVariant {
+    #[default]
+    ClassicCard,
+    CompactPill,
+    CyberpunkBevel,
+    StreamerBanner,
+    MiniTicker,
+    GlassmorphismHud,
+}
+
+impl GameHudVariant {
+    pub const ALL: [GameHudVariant; 6] = [
+        GameHudVariant::ClassicCard,
+        GameHudVariant::CompactPill,
+        GameHudVariant::CyberpunkBevel,
+        GameHudVariant::StreamerBanner,
+        GameHudVariant::MiniTicker,
+        GameHudVariant::GlassmorphismHud,
+    ];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            GameHudVariant::ClassicCard => "Classic Card",
+            GameHudVariant::CompactPill => "Compact Pill",
+            GameHudVariant::CyberpunkBevel => "Cyberpunk Bevel",
+            GameHudVariant::StreamerBanner => "Streamer Banner",
+            GameHudVariant::MiniTicker => "Mini Ticker",
+            GameHudVariant::GlassmorphismHud => "Glass HUD",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            GameHudVariant::ClassicCard => "Balanced 380×144 card with full playback controls, scrubber & drawer.",
+            GameHudVariant::CompactPill => "Minimalist 320×58 capsule for unobtrusive HUD with low screen footprint.",
+            GameHudVariant::CyberpunkBevel => "Chamfered high-tech border with cyan neon accents and gaming telemetry.",
+            GameHudVariant::StreamerBanner => "Wide 440×84 banner layout optimized for OBS, discord streaming & wide monitors.",
+            GameHudVariant::MiniTicker => "Ultra-thin 280×44 floating ticker strip with scrolling title and transport buttons.",
+            GameHudVariant::GlassmorphismHud => "Frosted glass HUD 360×136 with glowing border and luxury audio aesthetics.",
+        }
+    }
+
+    pub fn base_size(&self, queue_open: bool) -> (f32, f32) {
+        match self {
+            GameHudVariant::ClassicCard => {
+                let h = if queue_open { 350.0 } else { 144.0 };
+                (380.0, h)
+            }
+            GameHudVariant::CompactPill => {
+                let h = if queue_open { 240.0 } else { 58.0 };
+                (320.0, h)
+            }
+            GameHudVariant::CyberpunkBevel => {
+                let h = if queue_open { 350.0 } else { 144.0 };
+                (380.0, h)
+            }
+            GameHudVariant::StreamerBanner => {
+                let h = if queue_open { 280.0 } else { 84.0 };
+                (440.0, h)
+            }
+            GameHudVariant::MiniTicker => {
+                let h = if queue_open { 220.0 } else { 44.0 };
+                (280.0, h)
+            }
+            GameHudVariant::GlassmorphismHud => {
+                let h = if queue_open { 340.0 } else { 136.0 };
+                (360.0, h)
+            }
+        }
+    }
+}
+
 /// How much of the screen the in-game overlay covers when opened.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum GameOverlaySize {
@@ -802,6 +875,9 @@ fn default_discord_line2() -> DiscordLineContent { DiscordLineContent::Artist }
 fn default_discord_line3() -> DiscordLineContent { DiscordLineContent::Album }
 fn default_discord_button2() -> DiscordButtonOption { DiscordButtonOption::GetApp }
 fn default_game_hud_corner_radius() -> f32 { 14.0 }
+fn default_game_hud_scale() -> f32 { 1.0 }
+fn default_game_hud_opacity() -> f32 { 0.95 }
+fn default_cache_limit_mb() -> u32 { 200 }
 fn default_corner_roundness() -> f32 { 12.0 }
 fn default_background_tint_shade() -> f32 { 0.0 }
 fn default_game_whitelist() -> Vec<String> {
@@ -915,6 +991,12 @@ pub struct Saved {
     #[serde(default)]
     pub game_hud_position: GameHudPosition,
     #[serde(default)]
+    pub game_hud_variant: GameHudVariant,
+    #[serde(default = "default_game_hud_scale")]
+    pub game_hud_scale: f32,
+    #[serde(default = "default_game_hud_opacity")]
+    pub game_hud_opacity: f32,
+    #[serde(default)]
     pub game_hud_background: MiniBackground,
     #[serde(default = "default_game_hud_corner_radius")]
     pub game_hud_corner_radius: f32,
@@ -924,6 +1006,14 @@ pub struct Saved {
     pub game_hud_show_audio_picker: bool,
     #[serde(default = "default_true")]
     pub game_hud_show_heart: bool,
+    #[serde(default = "default_true")]
+    pub game_hud_show_scrubber: bool,
+    #[serde(default = "default_true")]
+    pub game_hud_show_art: bool,
+    #[serde(default = "default_true")]
+    pub auto_cache_songs: bool,
+    #[serde(default = "default_cache_limit_mb")]
+    pub cache_limit_mb: u32,
     #[serde(default = "default_game_whitelist")]
     pub game_whitelist: Vec<String>,
     #[serde(default = "default_game_blacklist")]
@@ -1243,11 +1333,18 @@ impl Default for Saved {
             discord_button2: DiscordButtonOption::GetApp,
             game_overlay_hotkey: GameOverlayHotkey::CtrlShiftG,
             game_hud_position: GameHudPosition::TopRight,
+            game_hud_variant: GameHudVariant::ClassicCard,
+            game_hud_scale: default_game_hud_scale(),
+            game_hud_opacity: default_game_hud_opacity(),
             game_hud_background: MiniBackground::Obsidian,
             game_hud_corner_radius: default_game_hud_corner_radius(),
             game_hud_show_volume: true,
             game_hud_show_audio_picker: true,
             game_hud_show_heart: true,
+            game_hud_show_scrubber: true,
+            game_hud_show_art: true,
+            auto_cache_songs: true,
+            cache_limit_mb: default_cache_limit_mb(),
             game_whitelist: default_game_whitelist(),
             game_blacklist: default_game_blacklist(),
             mini_palette: MiniPalette::CyberViolet,
@@ -1511,11 +1608,19 @@ pub enum Action {
     SetAutoGameMode(bool),
     SetGameOverlayHotkey(GameOverlayHotkey),
     SetGameHudPosition(GameHudPosition),
+    SetGameHudVariant(GameHudVariant),
+    SetGameHudScale(f32),
+    SetGameHudOpacity(f32),
     SetGameHudBackground(MiniBackground),
     SetGameHudCornerRadius(f32),
     SetGameHudShowVolume(bool),
     SetGameHudShowAudioPicker(bool),
     SetGameHudShowHeart(bool),
+    SetGameHudShowScrubber(bool),
+    SetGameHudShowArt(bool),
+    SetAutoCache(bool),
+    SetCacheLimitMb(u32),
+    TrimCacheNow,
     #[allow(dead_code)]
     AddGameWhitelist(String),
     #[allow(dead_code)]
@@ -1698,6 +1803,8 @@ impl App {
             .unwrap_or_default();
         saved.theme_mode = ThemeMode::Dark;
         saved.queue_open = true;
+        crate::cache::set_auto_cache(saved.auto_cache_songs);
+        crate::cache::set_cache_limit_mb(saved.cache_limit_mb);
         // Readability floor: a nearly transparent glass HUD hides its controls
         // over light wallpapers, so lift older low-opacity configs once.
         saved.mini_opacity = saved.mini_opacity.clamp(0.55, 1.0);
@@ -2507,12 +2614,18 @@ impl App {
     }
 
     pub fn reposition_game_hud(&self) {
-        let h_points = if self.game_hud_queue_open { 350.0 } else { 144.0 };
+        let (base_w, base_h) = self.saved.game_hud_variant.base_size(self.game_hud_queue_open);
+        let scale = self.saved.game_hud_scale.clamp(0.75, 1.30);
+        let w_points = (base_w * scale).round();
+        let h_points = (base_h * scale).round();
         #[cfg(windows)]
         {
+            use windows_sys::Win32::Foundation::RECT;
             use windows_sys::Win32::UI::WindowsAndMessaging::{
                 GetForegroundWindow, SetForegroundWindow, SetWindowPos, ShowWindow, IsZoomed,
-                SWP_SHOWWINDOW, HWND_TOPMOST, SW_RESTORE,
+                GetWindowRect, GetWindowLongPtrW, SetWindowLongPtrW,
+                SWP_SHOWWINDOW, SWP_FRAMECHANGED, HWND_TOPMOST, SW_RESTORE, GWL_EXSTYLE,
+                WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
             };
             use windows_sys::Win32::Graphics::Gdi::{
                 GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
@@ -2532,44 +2645,74 @@ impl App {
             };
 
             let ppp = self.ctx.input(|i| i.viewport().native_pixels_per_point.unwrap_or(1.0)) as f32;
-            let w_px = (380.0 * ppp).round() as i32;
+            let w_px = (w_points * ppp).round() as i32;
             let h_px = (h_points * ppp).round() as i32;
 
-            let (x, y) = if let Some(drag_pos) = self.game_hud_drag_pos {
+            // Check if window is ALREADY visible and placed on screen:
+            let mut live_pos: Option<(i32, i32)> = None;
+            if !auri_hwnd.is_null() {
+                let mut rect: RECT = unsafe { std::mem::zeroed() };
+                if unsafe { GetWindowRect(auri_hwnd, &mut rect) } != 0 {
+                    if rect.left > -10000 && rect.top > -10000 && rect.left < 30000 && rect.top < 30000 {
+                        live_pos = Some((rect.left, rect.top));
+                    }
+                }
+            }
+
+            let hmon = unsafe { MonitorFromWindow(if live_pos.is_some() { auri_hwnd } else { target_hwnd }, MONITOR_DEFAULTTONEAREST) };
+            let mut work: RECT = unsafe { std::mem::zeroed() };
+            let mut has_monitor = false;
+            if !hmon.is_null() {
+                let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
+                info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+                if unsafe { GetMonitorInfoW(hmon, &mut info) } != 0 {
+                    work = info.rcWork;
+                    has_monitor = true;
+                }
+            }
+
+            let (x, y) = if let Some(live) = live_pos {
+                // Item 2: PRESERVE live screen position! Keep HUD where user dragged/placed it.
+                let mut cur_x = live.0;
+                let mut cur_y = live.1;
+                if has_monitor {
+                    if cur_x + w_px > work.right {
+                        cur_x = (work.right - w_px).max(work.left);
+                    }
+                    if cur_y + h_px > work.bottom {
+                        cur_y = (work.bottom - h_px).max(work.top);
+                    }
+                }
+                (cur_x, cur_y)
+            } else if let Some(drag_pos) = self.game_hud_drag_pos {
                 ((drag_pos.x * ppp).round() as i32, (drag_pos.y * ppp).round() as i32)
             } else {
                 let (screen_w, _screen_h) = screen_size();
-                let mut calc_x = (screen_w - 380.0 - 24.0) as i32;
+                let mut calc_x = (screen_w - w_points - 24.0) as i32;
                 let mut calc_y = 24;
 
-                let hmon = unsafe { MonitorFromWindow(target_hwnd, MONITOR_DEFAULTTONEAREST) };
-                if !hmon.is_null() {
-                    let mut info: MONITORINFO = unsafe { std::mem::zeroed() };
-                    info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-                    if unsafe { GetMonitorInfoW(hmon, &mut info) } != 0 {
-                        let work = info.rcWork;
-                        let margin = (24.0 * ppp).round() as i32;
-                        match self.saved.game_hud_position {
-                            GameHudPosition::TopLeft => {
-                                calc_x = work.left + margin;
-                                calc_y = work.top + margin;
-                            }
-                            GameHudPosition::TopCenter => {
-                                calc_x = work.left + (work.right - work.left - w_px) / 2;
-                                calc_y = work.top + margin;
-                            }
-                            GameHudPosition::TopRight => {
-                                calc_x = work.right - w_px - margin;
-                                calc_y = work.top + margin;
-                            }
-                            GameHudPosition::BottomRight => {
-                                calc_x = work.right - w_px - margin;
-                                calc_y = work.bottom - h_px - margin;
-                            }
-                            GameHudPosition::BottomCenter => {
-                                calc_x = work.left + (work.right - work.left - w_px) / 2;
-                                calc_y = work.bottom - h_px - margin;
-                            }
+                if has_monitor {
+                    let margin = (24.0 * ppp).round() as i32;
+                    match self.saved.game_hud_position {
+                        GameHudPosition::TopLeft => {
+                            calc_x = work.left + margin;
+                            calc_y = work.top + margin;
+                        }
+                        GameHudPosition::TopCenter => {
+                            calc_x = work.left + (work.right - work.left - w_px) / 2;
+                            calc_y = work.top + margin;
+                        }
+                        GameHudPosition::TopRight => {
+                            calc_x = work.right - w_px - margin;
+                            calc_y = work.top + margin;
+                        }
+                        GameHudPosition::BottomRight => {
+                            calc_x = work.right - w_px - margin;
+                            calc_y = work.bottom - h_px - margin;
+                        }
+                        GameHudPosition::BottomCenter => {
+                            calc_x = work.left + (work.right - work.left - w_px) / 2;
+                            calc_y = work.bottom - h_px - margin;
                         }
                     }
                 }
@@ -2578,7 +2721,12 @@ impl App {
 
             if !auri_hwnd.is_null() {
                 unsafe {
-                    SetWindowPos(auri_hwnd, HWND_TOPMOST as _, x, y, w_px, h_px, SWP_SHOWWINDOW);
+                    // Item 1: Guarantee WS_EX_TOOLWINDOW and strip WS_EX_APPWINDOW so no taskbar icon appears
+                    let ex_style = GetWindowLongPtrW(auri_hwnd, GWL_EXSTYLE) as u32;
+                    let new_ex = (ex_style & !WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
+                    SetWindowLongPtrW(auri_hwnd, GWL_EXSTYLE, new_ex as isize);
+
+                    SetWindowPos(auri_hwnd, HWND_TOPMOST as _, x, y, w_px, h_px, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
                     SetForegroundWindow(auri_hwnd);
                 }
             }
@@ -2590,7 +2738,7 @@ impl App {
         self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
         self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
         self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
-        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(380.0, h_points)));
+        self.ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w_points, h_points)));
         self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::AlwaysOnTop));
         self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         self.ctx.request_repaint();
@@ -3922,10 +4070,17 @@ impl App {
                     self.game_hud_has_focused = false;
                     #[cfg(windows)]
                     {
-                        use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SetForegroundWindow, SWP_NOACTIVATE, SWP_NOZORDER, SWP_NOSIZE, SWP_FRAMECHANGED};
+                        use windows_sys::Win32::UI::WindowsAndMessaging::{
+                            SetWindowPos, SetForegroundWindow, GetWindowLongPtrW, SetWindowLongPtrW,
+                            GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+                            SWP_NOACTIVATE, SWP_NOZORDER, SWP_NOSIZE, SWP_FRAMECHANGED,
+                        };
                         let auri_hwnd = crate::tray::main_hwnd();
                         if !auri_hwnd.is_null() {
                             unsafe {
+                                let ex_style = GetWindowLongPtrW(auri_hwnd, GWL_EXSTYLE) as u32;
+                                let new_ex = (ex_style & !WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
+                                SetWindowLongPtrW(auri_hwnd, GWL_EXSTYLE, new_ex as isize);
                                 SetWindowPos(auri_hwnd, std::ptr::null_mut(), -32000, -32000, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE | SWP_FRAMECHANGED);
                             }
                         }
@@ -3995,6 +4150,42 @@ impl App {
             }
             Action::SetGameHudShowHeart(val) => {
                 self.saved.game_hud_show_heart = val;
+            }
+            Action::SetGameHudVariant(variant) => {
+                self.saved.game_hud_variant = variant;
+                if self.in_game_mode && self.game_overlay_open {
+                    self.reposition_game_hud();
+                }
+            }
+            Action::SetGameHudScale(scale) => {
+                self.saved.game_hud_scale = scale.clamp(0.75, 1.30);
+                if self.in_game_mode && self.game_overlay_open {
+                    self.reposition_game_hud();
+                }
+            }
+            Action::SetGameHudOpacity(opacity) => {
+                self.saved.game_hud_opacity = opacity.clamp(0.50, 1.00);
+            }
+            Action::SetGameHudShowScrubber(val) => {
+                self.saved.game_hud_show_scrubber = val;
+            }
+            Action::SetGameHudShowArt(val) => {
+                self.saved.game_hud_show_art = val;
+            }
+            Action::SetAutoCache(val) => {
+                self.saved.auto_cache_songs = val;
+                crate::cache::set_auto_cache(val);
+                self.notify(if val { "Auto-cache enabled" } else { "Auto-cache disabled" });
+            }
+            Action::SetCacheLimitMb(mb) => {
+                self.saved.cache_limit_mb = mb.max(50);
+                crate::cache::set_cache_limit_mb(self.saved.cache_limit_mb);
+                crate::cache::trim_cache_if_needed(crate::cache::get_cache_limit_bytes());
+                self.notify(format!("Cache limit set to {} MB", self.saved.cache_limit_mb));
+            }
+            Action::TrimCacheNow => {
+                crate::cache::trim_cache_if_needed(crate::cache::get_cache_limit_bytes());
+                self.notify("Enforced cache quota limit");
             }
             Action::AddGameWhitelist(exe) => {
                 let trimmed = exe.trim().to_string();
@@ -4094,10 +4285,11 @@ impl App {
 #[cfg(windows)]
 pub fn detect_fullscreen_game(whitelist: &[String], blacklist: &[String]) -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
     use windows_sys::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetClassNameW, GetForegroundWindow, GetSystemMetrics, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
-        SM_CXSCREEN, SM_CYSCREEN,
+        GetClassNameW, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, GetWindowTextW, GetWindowThreadProcessId,
+        GWL_STYLE, WS_CAPTION, WS_POPUP,
     };
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -4134,10 +4326,22 @@ pub fn detect_fullscreen_game(whitelist: &[String], blacklist: &[String]) -> boo
             String::new()
         };
 
-        // 3. Blacklist check: if foreground app matches blacklist, never trigger gaming mode
+        // Built-in system processes that must NEVER trigger gaming mode
+        const BUILTIN_BLACKLIST: &[&str] = &[
+            "explorer.exe", "chrome.exe", "msedge.exe", "firefox.exe", "brave.exe", "opera.exe",
+            "code.exe", "devenv.exe", "idea64.exe", "discord.exe", "slack.exe", "teams.exe",
+            "spotify.exe", "auri.exe", "taskmgr.exe", "shellexperiencehost.exe", "searchhost.exe",
+            "startmenuexperiencehost.exe", "lockapp.exe", "cmd.exe", "powershell.exe", "pwsh.exe",
+            "windowsterminal.exe", "notepad.exe", "calc.exe", "systemsettings.exe", "applicationframehost.exe",
+        ];
+        if BUILTIN_BLACKLIST.iter().any(|b| proc_name.eq_ignore_ascii_case(b)) {
+            return false;
+        }
+
+        // 3. User blacklist check: if foreground app matches blacklist, never trigger gaming mode
         for b in blacklist {
             let b_lower = b.trim().to_lowercase();
-            if !b_lower.is_empty() && (proc_name.contains(&b_lower) || win_title.contains(&b_lower)) {
+            if !b_lower.is_empty() && (proc_name == b_lower || proc_name.contains(&b_lower) || win_title.contains(&b_lower)) {
                 return false;
             }
         }
@@ -4145,25 +4349,35 @@ pub fn detect_fullscreen_game(whitelist: &[String], blacklist: &[String]) -> boo
         // 4. Whitelist check: if foreground app matches whitelist, trigger gaming mode immediately
         for w in whitelist {
             let w_lower = w.trim().to_lowercase();
-            if !w_lower.is_empty() && (proc_name.contains(&w_lower) || win_title.contains(&w_lower)) {
+            if !w_lower.is_empty() && (proc_name == w_lower || proc_name.contains(&w_lower) || win_title.contains(&w_lower)) {
                 return true;
             }
         }
 
-        // 5. Fallback: check if window is full screen resolution and not Windows Shell
-        let mut rect = std::mem::zeroed();
-        if GetWindowRect(hwnd, &mut rect) != 0 {
-            let screen_w = GetSystemMetrics(SM_CXSCREEN);
-            let screen_h = GetSystemMetrics(SM_CYSCREEN);
-            let w = rect.right - rect.left;
-            let h = rect.bottom - rect.top;
-            if w >= screen_w && h >= screen_h {
-                let mut class_name = [0u16; 256];
-                let len = GetClassNameW(hwnd, class_name.as_mut_ptr(), 256);
-                if len > 0 {
-                    let s = String::from_utf16_lossy(&class_name[..len as usize]);
-                    if s != "Progman" && s != "WorkerW" && s != "Shell_TrayWnd" && s != "Windows.UI.Core.CoreWindow" {
-                        return true;
+        // 5. Fallback: Check if window covers its active monitor screen (hardware display bounds)
+        let hmon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        if !hmon.is_null() {
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(hmon, &mut info) != 0 {
+                let mon = info.rcMonitor;
+                let mut rect = std::mem::zeroed();
+                if GetWindowRect(hwnd, &mut rect) != 0 {
+                    // True fullscreen games cover the monitor hardware bounds completely
+                    let covers_screen = rect.left <= mon.left && rect.top <= mon.top && rect.right >= mon.right && rect.bottom >= mon.bottom;
+                    if covers_screen {
+                        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+                        let is_captioned = (style & WS_CAPTION) == WS_CAPTION && (style & WS_POPUP) == 0;
+                        if !is_captioned {
+                            let mut class_name = [0u16; 256];
+                            let len = GetClassNameW(hwnd, class_name.as_mut_ptr(), 256);
+                            if len > 0 {
+                                let s = String::from_utf16_lossy(&class_name[..len as usize]);
+                                if s != "Progman" && s != "WorkerW" && s != "Shell_TrayWnd" && s != "Shell_SecondaryTrayWnd" && s != "Windows.UI.Core.CoreWindow" {
+                                    return true;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -4918,11 +5132,16 @@ mod tests {
         assert!(saved.close_to_game_mode);
         assert!(saved.close_to_tray);
         assert_eq!(saved.game_hud_position, GameHudPosition::TopRight);
+        assert_eq!(saved.game_hud_variant, GameHudVariant::ClassicCard);
+        assert_eq!(saved.game_hud_scale, 1.0);
+        assert_eq!(saved.game_hud_opacity, 0.95);
         assert_eq!(saved.game_hud_background, MiniBackground::Obsidian);
         assert_eq!(saved.game_hud_corner_radius, 14.0);
         assert!(saved.game_hud_show_volume);
         assert!(saved.game_hud_show_audio_picker);
         assert!(saved.game_hud_show_heart);
+        assert!(saved.auto_cache_songs);
+        assert_eq!(saved.cache_limit_mb, 200);
 
         // Deserializing empty JSON should default close_to_game_mode and HUD fields
         let empty_json = "{}";
@@ -4930,22 +5149,32 @@ mod tests {
         assert!(deserialized.close_to_game_mode);
         assert!(deserialized.close_to_tray);
         assert_eq!(deserialized.game_hud_position, GameHudPosition::TopRight);
+        assert_eq!(deserialized.game_hud_variant, GameHudVariant::ClassicCard);
+        assert_eq!(deserialized.game_hud_scale, 1.0);
+        assert_eq!(deserialized.game_hud_opacity, 0.95);
         assert_eq!(deserialized.game_hud_background, MiniBackground::Obsidian);
         assert_eq!(deserialized.game_hud_corner_radius, 14.0);
         assert!(deserialized.game_hud_show_volume);
         assert!(deserialized.game_hud_show_audio_picker);
         assert!(deserialized.game_hud_show_heart);
+        assert!(deserialized.auto_cache_songs);
+        assert_eq!(deserialized.cache_limit_mb, 200);
 
         // Deserializing explicit custom values
-        let custom_json = r#"{"close_to_game_mode": false, "game_hud_position": "BottomCenter", "game_hud_background": "SlateCarbon", "game_hud_corner_radius": 18.5, "game_hud_show_volume": false}"#;
+        let custom_json = r#"{"close_to_game_mode": false, "game_hud_position": "BottomCenter", "game_hud_variant": "CompactPill", "game_hud_scale": 1.15, "game_hud_opacity": 0.85, "game_hud_background": "SlateCarbon", "game_hud_corner_radius": 18.5, "game_hud_show_volume": false, "auto_cache_songs": false, "cache_limit_mb": 500}"#;
         let deserialized_custom: Saved = serde_json::from_str(custom_json).unwrap();
         assert!(!deserialized_custom.close_to_game_mode);
         assert_eq!(deserialized_custom.game_hud_position, GameHudPosition::BottomCenter);
+        assert_eq!(deserialized_custom.game_hud_variant, GameHudVariant::CompactPill);
+        assert_eq!(deserialized_custom.game_hud_scale, 1.15);
+        assert_eq!(deserialized_custom.game_hud_opacity, 0.85);
         assert_eq!(deserialized_custom.game_hud_background, MiniBackground::SlateCarbon);
         assert_eq!(deserialized_custom.game_hud_corner_radius, 18.5);
         assert!(!deserialized_custom.game_hud_show_volume);
         assert!(deserialized_custom.game_hud_show_audio_picker);
         assert!(deserialized_custom.game_hud_show_heart);
+        assert!(!deserialized_custom.auto_cache_songs);
+        assert_eq!(deserialized_custom.cache_limit_mb, 500);
 
         // Test position labels
         assert_eq!(GameHudPosition::TopRight.label(), "Top-Right");
@@ -4953,5 +5182,19 @@ mod tests {
         assert_eq!(GameHudPosition::TopLeft.label(), "Top-Left");
         assert_eq!(GameHudPosition::BottomRight.label(), "Bottom-Right");
         assert_eq!(GameHudPosition::BottomCenter.label(), "Bottom-Center");
+
+        // Test variant labels & sizes
+        assert_eq!(GameHudVariant::ClassicCard.label(), "Classic Card");
+        assert_eq!(GameHudVariant::CompactPill.label(), "Compact Pill");
+        assert_eq!(GameHudVariant::CyberpunkBevel.label(), "Cyberpunk Bevel");
+        assert_eq!(GameHudVariant::StreamerBanner.label(), "Streamer Banner");
+        assert_eq!(GameHudVariant::MiniTicker.label(), "Mini Ticker");
+        assert_eq!(GameHudVariant::GlassmorphismHud.label(), "Glass HUD");
+        assert_eq!(GameHudVariant::ClassicCard.base_size(false), (380.0, 144.0));
+        assert_eq!(GameHudVariant::ClassicCard.base_size(true), (380.0, 350.0));
+        assert_eq!(GameHudVariant::CompactPill.base_size(false), (320.0, 58.0));
+        assert_eq!(GameHudVariant::CompactPill.base_size(true), (320.0, 240.0));
+        assert_eq!(GameHudVariant::MiniTicker.base_size(false), (280.0, 44.0));
+        assert_eq!(GameHudVariant::GlassmorphismHud.base_size(false), (360.0, 136.0));
     }
 }
