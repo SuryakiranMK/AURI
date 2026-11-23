@@ -905,6 +905,35 @@ fn default_game_blacklist() -> Vec<String> {
     ]
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TitleBarBrandStyle {
+    CapsulePill,
+    BrandLockup,
+    TrackedMonogram,
+    SimpleText,
+}
+
+impl Default for TitleBarBrandStyle {
+    fn default() -> Self {
+        Self::CapsulePill
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SidebarBrandStyle {
+    SpectrumVisualizer,
+    GrandMarquee,
+    SoundwaveCrest,
+    NeonGlassShield,
+    ClassicText,
+}
+
+impl Default for SidebarBrandStyle {
+    fn default() -> Self {
+        Self::SpectrumVisualizer
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(default)]
 pub struct Saved {
@@ -1000,6 +1029,10 @@ pub struct Saved {
     pub game_hud_background: MiniBackground,
     #[serde(default = "default_game_hud_corner_radius")]
     pub game_hud_corner_radius: f32,
+    #[serde(default)]
+    pub titlebar_brand: TitleBarBrandStyle,
+    #[serde(default)]
+    pub sidebar_brand: SidebarBrandStyle,
     #[serde(default = "default_true")]
     pub game_hud_show_volume: bool,
     #[serde(default = "default_true")]
@@ -1382,6 +1415,8 @@ impl Default for Saved {
             bar_grain_strength: 0.10,
             queue_backdrop: PanelBackdrop::Glass,
             sidebar_open: true,
+            titlebar_brand: TitleBarBrandStyle::default(),
+            sidebar_brand: SidebarBrandStyle::default(),
             queue_retractable: false,
             mini_capsule_retractable: false,
             perf_profile: PerfProfile::CompetitiveGaming,
@@ -1540,6 +1575,8 @@ pub enum Action {
     SetAmbientGlow(bool),
     SetAmbientArtworkBlur(bool),
     SetSelectionGlow(bool),
+    SetTitleBarBrand(TitleBarBrandStyle),
+    SetSidebarBrand(SidebarBrandStyle),
     SetMiniVariant(MiniVariant),
     ToggleMiniLock,
     CheckUpdate,
@@ -1670,6 +1707,7 @@ pub enum Event {
     Cover(String, Option<String>),
     Release { version: String, notes: Vec<String> },
     Updated(Result<PathBuf, String>),
+    UpdateProgress(crate::update::Progress),
     Pressed(Action),
     Lyrics(String, Result<Option<Lyrics>, String>),
     Discord(bool),
@@ -1730,6 +1768,7 @@ pub struct App {
     pub update_notes: Vec<String>,
     pub updating: bool,
     pub update_dialog_open: bool,
+    pub update_progress: Option<crate::update::Progress>,
     pub discord_linked: Option<bool>,
     pub hotkey_taken: Vec<Command>,
     pub recording: Option<Command>,
@@ -1906,6 +1945,7 @@ impl App {
             update_notes: Vec::new(),
             updating: false,
             update_dialog_open: false,
+            update_progress: None,
             discord_linked: None,
             hotkey_taken: Vec::new(),
             recording: None,
@@ -2874,8 +2914,12 @@ impl App {
                 }
                 Event::Updated(Err(reason)) => {
                     self.updating = false;
+                    self.update_progress = None;
                     let page = Some(("Download page", Action::OpenRelease));
                     self.offer(format!("The update did not install: {reason}"), page, UPDATE_NOTICE_TIME);
+                }
+                Event::UpdateProgress(progress) => {
+                    self.update_progress = Some(progress);
                 }
                 Event::Toast(msg) => self.notify(msg),
                 Event::StorageDir(dir) => {
@@ -3325,12 +3369,36 @@ impl App {
                 match update::plan() {
                     Plan::InPlace => {
                         self.updating = true;
+                        self.update_progress = Some(crate::update::Progress {
+                            percent: 0.01,
+                            downloaded_bytes: 0,
+                            total_bytes: 0,
+                            stage: "Connecting to GitHub...".to_string(),
+                            speed_bps: 0.0,
+                        });
                         self.offer(
                             format!("Downloading {APP_NAME} {version}. It restarts by itself."),
                             None,
                             UPDATE_NOTICE_TIME,
                         );
-                        self.background(move |yt| Some(Event::Updated(update::install(&yt.agent, &version))));
+                        let (sender, ctx) = (self.sender.clone(), self.ctx.clone());
+                        std::thread::spawn(move || {
+                            let agent = update::update_agent();
+                            let s = sender.clone();
+                            let c = ctx.clone();
+                            let result = update::install(&agent, &version, move |percent, downloaded, total, stage, speed| {
+                                let _ = s.send(Event::UpdateProgress(crate::update::Progress {
+                                    percent,
+                                    downloaded_bytes: downloaded,
+                                    total_bytes: total,
+                                    stage: stage.to_string(),
+                                    speed_bps: speed,
+                                }));
+                                c.request_repaint();
+                            });
+                            let _ = sender.send(Event::Updated(result));
+                            ctx.request_repaint();
+                        });
                     }
                     Plan::PackageManager(command) => {
                         self.offer(
@@ -3671,6 +3739,12 @@ impl App {
             }
             Action::SetSelectionGlow(v) => {
                 self.saved.selection_glow = v;
+            }
+            Action::SetTitleBarBrand(style) => {
+                self.saved.titlebar_brand = style;
+            }
+            Action::SetSidebarBrand(style) => {
+                self.saved.sidebar_brand = style;
             }
             Action::SetMiniVariant(v) => {
                 self.saved.mini_variant = v;

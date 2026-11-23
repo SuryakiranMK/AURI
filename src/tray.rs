@@ -21,12 +21,13 @@ mod implementation {
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
-        FindWindowW, GetCursorPos, GetMessageW, GetWindowLongPtrW, GetWindowRect, IsZoomed, MF_SEPARATOR,
-        MF_STRING, MSG, PostMessageW, RegisterClassW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-        ShowWindow, TrackPopupMenu, TranslateMessage, GWL_EXSTYLE, HICON, SWP_FRAMECHANGED, SWP_NOACTIVATE,
-        SWP_NOSIZE, SWP_NOZORDER, SW_RESTORE, SW_SHOWMAXIMIZED, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
-        TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_LBUTTONDBLCLK, WM_LBUTTONUP,
-        WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_POPUP,
+        FindWindowW, GetCursorPos, GetMessageW, GetWindowLongPtrW, GetWindowRect, IsZoomed, MF_DISABLED,
+        MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, PostMessageW, RegisterClassW, SetForegroundWindow,
+        SetWindowLongPtrW, SetWindowPos, ShowWindow, TrackPopupMenu, TranslateMessage, GWL_EXSTYLE,
+        HICON, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_RESTORE, SW_SHOWMAXIMIZED,
+        TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND,
+        WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+        WS_POPUP,
     };
 
     const WM_TRAY: u32 = WM_APP + 1;
@@ -61,6 +62,7 @@ mod implementation {
     static MAIN_HWND: AtomicIsize = AtomicIsize::new(0);
     static APP_ICON: AtomicIsize = AtomicIsize::new(0);
     static BALLOON: OnceLock<Mutex<Option<(String, String)>>> = OnceLock::new();
+    static CURRENT_SONG: OnceLock<Mutex<Option<(String, String)>>> = OnceLock::new();
     static SAVED_PLACEMENT: OnceLock<Mutex<Option<SavedPlacement>>> = OnceLock::new();
 
     pub fn is_force_quit() -> bool {
@@ -99,6 +101,10 @@ mod implementation {
         let cell = BALLOON.get_or_init(Mutex::default);
         if let Ok(mut pending) = cell.lock() {
             *pending = Some((title.to_owned(), subtitle.to_owned()));
+        }
+        let song_cell = CURRENT_SONG.get_or_init(Mutex::default);
+        if let Ok(mut cur) = song_cell.lock() {
+            *cur = Some((title.to_owned(), subtitle.to_owned()));
         }
         post_apply();
     }
@@ -310,16 +316,79 @@ mod implementation {
         }
     }
 
+    #[repr(i32)]
+    #[allow(dead_code)]
+    enum PreferredAppMode {
+        Default = 0,
+        AllowDark = 1,
+        ForceDark = 2,
+        ForceLight = 3,
+        Max = 4,
+    }
+
+    unsafe fn enable_dark_menu() {
+        unsafe {
+            use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryA};
+            let uxtheme = LoadLibraryA(b"uxtheme.dll\0".as_ptr());
+            if !uxtheme.is_null() {
+                type FnSetPreferredAppMode = unsafe extern "system" fn(PreferredAppMode) -> PreferredAppMode;
+                type FnFlushMenuThemes = unsafe extern "system" fn();
+
+                // Ordinal 135: SetPreferredAppMode (Windows 10 1903+)
+                let set_mode: Option<FnSetPreferredAppMode> =
+                    std::mem::transmute(GetProcAddress(uxtheme, 135 as _));
+                if let Some(f) = set_mode {
+                    f(PreferredAppMode::ForceDark);
+                }
+
+                // Ordinal 136: FlushMenuThemes
+                let flush: Option<FnFlushMenuThemes> =
+                    std::mem::transmute(GetProcAddress(uxtheme, 136 as _));
+                if let Some(f) = flush {
+                    f();
+                }
+            }
+        }
+    }
+
     unsafe fn open_menu(window: HWND) {
         unsafe {
+            enable_dark_menu();
             let menu = CreatePopupMenu();
+
+            // Optional Live Now-Playing Header (dimmed non-clickable status row)
+            if let Some(song_cell) = CURRENT_SONG.get() {
+                if let Ok(guard) = song_cell.lock() {
+                    if let Some((title, artist)) = guard.as_ref() {
+                        let short_title = if title.chars().count() > 28 {
+                            format!("{}...", title.chars().take(26).collect::<String>())
+                        } else {
+                            title.clone()
+                        };
+                        let header_text = if artist.is_empty() {
+                            format!("🎵   {short_title}")
+                        } else {
+                            let short_artist = if artist.chars().count() > 18 {
+                                format!("{}...", artist.chars().take(16).collect::<String>())
+                            } else {
+                                artist.clone()
+                            };
+                            format!("🎵   {short_title} • {short_artist}")
+                        };
+                        let header = wide(&header_text);
+                        AppendMenuW(menu, MF_STRING | MF_DISABLED | MF_GRAYED, 0, header.as_ptr());
+                        AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+                    }
+                }
+            }
+
             let is_playing = IS_PLAYING.load(Ordering::Relaxed);
-            let play_pause_label = if is_playing { "Pause" } else { "Play" };
+            let play_pause_label = if is_playing { "⏸   Pause" } else { "▶   Play" };
             let play_pause = wide(play_pause_label);
-            let next = wide("Next Track");
-            let prev = wide("Previous Track");
-            let restore = wide("Open AURI");
-            let quit = wide("Quit AURI");
+            let next = wide("⏭   Next Track");
+            let prev = wide("⏮   Previous Track");
+            let restore = wide("⛶   Open AURI");
+            let quit = wide("✕   Quit AURI");
 
             AppendMenuW(menu, MF_STRING, MENU_PLAY_PAUSE_ID, play_pause.as_ptr());
             AppendMenuW(menu, MF_STRING, MENU_NEXT_ID, next.as_ptr());

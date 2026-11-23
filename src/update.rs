@@ -1,4 +1,4 @@
-use std::io::{Read, Write};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -9,6 +9,49 @@ const CHECKSUMS: &str = "SHA256SUMS.txt";
 const PROGRAM_BYTES: u64 = 64 * 1024 * 1024;
 const SCOOP_FOLDER: &str = "\\scoop\\apps\\";
 const SCOOP_COMMAND: &str = "scoop update auri";
+
+#[derive(Clone, Debug)]
+pub struct Progress {
+    pub percent: f32,
+    pub downloaded_bytes: u64,
+    pub total_bytes: u64,
+    pub stage: String,
+    pub speed_bps: f64,
+}
+
+impl Progress {
+    pub fn speed_string(&self) -> String {
+        if self.speed_bps >= 1_048_576.0 {
+            format!("{:.1} MB/s", self.speed_bps / 1_048_576.0)
+        } else if self.speed_bps >= 1024.0 {
+            format!("{:.0} KB/s", self.speed_bps / 1024.0)
+        } else if self.speed_bps > 0.0 {
+            format!("{:.0} B/s", self.speed_bps)
+        } else {
+            String::new()
+        }
+    }
+
+    pub fn size_string(&self) -> String {
+        let dl = self.downloaded_bytes as f64 / 1_048_576.0;
+        if self.total_bytes > 0 {
+            let tot = self.total_bytes as f64 / 1_048_576.0;
+            format!("{:.1} / {:.1} MB", dl, tot)
+        } else if self.downloaded_bytes > 0 {
+            format!("{:.1} MB", dl)
+        } else {
+            String::new()
+        }
+    }
+}
+
+pub fn update_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .user_agent(&format!("AURI-Desktop/{}", env!("CARGO_PKG_VERSION")))
+        .timeout_connect(std::time::Duration::from_secs(15))
+        .timeout_read(std::time::Duration::from_secs(60))
+        .build()
+}
 
 pub enum Plan {
     InPlace,
@@ -35,31 +78,90 @@ fn listed_checksum<'a>(checksums: &'a str, file: &str) -> Option<&'a str> {
     })
 }
 
-fn download(agent: &ureq::Agent, release: &str, into: &Path) -> Result<(), String> {
+fn download(
+    agent: &ureq::Agent,
+    release: &str,
+    into: &Path,
+    mut on_progress: impl FnMut(f32, u64, u64, &str, f64),
+) -> Result<(), String> {
     let failed = |error: ureq::Error| format!("the download failed ({error})");
-    let checksums = agent.get(&format!("{release}/{CHECKSUMS}")).call().map_err(failed)?;
-    let checksums = checksums.into_string().map_err(|e| e.to_string())?;
-    let expected = listed_checksum(&checksums, PROGRAM).ok_or("the release lists no checksum for the program")?;
-    let response = agent.get(&format!("{release}/{PROGRAM}")).call().map_err(failed)?;
-    let mut body = response.into_reader().take(PROGRAM_BYTES);
-    let mut file = std::fs::File::create(into).map_err(|e| format!("this folder cannot be written to ({e})"))?;
+
+    on_progress(0.01, 0, 0, "Connecting to GitHub...", 0.0);
+
+    // Concurrently fetch checksums so network latency is completely overlapped with binary download
+    let checksum_agent = agent.clone();
+    let checksum_url = format!("{release}/{CHECKSUMS}");
+    let checksum_handle = std::thread::spawn(move || -> Result<String, String> {
+        let resp = checksum_agent.get(&checksum_url).call().map_err(failed)?;
+        resp.into_string().map_err(|e| e.to_string())
+    });
+
+    let program_url = format!("{release}/{PROGRAM}");
+    let response = agent.get(&program_url).call().map_err(failed)?;
+    let total_bytes = response
+        .header("Content-Length")
+        .and_then(|h| h.parse::<u64>().ok())
+        .unwrap_or(0);
+
+    let body = response.into_reader().take(PROGRAM_BYTES);
+    let mut reader = BufReader::with_capacity(256 * 1024, body);
+    let file = std::fs::File::create(into).map_err(|e| format!("this folder cannot be written to ({e})"))?;
+    let mut writer = BufWriter::with_capacity(256 * 1024, file);
     let mut digest = ring::digest::Context::new(&ring::digest::SHA256);
-    let mut block = [0u8; 64 * 1024];
+
+    let mut block = [0u8; 128 * 1024];
+    let mut downloaded: u64 = 0;
+    let mut last_progress_time = std::time::Instant::now();
+    let mut last_bytes: u64 = 0;
+    let mut speed_bps: f64 = 0.0;
+
+    on_progress(0.02, 0, total_bytes, "Downloading update package...", 0.0);
+
     loop {
-        let read = body.read(&mut block).map_err(|e| e.to_string())?;
+        let read = reader.read(&mut block).map_err(|e| e.to_string())?;
         if read == 0 {
             break;
         }
         digest.update(&block[..read]);
-        file.write_all(&block[..read]).map_err(|e| e.to_string())?;
+        writer.write_all(&block[..read]).map_err(|e| e.to_string())?;
+        downloaded += read as u64;
+
+        let now = std::time::Instant::now();
+        let elapsed = now.duration_since(last_progress_time).as_secs_f64();
+        if elapsed >= 0.05 || (total_bytes > 0 && downloaded >= total_bytes) {
+            let instant_speed = (downloaded - last_bytes) as f64 / elapsed.max(0.001);
+            speed_bps = if speed_bps == 0.0 {
+                instant_speed
+            } else {
+                speed_bps * 0.7 + instant_speed * 0.3
+            };
+            last_progress_time = now;
+            last_bytes = downloaded;
+
+            let pct = if total_bytes > 0 {
+                (downloaded as f32 / total_bytes as f32).clamp(0.0, 1.0) * 0.90 + 0.02
+            } else {
+                0.02 + (downloaded as f32 / (15.0 * 1024.0 * 1024.0)).clamp(0.0, 0.90)
+            };
+            on_progress(pct, downloaded, total_bytes, "Downloading update package...", speed_bps);
+        }
     }
+    writer.flush().map_err(|e| e.to_string())?;
+    drop(writer);
+
+    on_progress(0.93, downloaded, total_bytes, "Verifying SHA-256 checksum...", speed_bps);
+    let checksums = checksum_handle
+        .join()
+        .map_err(|_| "checksum thread panicked".to_string())??;
+    let expected = listed_checksum(&checksums, PROGRAM).ok_or("the release lists no checksum for the program")?;
     let actual: String = digest.finish().as_ref().iter().map(|byte| format!("{byte:02x}")).collect();
-    if actual.eq_ignore_ascii_case(expected) {
-        return Ok(());
+    if !actual.eq_ignore_ascii_case(expected) {
+        let _ = std::fs::remove_file(into);
+        return Err("the download does not match its published checksum".to_owned());
     }
-    drop(file);
-    let _ = std::fs::remove_file(into);
-    Err("the download does not match its published checksum".to_owned())
+
+    on_progress(0.97, downloaded, total_bytes, "Checksum verified", 0.0);
+    Ok(())
 }
 
 fn swap(program: &Path, fresh: &Path) -> Result<(), String> {
@@ -72,11 +174,17 @@ fn swap(program: &Path, fresh: &Path) -> Result<(), String> {
     })
 }
 
-pub fn install(agent: &ureq::Agent, version: &str) -> Result<PathBuf, String> {
+pub fn install(
+    agent: &ureq::Agent,
+    version: &str,
+    mut on_progress: impl FnMut(f32, u64, u64, &str, f64),
+) -> Result<PathBuf, String> {
     let program = std::env::current_exe().map_err(|e| e.to_string())?;
     let fresh = program.with_extension("new");
-    download(agent, &format!("{DOWNLOADS}/v{version}"), &fresh)?;
+    download(agent, &format!("{DOWNLOADS}/v{version}"), &fresh, &mut on_progress)?;
+    on_progress(0.98, 0, 0, "Applying update...", 0.0);
     swap(&program, &fresh)?;
+    on_progress(1.0, 0, 0, "Complete! Restarting...", 0.0);
     Ok(program)
 }
 
@@ -103,20 +211,26 @@ mod tests {
     fn serve(checksum: String) -> String {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = format!("http://{}", listener.local_addr().unwrap());
+        let checksum = std::sync::Arc::new(checksum);
         std::thread::spawn(move || {
-            for mut stream in listener.incoming().flatten() {
-                let mut request = String::new();
-                let mut reader = BufReader::new(stream.try_clone().unwrap());
-                reader.read_line(&mut request).unwrap();
-                while reader.read_line(&mut String::new()).unwrap() > 2 {}
-                let body = if request.contains(CHECKSUMS) {
-                    format!("{}  other.zip\n{checksum}  {PROGRAM}\n", "a".repeat(64)).into_bytes()
-                } else {
-                    NEW_PROGRAM.to_vec()
-                };
-                let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
-                stream.write_all(head.as_bytes()).unwrap();
-                stream.write_all(&body).unwrap();
+            for stream in listener.incoming().flatten() {
+                let checksum = checksum.clone();
+                std::thread::spawn(move || {
+                    let mut stream = stream;
+                    let mut request = String::new();
+                    let mut reader = BufReader::new(stream.try_clone().unwrap());
+                    if reader.read_line(&mut request).is_ok() {
+                        while reader.read_line(&mut String::new()).unwrap_or(0) > 2 {}
+                        let body = if request.contains(CHECKSUMS) {
+                            format!("{}  other.zip\n{checksum}  {PROGRAM}\n", "a".repeat(64)).into_bytes()
+                        } else {
+                            NEW_PROGRAM.to_vec()
+                        };
+                        let head = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
+                        let _ = stream.write_all(head.as_bytes());
+                        let _ = stream.write_all(&body);
+                    }
+                });
             }
         });
         address
@@ -149,12 +263,12 @@ mod tests {
         std::fs::write(&program, b"the running version").unwrap();
         let agent = ureq::agent();
 
-        let tampered = download(&agent, &serve(WRONG_CHECKSUM.to_owned()), &fresh);
+        let tampered = download(&agent, &serve(WRONG_CHECKSUM.to_owned()), &fresh, |_, _, _, _, _| ());
         assert!(tampered.unwrap_err().contains("checksum"));
         assert!(!fresh.exists());
         assert_eq!(std::fs::read(&program).unwrap(), b"the running version");
 
-        download(&agent, &serve(sha256(NEW_PROGRAM)), &fresh).unwrap();
+        download(&agent, &serve(sha256(NEW_PROGRAM)), &fresh, |_, _, _, _, _| ()).unwrap();
         swap(&program, &fresh).unwrap();
         assert_eq!(std::fs::read(&program).unwrap(), NEW_PROGRAM);
         assert_eq!(std::fs::read(folder.join("Auri.old")).unwrap(), b"the running version");
