@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::io::{self, Read, Write};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const APPLICATION_ID: &str = "1558230893519306802";
@@ -10,8 +11,8 @@ const PIPES: u8 = 10;
 const HANDSHAKE: u32 = 0;
 const FRAME: u32 = 1;
 const CLOSE: u32 = 2;
-#[allow(dead_code)]
 const PING: u32 = 3;
+const PONG: u32 = 4;
 const LISTENING: u8 = 2;
 const DISCONNECTED_RETRY: Duration = Duration::from_millis(1500);
 const CONNECTED_TIMEOUT: Duration = Duration::from_secs(30);
@@ -70,15 +71,25 @@ impl Default for DiscordFormat {
     }
 }
 
+enum WorkerMsg {
+    Update(Option<Value>),
+    Disconnected(u64),
+}
+
 pub struct Discord {
-    updates: Sender<Option<Value>>,
+    updates: Sender<WorkerMsg>,
     shown: Option<(String, String, Headline, String, u64, DiscordFormat, bool, Option<(String, usize)>)>,
 }
 
 impl Discord {
-    pub fn start(report: impl Fn(bool) + Send + 'static, _on_join: impl Fn(String) + Send + Sync + 'static) -> Self {
+    pub fn start(
+        report: impl Fn(bool) + Send + 'static,
+        on_join: impl Fn(String) + Send + Sync + 'static,
+    ) -> Self {
         let (updates, inbox) = mpsc::channel();
-        std::thread::spawn(move || run(inbox, report));
+        let on_join = Arc::new(on_join);
+        let worker_tx = updates.clone();
+        std::thread::spawn(move || run(inbox, worker_tx, report, on_join));
         Self { updates, shown: None }
     }
 
@@ -122,45 +133,155 @@ impl Discord {
         });
         let _ = self
             .updates
-            .send(track.map(|(item, cover)| activity(item, cover, headline, name, started, duration_ms, fmt, playing, party)));
+            .send(WorkerMsg::Update(track.map(|(item, cover)| activity(item, cover, headline, name, started, duration_ms, fmt, playing, party))));
     }
 }
 
-fn run(updates: Receiver<Option<Value>>, report: impl Fn(bool)) {
-    let (mut pipe, mut activity, mut delivered, mut nonce) = (None, None, false, 0u64);
+fn run(
+    inbox: Receiver<WorkerMsg>,
+    tx: Sender<WorkerMsg>,
+    report: impl Fn(bool),
+    on_join: Arc<dyn Fn(String) + Send + Sync>,
+) {
+    let mut pipe: Option<Arc<Mutex<Pipe>>> = None;
+    let mut current_activity: Option<Value> = None;
+    let mut delivered = false;
+    let mut nonce = 0u64;
+    let mut conn_id = 0u64;
     let mut linked = None;
+
     loop {
         if pipe.is_none() {
-            (pipe, delivered) = (connect(), false);
+            if let Some(new_pipe) = connect() {
+                if let Ok(mut reader) = new_pipe.try_clone() {
+                    conn_id += 1;
+                    let writer = Arc::new(Mutex::new(new_pipe));
+                    let reader_writer = Arc::clone(&writer);
+                    let reader_on_join = Arc::clone(&on_join);
+                    let reader_tx = tx.clone();
+                    let current_conn = conn_id;
+
+                    std::thread::spawn(move || {
+                        reader_loop(&mut reader, reader_writer, move |s| reader_on_join(s));
+                        let _ = reader_tx.send(WorkerMsg::Disconnected(current_conn));
+                    });
+
+                    pipe = Some(writer);
+                    delivered = false;
+                }
+            }
         }
-        if let Some(open) = &mut pipe {
+
+        if let Some(writer) = &pipe {
             if !delivered {
                 nonce += 1;
-                let args = json!({ "pid": std::process::id(), "activity": activity });
-                let sent = exchange(
-                    open,
-                    FRAME,
-                    &json!({ "cmd": "SET_ACTIVITY", "args": args, "nonce": nonce.to_string() }),
-                );
+                let args = json!({ "pid": std::process::id(), "activity": current_activity });
+                let sent = {
+                    if let Ok(mut w) = writer.lock() {
+                        send_frame(
+                            &mut *w,
+                            FRAME,
+                            &json!({ "cmd": "SET_ACTIVITY", "args": args, "nonce": nonce.to_string() }),
+                        )
+                    } else {
+                        Err(io::ErrorKind::Other.into())
+                    }
+                };
                 delivered = sent.is_ok();
                 if !delivered {
                     pipe = None;
                 }
             }
         }
+
         if linked != Some(pipe.is_some()) {
             linked = Some(pipe.is_some());
             report(pipe.is_some());
         }
+
         let wait_time = if pipe.is_none() {
             DISCONNECTED_RETRY
         } else {
             CONNECTED_TIMEOUT
         };
-        match updates.recv_timeout(wait_time) {
-            Ok(update) => (activity, delivered) = (updates.try_iter().last().unwrap_or(update), false),
+
+        match inbox.recv_timeout(wait_time) {
+            Ok(WorkerMsg::Update(new_act)) => {
+                let mut latest = new_act;
+                while let Ok(msg) = inbox.try_recv() {
+                    match msg {
+                        WorkerMsg::Update(u) => latest = u,
+                        WorkerMsg::Disconnected(id) => {
+                            if id == conn_id {
+                                pipe = None;
+                            }
+                        }
+                    }
+                }
+                current_activity = latest;
+                delivered = false;
+            }
+            Ok(WorkerMsg::Disconnected(id)) => {
+                if id == conn_id {
+                    pipe = None;
+                }
+            }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
+        }
+    }
+}
+
+fn handle_frame(
+    opcode: u32,
+    payload: &Value,
+    writer: &mut impl Write,
+    on_join: &(impl Fn(String) + ?Sized),
+) -> bool {
+    match opcode {
+        CLOSE => false,
+        PING => {
+            let _ = send_frame(writer, PONG, payload);
+            true
+        }
+        FRAME => {
+            let cmd = payload.get("cmd").and_then(|c| c.as_str());
+            let evt = payload.get("evt").and_then(|e| e.as_str());
+            if cmd == Some("PING") {
+                let nonce = payload.get("nonce").cloned().unwrap_or(Value::Null);
+                let _ = send_frame(writer, FRAME, &json!({ "cmd": "PONG", "nonce": nonce }));
+            } else if cmd == Some("DISPATCH") && evt == Some("ACTIVITY_JOIN") {
+                let secret_opt = payload
+                    .get("data")
+                    .and_then(|d| d.get("secret").and_then(|s| s.as_str()).or_else(|| d.as_str()));
+                if let Some(secret) = secret_opt {
+                    on_join(secret.to_string());
+                }
+            }
+            true
+        }
+        _ => true,
+    }
+}
+
+fn reader_loop(
+    reader: &mut impl Read,
+    writer: Arc<Mutex<impl Write>>,
+    on_join: impl Fn(String),
+) {
+    loop {
+        match read_frame(reader) {
+            Ok((opcode, payload)) => {
+                let cont = if let Ok(mut w) = writer.lock() {
+                    handle_frame(opcode, &payload, &mut *w, &on_join)
+                } else {
+                    false
+                };
+                if !cont {
+                    break;
+                }
+            }
+            Err(_) => break,
         }
     }
 }
@@ -169,6 +290,16 @@ fn connect() -> Option<Pipe> {
     (0..PIPES).find_map(|number| {
         let mut pipe = open(number)?;
         exchange(&mut pipe, HANDSHAKE, &json!({ "v": 1, "client_id": APPLICATION_ID })).ok()?;
+        send_frame(
+            &mut pipe,
+            FRAME,
+            &json!({ "cmd": "SUBSCRIBE", "evt": "ACTIVITY_JOIN", "nonce": "sub_join" }),
+        ).ok()?;
+        send_frame(
+            &mut pipe,
+            FRAME,
+            &json!({ "cmd": "SUBSCRIBE", "evt": "ACTIVITY_JOIN_REQUEST", "nonce": "sub_join_req" }),
+        ).ok()?;
         Some(pipe)
     })
 }
@@ -208,15 +339,34 @@ fn frame(opcode: u32, payload: &Value) -> Vec<u8> {
     [&opcode.to_le_bytes()[..], &(body.len() as u32).to_le_bytes(), body.as_bytes()].concat()
 }
 
-fn exchange(pipe: &mut (impl Read + Write), opcode: u32, payload: &Value) -> io::Result<()> {
+fn send_frame(pipe: &mut impl Write, opcode: u32, payload: &Value) -> io::Result<()> {
     pipe.write_all(&frame(opcode, payload))?;
-    let mut word = [0; 4];
-    pipe.read_exact(&mut word)?;
-    let answer = u32::from_le_bytes(word);
-    pipe.read_exact(&mut word)?;
-    let length = u64::from(u32::from_le_bytes(word));
-    let skipped = io::copy(&mut pipe.take(length), &mut io::sink())?;
-    if answer == CLOSE || skipped < length {
+    pipe.flush()
+}
+
+fn read_frame(pipe: &mut impl Read) -> io::Result<(u32, Value)> {
+    let mut header = [0u8; 8];
+    pipe.read_exact(&mut header)?;
+    let opcode = u32::from_le_bytes(header[0..4].try_into().unwrap());
+    let length = u32::from_le_bytes(header[4..8].try_into().unwrap()) as usize;
+    if length > 16 * 1024 * 1024 {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "Frame length too large"));
+    }
+    let mut buffer = vec![0u8; length];
+    pipe.read_exact(&mut buffer)?;
+    let val = if buffer.is_empty() {
+        Value::Null
+    } else {
+        serde_json::from_slice(&buffer)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+    };
+    Ok((opcode, val))
+}
+
+fn exchange(pipe: &mut (impl Read + Write), opcode: u32, payload: &Value) -> io::Result<()> {
+    send_frame(pipe, opcode, payload)?;
+    let (answer, _) = read_frame(pipe)?;
+    if answer == CLOSE {
         return Err(io::ErrorKind::ConnectionAborted.into());
     }
     Ok(())
@@ -281,12 +431,6 @@ fn activity(
         act["assets"] = json!({
             "large_text": app_name,
         });
-        if let Some((room, size)) = party {
-            act["buttons"] = json!([{
-                "label": format!("🎧 Listen Together ({})", size.max(1)),
-                "url": format!("https://suryakiranmk.github.io/AURI/join?room={room}")
-            }]);
-        }
         apply_party(&mut act, party);
         return act;
     }
@@ -357,16 +501,9 @@ fn activity(
             crate::app::DiscordButtonOption::None => {}
         }
     };
-    if let Some((room, size)) = party {
-        buttons.insert(0, json!({
-            "label": format!("🎧 Listen Together ({})", size.max(1)),
-            "url": format!("https://suryakiranmk.github.io/AURI/join?room={room}")
-        }));
-    } else {
-        add_button(fmt.button1, &mut buttons);
-    }
+    add_button(fmt.button1, &mut buttons);
     if buttons.len() < 2 {
-        add_button(if party.is_some() { fmt.button1 } else { fmt.button2 }, &mut buttons);
+        add_button(fmt.button2, &mut buttons);
     }
     if buttons.len() > 2 {
         buttons.truncate(2);
@@ -379,11 +516,12 @@ fn activity(
     activity
 }
 
-/// The Listen Together party presence: friends see the room size on the user's
-/// profile and can join via the 1-click web/protocol button in the buttons list.
+/// The Listen Together party presence: sets the party size and native Discord
+/// secrets so friends can click the native Discord "Join" / "Listen Together" button.
 fn apply_party(activity: &mut Value, party: Option<(&str, usize)>) {
     if let Some((room, size)) = party {
         activity["party"] = json!({ "id": format!("party_{room}"), "size": [size.max(1), 20] });
+        activity["secrets"] = json!({ "join": room });
     }
 }
 
@@ -504,8 +642,10 @@ mod tests {
         discord.show(Some((&lucky, cover)), Headline::Custom, "m", 0, 248_000, fmt.clone(), true, None);
         let sent: Vec<_> = inbox
             .try_iter()
-            .flatten()
-            .map(|shown| (shown["status_display_type"].clone(), shown["name"].clone()))
+            .filter_map(|msg| match msg {
+                WorkerMsg::Update(Some(shown)) => Some((shown["status_display_type"].clone(), shown["name"].clone())),
+                _ => None,
+            })
             .collect();
         let expected = [
             (json!(0), json!("AURI")),
@@ -527,11 +667,71 @@ mod tests {
         let act = activity(&lucky, "", Headline::App, "", 0, 248_000, fmt, true, Some(("K7QX-9M2T-B4", 3)));
         assert_eq!(act["party"]["id"], "party_K7QX-9M2T-B4");
         assert_eq!(act["party"]["size"][0], 3);
-        assert!(act["secrets"].is_null());
-        assert_eq!(act["buttons"][0]["label"], "🎧 Listen Together (3)");
-        assert_eq!(act["buttons"][0]["url"], "https://suryakiranmk.github.io/AURI/join?room=K7QX-9M2T-B4");
+        assert_eq!(act["party"]["size"][1], 20);
+        assert_eq!(act["secrets"]["join"], "K7QX-9M2T-B4");
+        if let Some(buttons) = act["buttons"].as_array() {
+            for btn in buttons {
+                assert!(!btn["url"].as_str().unwrap_or("").contains("suryakiranmk.github.io"));
+            }
+        }
         let without = activity(&lucky, "", Headline::App, "", 0, 248_000, DiscordFormat::default(), true, None);
         assert!(without["party"].is_null());
         assert!(without["secrets"].is_null());
+    }
+
+    #[test]
+    fn reader_loop_handles_ping_join_and_close() {
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&frame(PING, &json!({ "nonce": "ping123" })));
+        stream.extend_from_slice(&frame(
+            FRAME,
+            &json!({
+                "cmd": "DISPATCH",
+                "evt": "ACTIVITY_JOIN",
+                "data": { "secret": "ABCD-EFGH-JK" }
+            }),
+        ));
+        stream.extend_from_slice(&frame(CLOSE, &json!({ "code": 4000 })));
+
+        let mut cursor = io::Cursor::new(stream);
+        let writer = Arc::new(Mutex::new(Vec::new()));
+        let joined = Arc::new(Mutex::new(Vec::new()));
+        let joined_clone = Arc::clone(&joined);
+
+        reader_loop(
+            &mut cursor,
+            Arc::clone(&writer),
+            move |secret| {
+                joined_clone.lock().unwrap().push(secret);
+            },
+        );
+
+        assert_eq!(*joined.lock().unwrap(), vec!["ABCD-EFGH-JK".to_string()]);
+
+        let written = writer.lock().unwrap().clone();
+        assert!(written.len() >= 8);
+        let opcode = u32::from_le_bytes(written[0..4].try_into().unwrap());
+        assert_eq!(opcode, PONG);
+    }
+
+    #[test]
+    fn reader_loop_handles_frame_ping() {
+        let mut stream = Vec::new();
+        stream.extend_from_slice(&frame(FRAME, &json!({ "cmd": "PING", "nonce": "abc" })));
+        stream.extend_from_slice(&frame(CLOSE, &json!({})));
+
+        let mut cursor = io::Cursor::new(stream);
+        let writer = Arc::new(Mutex::new(Vec::new()));
+
+        reader_loop(&mut cursor, Arc::clone(&writer), |_| {});
+
+        let written = writer.lock().unwrap().clone();
+        assert!(written.len() >= 8);
+        let opcode = u32::from_le_bytes(written[0..4].try_into().unwrap());
+        assert_eq!(opcode, FRAME);
+        let length = u32::from_le_bytes(written[4..8].try_into().unwrap()) as usize;
+        let payload: Value = serde_json::from_slice(&written[8..8 + length]).unwrap();
+        assert_eq!(payload["cmd"], "PONG");
+        assert_eq!(payload["nonce"], "abc");
     }
 }

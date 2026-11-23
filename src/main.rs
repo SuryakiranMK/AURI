@@ -67,15 +67,32 @@ fn attach_console() {}
 
 fn parse_join_code(arg: &str) -> Option<String> {
     let clean = arg.trim().trim_matches('"').trim_matches('\'');
-    let code_candidate = if let Some(rest) = clean.strip_prefix("auri://join/") {
-        rest.trim_matches('/')
-    } else if let Some(rest) = clean.strip_prefix("auri://join?room=") {
-        rest.split('&').next().unwrap_or(rest)
-    } else if let Some(rest) = clean.strip_prefix("auri://") {
-        rest.strip_prefix("join/").or_else(|| rest.strip_prefix("join?room=")).unwrap_or(rest).trim_matches('/')
+    const AURI_SCHEME: &str = "auri://";
+    const DISCORD_SCHEME: &str = "discord-1558230893519306802://";
+
+    let rest = if clean.len() >= AURI_SCHEME.len() && clean[..AURI_SCHEME.len()].eq_ignore_ascii_case(AURI_SCHEME) {
+        &clean[AURI_SCHEME.len()..]
+    } else if clean.len() >= DISCORD_SCHEME.len() && clean[..DISCORD_SCHEME.len()].eq_ignore_ascii_case(DISCORD_SCHEME) {
+        &clean[DISCORD_SCHEME.len()..]
     } else {
         return None;
     };
+
+    let code_candidate = if let Some((_path, query)) = rest.split_once('?') {
+        query.split('&').find_map(|param| {
+            param.strip_prefix("secret=")
+                .or_else(|| param.strip_prefix("room="))
+        })?
+    } else if let Some(path) = rest.strip_prefix("join/") {
+        path.trim_matches('/')
+    } else {
+        let trimmed = rest.trim_matches('/');
+        if trimmed.eq_ignore_ascii_case("join") {
+            return None;
+        }
+        trimmed
+    };
+
     let code = code_candidate.trim().to_uppercase();
     if crate::sync::is_valid_room_code(&code) {
         Some(code)
@@ -91,18 +108,28 @@ pub fn register_protocol() {
         let exe_str = exe.to_string_lossy();
         let cmd = format!("\"{}\" \"%1\"", exe_str);
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let _ = std::process::Command::new("reg")
-            .args(&["add", r"HKCU\Software\Classes\auri", "/ve", "/d", "URL:AURI Protocol", "/f"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
-        let _ = std::process::Command::new("reg")
-            .args(&["add", r"HKCU\Software\Classes\auri", "/v", "URL Protocol", "/d", "", "/f"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
-        let _ = std::process::Command::new("reg")
-            .args(&["add", r"HKCU\Software\Classes\auri\shell\open\command", "/ve", "/d", &cmd, "/f"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
+        let protocols = ["auri", "discord-1558230893519306802"];
+        for proto in protocols {
+            let key = format!(r"HKCU\Software\Classes\{proto}");
+            let open_cmd_key = format!(r"HKCU\Software\Classes\{proto}\shell\open\command");
+            let desc = if proto == "auri" {
+                "URL:AURI Protocol".to_string()
+            } else {
+                format!("URL:{proto} Protocol")
+            };
+            let _ = std::process::Command::new("reg")
+                .args(&["add", &key, "/ve", "/d", &desc, "/f"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+            let _ = std::process::Command::new("reg")
+                .args(&["add", &key, "/v", "URL Protocol", "/d", "", "/f"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+            let _ = std::process::Command::new("reg")
+                .args(&["add", &open_cmd_key, "/ve", "/d", &cmd, "/f"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .status();
+        }
     }
 }
 
@@ -312,11 +339,44 @@ mod tests {
 
     #[test]
     fn test_parse_join_code() {
+        // auri:// format variations
         assert_eq!(parse_join_code("auri://join/K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
         assert_eq!(parse_join_code("auri://join/K7QX-9M2T-B4/"), Some("K7QX-9M2T-B4".to_string()));
         assert_eq!(parse_join_code("\"auri://join/K7QX-9M2T-B4\""), Some("K7QX-9M2T-B4".to_string()));
         assert_eq!(parse_join_code("auri://join?room=K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
-        assert_eq!(parse_join_code("auri://join/INVALID"), None);
+        assert_eq!(parse_join_code("auri://join?secret=K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(parse_join_code("auri://K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(parse_join_code("auri://custom_room"), Some("CUSTOM_ROOM".to_string()));
+
+        // discord-...:// format variations
+        assert_eq!(
+            parse_join_code("discord-1558230893519306802://join?secret=K7QX-9M2T-B4"),
+            Some("K7QX-9M2T-B4".to_string())
+        );
+        assert_eq!(
+            parse_join_code("discord-1558230893519306802://join?secret=custom-code"),
+            Some("CUSTOM-CODE".to_string())
+        );
+        assert_eq!(
+            parse_join_code("discord-1558230893519306802://K7QX-9M2T-B4"),
+            Some("K7QX-9M2T-B4".to_string())
+        );
+        assert_eq!(
+            parse_join_code("discord-1558230893519306802://custom_party_99"),
+            Some("CUSTOM_PARTY_99".to_string())
+        );
+        assert_eq!(
+            parse_join_code("\"discord-1558230893519306802://join?secret=K7QX-9M2T-B4\""),
+            Some("K7QX-9M2T-B4".to_string())
+        );
+
+        // Invalid cases
+        assert_eq!(parse_join_code("auri://join/NO"), None); // too short (< 3)
+        assert_eq!(parse_join_code("auri://join/"), None);
+        assert_eq!(parse_join_code("auri://join"), None);
+        assert_eq!(parse_join_code("discord-1558230893519306802://join"), None);
+        assert_eq!(parse_join_code("discord-1558230893519306802://"), None);
+        assert_eq!(parse_join_code("auri://join/BAD;CHAR"), None);
         assert_eq!(parse_join_code("--play"), None);
         assert_eq!(parse_join_code("daft punk"), None);
     }
@@ -330,5 +390,10 @@ mod tests {
             .output()
             .expect("reg query should succeed");
         assert!(out.status.success());
+        let out_discord = std::process::Command::new("reg")
+            .args(&["query", r"HKCU\Software\Classes\discord-1558230893519306802"])
+            .output()
+            .expect("reg query should succeed");
+        assert!(out_discord.status.success());
     }
 }

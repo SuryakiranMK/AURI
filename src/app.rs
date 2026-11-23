@@ -999,6 +999,8 @@ pub struct Saved {
     #[serde(default)]
     pub sync_room_code: String,
     #[serde(default)]
+    pub custom_room_code: String,
+    #[serde(default)]
     pub recent_searches: Vec<String>,
 
     #[serde(default)]
@@ -1270,6 +1272,7 @@ impl Default for Saved {
             perf_art_cache_mb: 4,
             perf_tick_fps: 1,
             sync_room_code: String::new(),
+            custom_room_code: String::new(),
             recent_searches: Vec::new(),
             stats_filter: StatsPeriod::ThirtyDays,
             stats_daily: Vec::new(),
@@ -1441,6 +1444,8 @@ pub enum Action {
     PromptSyncJoin(String),
     DismissSyncPrompt,
     StopSync,
+    SetCustomRoomCode(String),
+    CheckClipboardSync,
     TypeSearch,
     Notify(String),
     SetLyricsSyncedMode(bool),
@@ -1622,6 +1627,9 @@ pub struct App {
     pub sync_is_p2p: bool,
     /// Holds a pending room code when invited externally via deep link or Discord.
     pub pending_sync_join: Option<String>,
+    pub prev_window_focused: bool,
+    pub dismissed_sync_code: Option<String>,
+    pub last_clipboard_code: Option<String>,
     /// Set when the user really wants to exit (tray Quit), so the
     /// close-to-tray interception lets the close through.
     pub force_quit: bool,
@@ -1793,6 +1801,9 @@ impl App {
             sync_skew: crate::sync::SkewEstimator::default(),
             sync_is_p2p: false,
             pending_sync_join: pending_join,
+            prev_window_focused: true,
+            dismissed_sync_code: None,
+            last_clipboard_code: None,
             force_quit: false,
             last_notified_track: None,
             suggestions: Vec::new(),
@@ -1859,6 +1870,50 @@ impl App {
 
     fn notify(&mut self, text: impl Into<String>) {
         self.offer(text, None, NOTICE_TIME);
+    }
+
+    pub fn check_clipboard_join(&mut self) {
+        let Ok(mut cb) = arboard::Clipboard::new() else {
+            return;
+        };
+        let Ok(text) = cb.get_text() else {
+            return;
+        };
+        let Some(code) = extract_join_code(&text) else {
+            return;
+        };
+
+        // Don't auto-join or notify if we are already in this room
+        if self.sync_mode != crate::sync::SyncMode::Disconnected
+            && self.sync_room.eq_ignore_ascii_case(&code)
+        {
+            return;
+        }
+
+        // Don't notify if the user dismissed this room code
+        if let Some(dismissed) = &self.dismissed_sync_code {
+            if dismissed.eq_ignore_ascii_case(&code) {
+                return;
+            }
+        }
+
+        // Don't repeat if already detected and prefilled this exact code
+        if let Some(last) = &self.last_clipboard_code {
+            if last.eq_ignore_ascii_case(&code) {
+                return;
+            }
+        }
+
+        self.last_clipboard_code = Some(code.clone());
+
+        // Prefill join inputs in UI temp data
+        let code_clone = code.clone();
+        self.ctx.data_mut(|d| {
+            d.insert_temp(egui::Id::new("topbar-team-join-code"), code_clone.clone());
+            d.insert_temp(egui::Id::new("sync-join-code"), code_clone);
+        });
+
+        self.notify(format!("📋 Detected Listen Together room code in clipboard: {code}"));
     }
 
     fn offer(&mut self, text: impl Into<String>, action: Option<(&'static str, Action)>, lasts: Duration) {
@@ -3484,7 +3539,15 @@ impl App {
                 }
             }
             Action::DismissSyncPrompt => {
-                self.pending_sync_join = None;
+                if let Some(room) = self.pending_sync_join.take() {
+                    self.dismissed_sync_code = Some(room);
+                }
+            }
+            Action::SetCustomRoomCode(code) => {
+                self.saved.custom_room_code = code;
+            }
+            Action::CheckClipboardSync => {
+                self.check_clipboard_join();
             }
             Action::StopSync => {
                 self.sync_mode = crate::sync::SyncMode::Disconnected;
@@ -4033,6 +4096,11 @@ impl eframe::App for App {
             crate::tray::hide_main_window_to_tray();
         }
         let (size, minimized) = ctx.input(|input| (input.content_rect().size(), input.viewport().minimized == Some(true)));
+        let window_focused = ctx.input(|input| input.focused);
+        if window_focused && !self.prev_window_focused {
+            self.check_clipboard_join();
+        }
+        self.prev_window_focused = window_focused;
         if minimized && (self.saved.auto_purge_ram || (self.saved.performance_mode && self.saved.perf_aggressive_ram)) {
             self.apply(Action::PurgeMemory);
         }
@@ -4428,6 +4496,56 @@ fn shuffle(items: &mut [Item]) {
     }
 }
 
+/// Extracts and validates a Listen Together join code from raw text, deep links,
+/// or web invite URLs.
+pub fn extract_join_code(text: &str) -> Option<String> {
+    let clean = text.trim().trim_matches('"').trim_matches('\'').trim();
+    if clean.is_empty() {
+        return None;
+    }
+
+    let candidate = if let Some(idx) = clean.find("://") {
+        let scheme = &clean[..idx];
+        let rest = &clean[idx + 3..];
+        if scheme == "auri" || scheme.starts_with("discord-") {
+            if let Some(s) = rest.strip_prefix("join?secret=") {
+                s.split('&').next().unwrap_or(s)
+            } else if let Some(s) = rest.strip_prefix("join?room=") {
+                s.split('&').next().unwrap_or(s)
+            } else if let Some(s) = rest.strip_prefix("?secret=") {
+                s.split('&').next().unwrap_or(s)
+            } else if let Some(s) = rest.strip_prefix("join/") {
+                s.trim_matches('/')
+            } else {
+                rest.trim_matches('/')
+            }
+        } else if let Some(pos) = clean.find("join?room=") {
+            let rest = &clean[pos + 10..];
+            rest.split('&').next().unwrap_or(rest)
+        } else if let Some(pos) = clean.find("join?secret=") {
+            let rest = &clean[pos + 12..];
+            rest.split('&').next().unwrap_or(rest)
+        } else {
+            return None;
+        }
+    } else {
+        clean
+    };
+
+    let candidate = candidate.trim().trim_matches('/');
+    let candidate = candidate.split(['?', '&']).next().unwrap_or(candidate).trim();
+    if candidate.is_empty() {
+        return None;
+    }
+
+    let code = candidate.to_uppercase();
+    if crate::sync::is_valid_room_code(&code) {
+        Some(code)
+    } else {
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4609,5 +4727,21 @@ mod tests {
         assert_eq!(saved.artwork_bg_variant, ArtworkBgVariant::BlurredBackdrop);
         assert!((saved.artwork_bg_opacity - 0.50).abs() < 0.01);
         assert!((saved.artwork_bg_blur - 0.60).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_extract_join_code() {
+        assert_eq!(extract_join_code("K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(extract_join_code("k7qx-9m2t-b4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(extract_join_code("auri://join/K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(extract_join_code("auri://join/K7QX-9M2T-B4/"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(extract_join_code("auri://join?room=K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(extract_join_code("auri://K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(extract_join_code("discord-1558230893519306802://join?secret=K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(extract_join_code("discord-1558230893519306802://K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(extract_join_code("https://suryakiranmk.github.io/AURI/join?room=K7QX-9M2T-B4"), Some("K7QX-9M2T-B4".to_string()));
+        assert_eq!(extract_join_code("chill-room-123"), Some("CHILL-ROOM-123".to_string()));
+        assert_eq!(extract_join_code(""), None);
+        assert_eq!(extract_join_code("invalid string with spaces"), None);
     }
 }

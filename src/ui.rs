@@ -1390,6 +1390,9 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
         ui.painter().circle_stroke(team_dot, 3.5, Stroke::new(1.0_f32, Color32::from_rgb(20, 21, 26)));
     }
     describe(&team_resp, if in_room { "Listen Together (click for the room)" } else { "Listen Together (host or join a room)" });
+    if team_resp.clicked() {
+        out.push(Action::CheckClipboardSync);
+    }
     egui::Popup::menu(&team_resp)
         .gap(6.0)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -1509,22 +1512,6 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
                         describe(&chip_resp, "Click to copy room code");
                         ui.add_space(8.0);
 
-                        if hosting {
-                            let (link_btn, link_resp) = ui.allocate_exact_size(vec2(panel_w, 28.0), Sense::click());
-                            let lhov = hover_of(ui, &link_resp);
-                            ui.painter().rect_filled(link_btn, 6.0, veil(0.04 + 0.04 * lhov));
-                            ui.painter().rect_stroke(link_btn, 6.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
-                            ui.painter().text(pos2(link_btn.left() + 10.0, link_btn.center().y), Align2::LEFT_CENTER, icon::LINK, glyph(12.0), accent);
-                            label(ui, pos2(link_btn.left() + 26.0, link_btn.center().y), Align2::LEFT_CENTER, "Copy 1-Click Discord/Web Link", sans(11.0), TEXT, panel_w - 32.0);
-                            describe(&link_resp, "Copy 1-click web invite link to share with friends");
-                            if link_resp.clicked() {
-                                let invite_url = format!("https://suryakiranmk.github.io/AURI/join?room={}", app.sync_room);
-                                ui.ctx().copy_text(invite_url);
-                                out.push(Action::Notify("Invite link copied to clipboard".to_owned()));
-                            }
-                            ui.add_space(8.0);
-                        }
-
                         // Listeners or track status
                         if hosting {
                             let mut names: Vec<&str> = app
@@ -1639,7 +1626,7 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
 
                         describe(&card_resp, "Host a new Listen Together room");
                         if card_resp.clicked() {
-                            out.push(Action::StartSyncHost(crate::sync::new_room_code()));
+                            out.push(Action::StartSyncHost(host_room_code(app)));
                         }
 
                         ui.add_space(10.0);
@@ -1670,9 +1657,21 @@ fn top_window_bar(app: &mut App, ui: &mut Ui, out: &mut Vec<Action>) {
 
                         let join_id = Id::new("topbar-team-join-code");
                         let mut buffer = ui.data(|d| d.get_temp::<String>(join_id)).unwrap_or_default();
+                        if buffer.is_empty() {
+                            if let Ok(mut cb) = arboard::Clipboard::new() {
+                                if let Ok(text) = cb.get_text() {
+                                    if let Some(code) = crate::app::extract_join_code(&text) {
+                                        if app.sync_room != code && app.dismissed_sync_code.as_deref() != Some(&code) {
+                                            buffer = code.clone();
+                                            ui.data_mut(|d| d.insert_temp(join_id, buffer.clone()));
+                                        }
+                                    }
+                                }
+                            }
+                        }
 
                         let edit = egui::TextEdit::singleline(&mut buffer)
-                            .hint_text("e.g. K7QX-9M2T-B4")
+                            .hint_text(egui::WidgetText::from("Enter join code...").color(veil(0.32)))
                             .font(medium(12.0))
                             .frame(false)
                             .margin(Margin::symmetric(10, 9));
@@ -6958,6 +6957,15 @@ fn player_bar_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
     });
 }
 
+fn host_room_code(app: &App) -> String {
+    let custom = app.saved.custom_room_code.trim().to_uppercase();
+    if !custom.is_empty() && crate::sync::is_valid_room_code(&custom) {
+        custom
+    } else {
+        crate::sync::new_room_code()
+    }
+}
+
 fn sync_together_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
     let accent = ui.ctx().data(|d| d.get_temp(Id::new("app-theme-accent"))).unwrap_or(ACCENT);
     settings_card_panel(ui, "sync-card", "Listen Together", "Synchronized playback with friends through instant room codes.", |ui| {
@@ -6992,8 +7000,33 @@ fn sync_together_section(ui: &mut Ui, app: &App, out: &mut Vec<Action>) {
             if connected {
                 out.push(Action::StopSync);
             } else {
-                out.push(Action::StartSyncHost(crate::sync::new_room_code()));
+                out.push(Action::StartSyncHost(host_room_code(app)));
             }
+        }
+
+        // Custom room code
+        let row = row_base(
+            ui,
+            icon::BROADCAST,
+            "Custom room code",
+            "Set a permanent custom room name/code when hosting (leave blank for random codes)",
+        );
+        let edit_w = 216.0;
+        let edit_rect = Rect::from_min_size(
+            pos2(row.right() - edit_w - 4.0, row.center().y - 15.0),
+            vec2(edit_w, 30.0),
+        );
+        ui.painter().rect_filled(edit_rect, 7.0, veil(0.07));
+        ui.painter().rect_stroke(edit_rect, 7.0, Stroke::new(1.0_f32, veil(0.12)), StrokeKind::Inside);
+        let mut buffer = app.saved.custom_room_code.clone();
+        let edit = egui::TextEdit::singleline(&mut buffer)
+            .hint_text("e.g. chill-room")
+            .desired_width(edit_w - 12.0)
+            .font(sans(12.5))
+            .frame(false);
+        let edit_resp = ui.put(edit_rect.shrink2(vec2(6.0, 2.0)), edit);
+        if edit_resp.changed() {
+            out.push(Action::SetCustomRoomCode(buffer));
         }
 
         if connected {

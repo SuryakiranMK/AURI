@@ -121,18 +121,16 @@ pub fn new_room_code() -> String {
     format!("{}{}{}{}-{}{}{}{}-{}{}", chars[0], chars[1], chars[2], chars[3], chars[4], chars[5], chars[6], chars[7], chars[8], chars[9])
 }
 
-/// Strictly validates the format of Listen Together room codes (XXXX-XXXX-XX).
+/// Strictly validates the format of Listen Together room codes.
+/// Supports standard Crockford format (XXXX-XXXX-XX) as well as
+/// custom room codes (between 3 and 32 characters consisting of ASCII alphanumeric characters, hyphens, and underscores).
 /// Prevents path traversal, shell injection, or invalid inputs.
 pub fn is_valid_room_code(code: &str) -> bool {
     let clean = code.trim();
-    let parts: Vec<&str> = clean.split('-').collect();
-    if parts.len() != 3 {
+    if clean.len() < 3 || clean.len() > 32 {
         return false;
     }
-    parts[0].len() == 4
-        && parts[1].len() == 4
-        && parts[2].len() == 2
-        && parts.iter().all(|part| part.chars().all(|c| c.is_ascii_alphanumeric()))
+    clean.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// The ntfy topic is derived from a hash of the room code, so the relay (or
@@ -818,13 +816,46 @@ mod tests {
 
     #[test]
     fn test_is_valid_room_code() {
+        // Standard Crockford codes (XXXX-XXXX-XX)
         assert!(is_valid_room_code("ABCD-EFGH-12"));
         assert!(is_valid_room_code("1234-5678-90"));
         assert!(is_valid_room_code("K7QX-9M2T-B4"));
+
+        // Custom room codes (3-32 chars: ASCII alphanumeric, hyphens, underscores)
+        assert!(is_valid_room_code("abc"));
+        assert!(is_valid_room_code("custom-room"));
+        assert!(is_valid_room_code("party_room_123"));
+        assert!(is_valid_room_code("a-b_c-12345678901234567890123456")); // exactly 32 chars
+        assert!(is_valid_room_code("ABCD-EFGH"));
+        assert!(is_valid_room_code("ABCD-EFGH-123"));
+
+        // Invalid codes
         assert!(!is_valid_room_code(""));
-        assert!(!is_valid_room_code("ABCD-EFGH"));
-        assert!(!is_valid_room_code("ABCD-EFGH-123"));
-        assert!(!is_valid_room_code("ABCD-EFGH-1;DROP"));
-        assert!(!is_valid_room_code("ABCD/EFGH/12"));
+        assert!(!is_valid_room_code("   "));
+        assert!(!is_valid_room_code("ab")); // too short (< 3)
+        assert!(!is_valid_room_code("a".repeat(33).as_str())); // too long (> 32)
+        assert!(!is_valid_room_code("ABCD-EFGH-1;DROP")); // injection / illegal chars
+        assert!(!is_valid_room_code("ABCD/EFGH/12")); // path traversal / slashes
+        assert!(!is_valid_room_code("room code")); // spaces
+        assert!(!is_valid_room_code("room@auri")); // illegal symbol
+        assert!(!is_valid_room_code("room#1")); // illegal symbol
+    }
+
+    #[test]
+    fn test_topic_for_hashes_safely_for_standard_and_custom_codes() {
+        let std_code = "K7QX-9M2T-B4";
+        let custom_code = "my-custom_room-99";
+        let topic_std = topic_for(std_code);
+        let topic_cust = topic_for(custom_code);
+
+        assert!(topic_std.starts_with("auri-lt-"));
+        assert!(topic_cust.starts_with("auri-lt-"));
+        assert_eq!(topic_std.len(), 8 + 24); // "auri-lt-" (8) + 12 bytes hex (24)
+        assert_eq!(topic_cust.len(), 8 + 24);
+        assert!(!topic_std.contains(std_code));
+        assert!(!topic_cust.contains(custom_code));
+        assert_ne!(topic_std, topic_cust);
+        // Topic remains deterministic
+        assert_eq!(topic_for(custom_code), topic_cust);
     }
 }
