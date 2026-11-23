@@ -366,14 +366,14 @@ mod implementation {
                             title.clone()
                         };
                         let header_text = if artist.is_empty() {
-                            format!("🎵   {short_title}")
+                            format!("Now Playing: {short_title}")
                         } else {
                             let short_artist = if artist.chars().count() > 18 {
                                 format!("{}...", artist.chars().take(16).collect::<String>())
                             } else {
                                 artist.clone()
                             };
-                            format!("🎵   {short_title} • {short_artist}")
+                            format!("{short_title} • {short_artist}")
                         };
                         let header = wide(&header_text);
                         AppendMenuW(menu, MF_STRING | MF_DISABLED | MF_GRAYED, 0, header.as_ptr());
@@ -383,12 +383,12 @@ mod implementation {
             }
 
             let is_playing = IS_PLAYING.load(Ordering::Relaxed);
-            let play_pause_label = if is_playing { "⏸   Pause" } else { "▶   Play" };
+            let play_pause_label = if is_playing { "Pause" } else { "Play" };
             let play_pause = wide(play_pause_label);
-            let next = wide("⏭   Next Track");
-            let prev = wide("⏮   Previous Track");
-            let restore = wide("⛶   Open AURI");
-            let quit = wide("✕   Quit AURI");
+            let next = wide("Next Track");
+            let prev = wide("Previous Track");
+            let restore = wide("Open AURI");
+            let quit = wide("Quit AURI");
 
             AppendMenuW(menu, MF_STRING, MENU_PLAY_PAUSE_ID, play_pause.as_ptr());
             AppendMenuW(menu, MF_STRING, MENU_NEXT_ID, next.as_ptr());
