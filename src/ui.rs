@@ -5486,12 +5486,25 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
                 "game-hud-scale",
                 icon::ARROWS_OUT,
                 "Overall HUD scale",
-                "Scale multiplier for overlay size and elements (0.75x to 1.30x).",
+                "Scale multiplier for overlay size and layout dimensions (0.70x to 1.60x).",
                 app.saved.game_hud_scale,
-                0.75..=1.30,
+                0.70..=1.60,
                 |v| format!("{:.2}x", v),
             ) {
                 out.push(Action::SetGameHudScale(scale));
+            }
+
+            if let Some(font_scale) = slider_row(
+                ui,
+                "game-hud-font-scale",
+                icon::TEXT_T,
+                "HUD text & icon size",
+                "Proportional size multiplier for track typography, metadata, and control glyphs (0.80x to 1.50x).",
+                app.saved.game_hud_font_scale,
+                0.80..=1.50,
+                |v| format!("{:.2}x", v),
+            ) {
+                out.push(Action::SetGameHudFontScale(font_scale));
             }
 
             if let Some(op) = slider_row(
@@ -5520,6 +5533,9 @@ fn render_gaming_controls(ui: &mut Ui, app: &App, out: &mut Vec<Action>, w: f32)
                     (crate::app::GameHudPosition::TopLeft, "Top-Left"),
                     (crate::app::GameHudPosition::BottomRight, "Bottom-Right"),
                     (crate::app::GameHudPosition::BottomCenter, "Bottom-Center"),
+                    (crate::app::GameHudPosition::BottomLeft, "Bottom-Left"),
+                    (crate::app::GameHudPosition::Center, "Screen Center"),
+                    (crate::app::GameHudPosition::Custom, "Custom (Remember Last Dragged Position)"),
                 ],
             ) {
                 out.push(Action::SetGameHudPosition(pos));
@@ -11239,14 +11255,16 @@ fn render_hud_queue_drawer(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, re
     if rect.bottom() <= div_y + 30.0 {
         return;
     }
+    let font_scale = app.saved.game_hud_font_scale.clamp(0.80, 1.50);
+    let fs = |pt: f32| pt * font_scale;
     ui.painter().hline(rect.x_range().shrink(10.0), div_y, Stroke::new(1.0_f32, veil(0.12)));
 
     let q_head_y = div_y + 14.0;
-    ui.painter().text(pos2(rect.left() + 12.0, q_head_y), Align2::LEFT_CENTER, "UPCOMING QUEUE", bold(10.0), accent);
+    ui.painter().text(pos2(rect.left() + 12.0, q_head_y), Align2::LEFT_CENTER, "UPCOMING QUEUE", bold(fs(10.0)), accent);
 
     let upcoming_start = app.saved.current.map_or(0, |c| c + 1);
     let upcoming_count = app.saved.queue.len().saturating_sub(upcoming_start);
-    ui.painter().text(pos2(rect.left() + 116.0, q_head_y), Align2::LEFT_CENTER, &format!("({} tracks)", upcoming_count), sans(9.5), MUTED);
+    ui.painter().text(pos2(rect.left() + 116.0, q_head_y), Align2::LEFT_CENTER, &format!("({} tracks)", upcoming_count), sans(fs(9.5)), MUTED);
 
     // Header Action: Clear Upcoming Queue
     let clr_r = Rect::from_center_size(pos2(rect.right() - 18.0, q_head_y), Vec2::splat(20.0));
@@ -11254,7 +11272,7 @@ fn render_hud_queue_drawer(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, re
     let clr_resp = ui.interact(clr_r, clr_id, if is_preview { Sense::hover() } else { Sense::click() });
     let clr_hov = hover_of(ui, &clr_resp);
     ui.painter().circle_filled(clr_r.center(), 10.0, veil(0.08 * clr_hov));
-    ui.painter().text(clr_r.center(), Align2::CENTER_CENTER, icon::TRASH, glyph(12.0), if clr_hov > 0.1 { Color32::from_rgb(239, 68, 68) } else { MUTED });
+    ui.painter().text(clr_r.center(), Align2::CENTER_CENTER, icon::TRASH, glyph(fs(12.0)), if clr_hov > 0.1 { Color32::from_rgb(239, 68, 68) } else { MUTED });
     describe(&clr_resp, if is_preview { "Clear upcoming tracks (Preview)" } else { "Clear upcoming tracks" });
     if !is_preview && clr_resp.clicked() {
         actions.push(Action::ClearUpcomingQueue);
@@ -11267,7 +11285,7 @@ fn render_hud_queue_drawer(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, re
     let shuf_hov = hover_of(ui, &shuf_resp);
     let is_shuf = app.saved.shuffle;
     ui.painter().circle_filled(shuf_r.center(), 10.0, if is_shuf { accent.gamma_multiply(0.20) } else { veil(0.08 * shuf_hov) });
-    ui.painter().text(shuf_r.center(), Align2::CENTER_CENTER, icon::SHUFFLE, glyph(12.0), if is_shuf || shuf_hov > 0.1 { accent } else { MUTED });
+    ui.painter().text(shuf_r.center(), Align2::CENTER_CENTER, icon::SHUFFLE, glyph(fs(12.0)), if is_shuf || shuf_hov > 0.1 { accent } else { MUTED });
     describe(&shuf_resp, if is_preview { "Shuffle upcoming tracks (Preview)" } else if is_shuf { "Shuffle active" } else { "Shuffle upcoming tracks" });
     if !is_preview && shuf_resp.clicked() {
         actions.push(Action::ToggleShuffle);
@@ -11285,8 +11303,8 @@ fn render_hud_queue_drawer(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, re
             if total == 0 || upcoming_start >= total {
                 ui.add_space(20.0);
                 ui.vertical_centered(|ui| {
-                    ui.label(RichText::new("Queue is empty").font(medium(11.0)).color(MUTED));
-                    ui.label(RichText::new("No upcoming tracks lined up").font(sans(9.5)).color(FAINT));
+                    ui.label(RichText::new("Queue is empty").font(medium(fs(11.0))).color(MUTED));
+                    ui.label(RichText::new("No upcoming tracks lined up").font(sans(fs(9.5))).color(FAINT));
                 });
             } else {
                 for idx in upcoming_start..total {
@@ -11304,8 +11322,8 @@ fn render_hud_queue_drawer(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, re
                     // Song title & artist
                     let title_left = thumb_r.right() + 8.0;
                     let text_w = row_rect.width() - 84.0;
-                    label(ui, pos2(title_left, row_rect.center().y - 6.0), Align2::LEFT_CENTER, &song.title, medium(11.0), TEXT, text_w);
-                    label(ui, pos2(title_left, row_rect.center().y + 6.0), Align2::LEFT_CENTER, &song.subtitle, sans(9.0), MUTED, text_w);
+                    label(ui, pos2(title_left, row_rect.center().y - 6.0), Align2::LEFT_CENTER, &song.title, medium(fs(11.0)), TEXT, text_w);
+                    label(ui, pos2(title_left, row_rect.center().y + 6.0), Align2::LEFT_CENTER, &song.subtitle, sans(fs(9.0)), MUTED, text_w);
 
                     // Remove button [X]
                     let rm_r = Rect::from_center_size(pos2(row_rect.right() - 14.0, row_rect.center().y), Vec2::splat(18.0));
@@ -11313,7 +11331,7 @@ fn render_hud_queue_drawer(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, re
                     let rm_resp = ui.interact(rm_r, rm_id, if is_preview { Sense::hover() } else { Sense::click() });
                     let rm_hov = hover_of(ui, &rm_resp);
                     ui.painter().circle_filled(rm_r.center(), 9.0, veil(0.08 * rm_hov));
-                    ui.painter().text(rm_r.center(), Align2::CENTER_CENTER, icon::X, glyph(10.0), if rm_hov > 0.1 { Color32::from_rgb(239, 68, 68) } else { MUTED.gamma_multiply(0.7) });
+                    ui.painter().text(rm_r.center(), Align2::CENTER_CENTER, icon::X, glyph(fs(10.0)), if rm_hov > 0.1 { Color32::from_rgb(239, 68, 68) } else { MUTED.gamma_multiply(0.7) });
                     describe(&rm_resp, if is_preview { "Remove track (Preview)" } else { "Remove track from queue" });
                     if !is_preview && rm_resp.clicked() {
                         actions.push(Action::Remove(idx));
@@ -11329,6 +11347,8 @@ fn render_hud_queue_drawer(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, re
 }
 
 pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, rect: Rect, is_preview: bool) {
+    let font_scale = app.saved.game_hud_font_scale.clamp(0.80, 1.50);
+    let fs = |pt: f32| pt * font_scale;
     let accent = app.saved.theme_palette.color();
     let opacity = app.saved.game_hud_opacity.clamp(0.20, 1.0);
     let bg_color = app.saved.game_hud_background.color(accent).gamma_multiply(opacity);
@@ -11371,8 +11391,15 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
     let drag_rect = Rect::from_min_size(rect.min, vec2(rect.width(), drag_h.min(rect.height())));
     let drag_id = if is_preview { Id::new("game-hud-drag-prev") } else { Id::new("game-hud-drag-top") };
     let drag_resp = ui.interact(drag_rect, drag_id, if is_preview { Sense::hover() } else { Sense::drag() });
-    if !is_preview && drag_resp.dragged() {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    if !is_preview {
+        if drag_resp.dragged() {
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
+        if drag_resp.drag_stopped() {
+            if let Some(outer) = ui.ctx().input(|i| i.viewport().outer_rect) {
+                actions.push(Action::SaveGameHudCustomPos(outer.min.x, outer.min.y));
+            }
+        }
     }
 
     let item = app.saved.current.and_then(|c| app.saved.queue.get(c)).cloned();
@@ -11390,7 +11417,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                     artwork(ui, &app.art, app.saved.covers.of(it), art_rect, 6.0);
                 } else {
                     ui.painter().rect_filled(art_rect, 6.0, veil(0.08));
-                    ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(18.0), accent);
+                    ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(fs(18.0)), accent);
                 }
                 left_x += 48.0;
             }
@@ -11405,7 +11432,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let c_resp = ui.interact(close_r, close_id, if is_preview { Sense::hover() } else { Sense::click() });
             let c_hov = hover_of(ui, &c_resp);
             ui.painter().circle_filled(close_r.center(), 11.0, veil(0.08 * c_hov));
-            ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(12.0), if c_hov > 0.1 { TEXT } else { MUTED });
+            ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(fs(12.0)), if c_hov > 0.1 { TEXT } else { MUTED });
             describe(&c_resp, if is_preview { "Hide HUD (Preview)" } else { "Hide HUD" });
             if !is_preview && c_resp.clicked() {
                 actions.push(Action::ToggleGameOverlay);
@@ -11419,7 +11446,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let q_hov = hover_of(ui, &q_resp);
             let q_open = app.game_hud_queue_open;
             ui.painter().circle_filled(q_r.center(), 11.0, if q_open { accent.gamma_multiply(0.25) } else { veil(0.08 * q_hov) });
-            ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(12.0), if q_open || q_hov > 0.1 { accent } else { MUTED });
+            ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(fs(12.0)), if q_open || q_hov > 0.1 { accent } else { MUTED });
             describe(&q_resp, if is_preview { "Queue (Preview)" } else if q_open { "Hide Queue" } else { "Upcoming Queue" });
             if !is_preview && q_resp.clicked() {
                 actions.push(Action::ToggleGameHudQueue);
@@ -11432,7 +11459,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let n_resp = ui.interact(next_r, next_id, if is_preview { Sense::hover() } else { Sense::click() });
             let n_hov = hover_of(ui, &n_resp);
             ui.painter().circle_filled(next_r.center(), 11.0, veil(0.08 * n_hov));
-            ui.painter().text(next_r.center(), Align2::CENTER_CENTER, icon::SKIP_FORWARD, solid(13.0), TEXT);
+            ui.painter().text(next_r.center(), Align2::CENTER_CENTER, icon::SKIP_FORWARD, solid(fs(13.0)), TEXT);
             describe(&n_resp, if is_preview { "Next track (Preview)" } else { "Next track" });
             if !is_preview && n_resp.clicked() {
                 actions.push(Action::Next);
@@ -11446,7 +11473,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let p_hov = hover_of(ui, &p_resp);
             ui.painter().circle_filled(play_r.center(), 13.0, accent.lerp_to_gamma(Color32::WHITE, 0.15 * p_hov));
             let p_sym = if is_playing { icon::PAUSE } else { icon::PLAY };
-            ui.painter().text(play_r.center(), Align2::CENTER_CENTER, p_sym, solid(13.0), contrast_text_for(accent));
+            ui.painter().text(play_r.center(), Align2::CENTER_CENTER, p_sym, solid(fs(13.0)), contrast_text_for(accent));
             describe(&p_resp, if is_preview { "Play/Pause (Preview)" } else if is_playing { "Pause" } else { "Play" });
             if !is_preview && p_resp.clicked() {
                 actions.push(Action::Toggle);
@@ -11459,7 +11486,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let pr_resp = ui.interact(prev_r, prev_id, if is_preview { Sense::hover() } else { Sense::click() });
             let pr_hov = hover_of(ui, &pr_resp);
             ui.painter().circle_filled(prev_r.center(), 11.0, veil(0.08 * pr_hov));
-            ui.painter().text(prev_r.center(), Align2::CENTER_CENTER, icon::SKIP_BACK, solid(13.0), TEXT);
+            ui.painter().text(prev_r.center(), Align2::CENTER_CENTER, icon::SKIP_BACK, solid(fs(13.0)), TEXT);
             describe(&pr_resp, if is_preview { "Previous track (Preview)" } else { "Previous track" });
             if !is_preview && pr_resp.clicked() {
                 actions.push(Action::Previous);
@@ -11469,10 +11496,10 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             // Center Track Info
             let text_avail = (right_x - left_x - 8.0).max(40.0);
             if let Some(ref it) = item {
-                label(ui, pos2(left_x, rect.top() + 19.0), Align2::LEFT_CENTER, &it.title, bold(11.5), TEXT, text_avail);
-                label(ui, pos2(left_x, rect.top() + 37.0), Align2::LEFT_CENTER, &it.subtitle, sans(9.5), MUTED, text_avail);
+                label(ui, pos2(left_x, rect.top() + 19.0), Align2::LEFT_CENTER, &it.title, bold(fs(11.5)), TEXT, text_avail);
+                label(ui, pos2(left_x, rect.top() + 37.0), Align2::LEFT_CENTER, &it.subtitle, sans(fs(9.5)), MUTED, text_avail);
             } else {
-                label(ui, pos2(left_x, mid_y), Align2::LEFT_CENTER, "No track playing", medium(11.5), MUTED, text_avail);
+                label(ui, pos2(left_x, mid_y), Align2::LEFT_CENTER, "No track playing", medium(fs(11.5)), MUTED, text_avail);
             }
 
             // Scrubber line if enabled
@@ -11502,7 +11529,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 artwork(ui, &app.art, app.saved.covers.of(it), art_rect, 4.0);
             } else {
                 ui.painter().rect_filled(art_rect, 4.0, veil(0.08));
-                ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(14.0), accent);
+                ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(fs(14.0)), accent);
             }
             left_x += 34.0;
 
@@ -11513,7 +11540,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let close_r = Rect::from_center_size(pos2(right_x - 8.0, mid_y), Vec2::splat(18.0));
             let close_id = if is_preview { Id::new("mt-close-prev") } else { Id::new("mt-close") };
             let c_resp = ui.interact(close_r, close_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(11.0), MUTED);
+            ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(fs(11.0)), MUTED);
             if !is_preview && c_resp.clicked() {
                 actions.push(Action::ToggleGameOverlay);
             }
@@ -11523,7 +11550,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let q_r = Rect::from_center_size(pos2(right_x - 8.0, mid_y), Vec2::splat(18.0));
             let q_id = if is_preview { Id::new("mt-queue-prev") } else { Id::new("mt-queue") };
             let q_resp = ui.interact(q_r, q_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(11.0), if app.game_hud_queue_open { accent } else { MUTED });
+            ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(fs(11.0)), if app.game_hud_queue_open { accent } else { MUTED });
             if !is_preview && q_resp.clicked() {
                 actions.push(Action::ToggleGameHudQueue);
             }
@@ -11533,7 +11560,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let next_r = Rect::from_center_size(pos2(right_x - 8.0, mid_y), Vec2::splat(18.0));
             let next_id = if is_preview { Id::new("mt-next-prev") } else { Id::new("mt-next") };
             let n_resp = ui.interact(next_r, next_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(next_r.center(), Align2::CENTER_CENTER, icon::SKIP_FORWARD, solid(11.0), TEXT);
+            ui.painter().text(next_r.center(), Align2::CENTER_CENTER, icon::SKIP_FORWARD, solid(fs(11.0)), TEXT);
             if !is_preview && n_resp.clicked() {
                 actions.push(Action::Next);
             }
@@ -11545,7 +11572,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let p_resp = ui.interact(play_r, play_id, if is_preview { Sense::hover() } else { Sense::click() });
             ui.painter().circle_filled(play_r.center(), 11.0, accent);
             let p_sym = if is_playing { icon::PAUSE } else { icon::PLAY };
-            ui.painter().text(play_r.center(), Align2::CENTER_CENTER, p_sym, solid(11.0), contrast_text_for(accent));
+            ui.painter().text(play_r.center(), Align2::CENTER_CENTER, p_sym, solid(fs(11.0)), contrast_text_for(accent));
             if !is_preview && p_resp.clicked() {
                 actions.push(Action::Toggle);
             }
@@ -11555,7 +11582,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let prev_r = Rect::from_center_size(pos2(right_x - 8.0, mid_y), Vec2::splat(18.0));
             let prev_id = if is_preview { Id::new("mt-prev-prev") } else { Id::new("mt-prev") };
             let pr_resp = ui.interact(prev_r, prev_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(prev_r.center(), Align2::CENTER_CENTER, icon::SKIP_BACK, solid(11.0), TEXT);
+            ui.painter().text(prev_r.center(), Align2::CENTER_CENTER, icon::SKIP_BACK, solid(fs(11.0)), TEXT);
             if !is_preview && pr_resp.clicked() {
                 actions.push(Action::Previous);
             }
@@ -11565,9 +11592,9 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let text_avail = (right_x - left_x - 6.0).max(40.0);
             if let Some(ref it) = item {
                 let single_line = format!("{} • {}", it.title, it.subtitle);
-                label(ui, pos2(left_x, mid_y), Align2::LEFT_CENTER, &single_line, medium(10.5), TEXT, text_avail);
+                label(ui, pos2(left_x, mid_y), Align2::LEFT_CENTER, &single_line, medium(fs(10.5)), TEXT, text_avail);
             } else {
-                label(ui, pos2(left_x, mid_y), Align2::LEFT_CENTER, "No track playing", medium(10.5), MUTED, text_avail);
+                label(ui, pos2(left_x, mid_y), Align2::LEFT_CENTER, "No track playing", medium(fs(10.5)), MUTED, text_avail);
             }
 
             // Bottom micro scrubber
@@ -11592,13 +11619,13 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 artwork(ui, &app.art, app.saved.covers.of(it), art_rect, 6.0);
             } else {
                 ui.painter().rect_filled(art_rect, 6.0, veil(0.08));
-                ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(24.0), accent);
+                ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(fs(24.0)), accent);
             }
 
             // Red LIVE ON AIR pill badge
             let live_r = Rect::from_min_size(pos2(art_rect.left() + 4.0, art_rect.top() + 4.0), vec2(36.0, 14.0));
             ui.painter().rect_filled(live_r, 3.0, Color32::from_rgb(220, 38, 38));
-            ui.painter().text(live_r.center(), Align2::CENTER_CENTER, "LIVE", bold(8.5), Color32::WHITE);
+            ui.painter().text(live_r.center(), Align2::CENTER_CENTER, "LIVE", bold(fs(8.5)), Color32::WHITE);
 
             // Right Controls Section
             let mut top_rx = rect.right() - 8.0;
@@ -11608,7 +11635,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let close_r = Rect::from_center_size(pos2(top_rx - 10.0, top_y), Vec2::splat(20.0));
             let close_id = if is_preview { Id::new("sb-close-prev") } else { Id::new("sb-close") };
             let c_resp = ui.interact(close_r, close_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(12.0), MUTED);
+            ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(fs(12.0)), MUTED);
             if !is_preview && c_resp.clicked() {
                 actions.push(Action::ToggleGameOverlay);
             }
@@ -11619,7 +11646,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let q_id = if is_preview { Id::new("sb-queue-prev") } else { Id::new("sb-queue") };
             let q_resp = ui.interact(q_r, q_id, if is_preview { Sense::hover() } else { Sense::click() });
             let q_open = app.game_hud_queue_open;
-            ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(12.0), if q_open { accent } else { MUTED });
+            ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(fs(12.0)), if q_open { accent } else { MUTED });
             if !is_preview && q_resp.clicked() {
                 actions.push(Action::ToggleGameHudQueue);
             }
@@ -11629,7 +11656,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let exit_r = Rect::from_center_size(pos2(top_rx - 10.0, top_y), Vec2::splat(20.0));
             let exit_id = if is_preview { Id::new("sb-exit-prev") } else { Id::new("sb-exit") };
             let e_resp = ui.interact(exit_r, exit_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(exit_r.center(), Align2::CENTER_CENTER, icon::SIGN_OUT, glyph(12.0), MUTED);
+            ui.painter().text(exit_r.center(), Align2::CENTER_CENTER, icon::SIGN_OUT, glyph(fs(12.0)), MUTED);
             if !is_preview && e_resp.clicked() {
                 actions.push(Action::ExitGameMode);
             }
@@ -11642,7 +11669,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let next_r = Rect::from_center_size(pos2(bot_rx - 10.0, bot_y), Vec2::splat(22.0));
             let next_id = if is_preview { Id::new("sb-next-prev") } else { Id::new("sb-next") };
             let n_resp = ui.interact(next_r, next_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(next_r.center(), Align2::CENTER_CENTER, icon::SKIP_FORWARD, solid(13.0), TEXT);
+            ui.painter().text(next_r.center(), Align2::CENTER_CENTER, icon::SKIP_FORWARD, solid(fs(13.0)), TEXT);
             if !is_preview && n_resp.clicked() {
                 actions.push(Action::Next);
             }
@@ -11654,7 +11681,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let p_resp = ui.interact(play_r, play_id, if is_preview { Sense::hover() } else { Sense::click() });
             ui.painter().circle_filled(play_r.center(), 13.0, accent);
             let p_sym = if is_playing { icon::PAUSE } else { icon::PLAY };
-            ui.painter().text(play_r.center(), Align2::CENTER_CENTER, p_sym, solid(13.0), contrast_text_for(accent));
+            ui.painter().text(play_r.center(), Align2::CENTER_CENTER, p_sym, solid(fs(13.0)), contrast_text_for(accent));
             if !is_preview && p_resp.clicked() {
                 actions.push(Action::Toggle);
             }
@@ -11664,7 +11691,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let prev_r = Rect::from_center_size(pos2(bot_rx - 10.0, bot_y), Vec2::splat(22.0));
             let prev_id = if is_preview { Id::new("sb-prev-prev") } else { Id::new("sb-prev") };
             let pr_resp = ui.interact(prev_r, prev_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(prev_r.center(), Align2::CENTER_CENTER, icon::SKIP_BACK, solid(13.0), TEXT);
+            ui.painter().text(prev_r.center(), Align2::CENTER_CENTER, icon::SKIP_BACK, solid(fs(13.0)), TEXT);
             if !is_preview && pr_resp.clicked() {
                 actions.push(Action::Previous);
             }
@@ -11673,10 +11700,10 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let text_left = art_rect.right() + 12.0;
             let text_avail = (rect.right() - 110.0 - text_left).max(60.0);
             if let Some(ref it) = item {
-                label(ui, pos2(text_left, rect.top() + 20.0), Align2::LEFT_CENTER, &it.title, bold(13.0), TEXT, text_avail);
-                label(ui, pos2(text_left, rect.top() + 38.0), Align2::LEFT_CENTER, &it.subtitle, sans(10.5), MUTED, text_avail);
+                label(ui, pos2(text_left, rect.top() + 20.0), Align2::LEFT_CENTER, &it.title, bold(fs(13.0)), TEXT, text_avail);
+                label(ui, pos2(text_left, rect.top() + 38.0), Align2::LEFT_CENTER, &it.subtitle, sans(fs(10.5)), MUTED, text_avail);
             } else {
-                label(ui, pos2(text_left, rect.top() + 28.0), Align2::LEFT_CENTER, "No track playing", medium(12.0), MUTED, text_avail);
+                label(ui, pos2(text_left, rect.top() + 28.0), Align2::LEFT_CENTER, "No track playing", medium(fs(12.0)), MUTED, text_avail);
             }
 
             if app.saved.game_hud_show_scrubber {
@@ -11709,7 +11736,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 badge_rect.center(),
                 Align2::CENTER_CENTER,
                 "[SYS::AURI // 160k OPUS]",
-                bold(9.0),
+                bold(fs(9.0)),
                 neon_cyan,
             );
 
@@ -11720,7 +11747,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let close_r = Rect::from_center_size(pos2(right_x - 10.0, header_mid_y), Vec2::splat(22.0));
             let close_id = if is_preview { Id::new("cpb-close-prev") } else { Id::new("cpb-close") };
             let c_resp = ui.interact(close_r, close_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(13.0), TEXT);
+            ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(fs(13.0)), TEXT);
             if !is_preview && c_resp.clicked() {
                 actions.push(Action::ToggleGameOverlay);
             }
@@ -11730,7 +11757,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let exit_r = Rect::from_center_size(pos2(right_x - 10.0, header_mid_y), Vec2::splat(22.0));
             let exit_id = if is_preview { Id::new("cpb-exit-prev") } else { Id::new("cpb-exit") };
             let e_resp = ui.interact(exit_r, exit_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(exit_r.center(), Align2::CENTER_CENTER, icon::SIGN_OUT, glyph(13.0), neon_magenta);
+            ui.painter().text(exit_r.center(), Align2::CENTER_CENTER, icon::SIGN_OUT, glyph(fs(13.0)), neon_magenta);
             if !is_preview && e_resp.clicked() {
                 actions.push(Action::ExitGameMode);
             }
@@ -11741,7 +11768,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let q_id = if is_preview { Id::new("cpb-queue-prev") } else { Id::new("cpb-queue") };
             let q_resp = ui.interact(q_r, q_id, if is_preview { Sense::hover() } else { Sense::click() });
             let q_open = app.game_hud_queue_open;
-            ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(13.0), if q_open { neon_cyan } else { MUTED });
+            ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(fs(13.0)), if q_open { neon_cyan } else { MUTED });
             if !is_preview && q_resp.clicked() {
                 actions.push(Action::ToggleGameHudQueue);
             }
@@ -11753,16 +11780,16 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 ui.painter().rect_stroke(art_rect, 2.0, Stroke::new(1.0_f32, neon_cyan.gamma_multiply(0.50)), StrokeKind::Inside);
             } else {
                 ui.painter().rect_filled(art_rect, 2.0, veil(0.08));
-                ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(24.0), neon_cyan);
+                ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(fs(24.0)), neon_cyan);
             }
 
             let text_left = art_rect.right() + 10.0;
             let text_avail = rect.right() - text_left - 10.0;
             if let Some(ref it) = item {
-                label(ui, pos2(text_left, rect.top() + 42.0), Align2::LEFT_CENTER, &it.title, bold(12.5), TEXT, text_avail);
-                label(ui, pos2(text_left, rect.top() + 57.0), Align2::LEFT_CENTER, &it.subtitle, sans(10.5), neon_cyan.gamma_multiply(0.85), text_avail);
+                label(ui, pos2(text_left, rect.top() + 42.0), Align2::LEFT_CENTER, &it.title, bold(fs(12.5)), TEXT, text_avail);
+                label(ui, pos2(text_left, rect.top() + 57.0), Align2::LEFT_CENTER, &it.subtitle, sans(fs(10.5)), neon_cyan.gamma_multiply(0.85), text_avail);
             } else {
-                label(ui, pos2(text_left, rect.top() + 48.0), Align2::LEFT_CENTER, "No track playing", medium(12.0), MUTED, text_avail);
+                label(ui, pos2(text_left, rect.top() + 48.0), Align2::LEFT_CENTER, "No track playing", medium(fs(12.0)), MUTED, text_avail);
             }
 
             // Scrubber
@@ -11772,8 +11799,8 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 let scrob_right = rect.right() - 44.0;
                 let pos_str = format_ms(pos_ms);
                 let dur_str = format_ms(dur_ms);
-                label(ui, pos2(text_left, scrob_y), Align2::LEFT_CENTER, &pos_str, sans(9.0), MUTED, 30.0);
-                label(ui, pos2(rect.right() - 10.0, scrob_y), Align2::RIGHT_CENTER, &dur_str, sans(9.0), MUTED, 30.0);
+                label(ui, pos2(text_left, scrob_y), Align2::LEFT_CENTER, &pos_str, sans(fs(9.0)), MUTED, 30.0);
+                label(ui, pos2(rect.right() - 10.0, scrob_y), Align2::RIGHT_CENTER, &dur_str, sans(fs(9.0)), MUTED, 30.0);
 
                 let frac = if dur_ms > 0 { (pos_ms as f32 / dur_ms as f32).clamp(0.0, 1.0) } else { 0.0 };
                 ui.painter().hline(scrob_left..=scrob_right, scrob_y, Stroke::new(2.5_f32, veil(0.18)));
@@ -11790,7 +11817,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let prev_r = Rect::from_center_size(pos2(play_center_x - 32.0, ctrl_y), Vec2::splat(24.0));
             let prev_id = if is_preview { Id::new("cpb-prev-prev") } else { Id::new("cpb-prev") };
             let pr_resp = ui.interact(prev_r, prev_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(prev_r.center(), Align2::CENTER_CENTER, icon::SKIP_BACK, solid(14.0), TEXT);
+            ui.painter().text(prev_r.center(), Align2::CENTER_CENTER, icon::SKIP_BACK, solid(fs(14.0)), TEXT);
             if !is_preview && pr_resp.clicked() {
                 actions.push(Action::Previous);
             }
@@ -11801,7 +11828,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let pl_resp = ui.interact(play_r, play_id, if is_preview { Sense::hover() } else { Sense::click() });
             ui.painter().rect_filled(play_r, 3.0, neon_cyan);
             let p_sym = if is_playing { icon::PAUSE } else { icon::PLAY };
-            ui.painter().text(play_r.center(), Align2::CENTER_CENTER, p_sym, solid(14.0), Color32::BLACK);
+            ui.painter().text(play_r.center(), Align2::CENTER_CENTER, p_sym, solid(fs(14.0)), Color32::BLACK);
             if !is_preview && pl_resp.clicked() {
                 actions.push(Action::Toggle);
             }
@@ -11810,7 +11837,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let next_r = Rect::from_center_size(pos2(play_center_x + 32.0, ctrl_y), Vec2::splat(24.0));
             let next_id = if is_preview { Id::new("cpb-next-prev") } else { Id::new("cpb-next") };
             let nx_resp = ui.interact(next_r, next_id, if is_preview { Sense::hover() } else { Sense::click() });
-            ui.painter().text(next_r.center(), Align2::CENTER_CENTER, icon::SKIP_FORWARD, solid(14.0), TEXT);
+            ui.painter().text(next_r.center(), Align2::CENTER_CENTER, icon::SKIP_FORWARD, solid(fs(14.0)), TEXT);
             if !is_preview && nx_resp.clicked() {
                 actions.push(Action::Next);
             }
@@ -11825,7 +11852,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 let v_fill = vol_bar_left + (vol_bar_right - vol_bar_left) * vol_frac;
                 ui.painter().hline(vol_bar_left..=v_fill, ctrl_y, Stroke::new(2.5_f32, neon_cyan));
                 ui.painter().rect_filled(Rect::from_center_size(pos2(v_fill, ctrl_y), Vec2::splat(6.0)), 1.0, neon_cyan);
-                label(ui, pos2(rect.right() - 10.0, ctrl_y), Align2::RIGHT_CENTER, &format!("{:.0}%", vol_frac * 100.0), sans(9.5), neon_cyan, 30.0);
+                label(ui, pos2(rect.right() - 10.0, ctrl_y), Align2::RIGHT_CENTER, &format!("{:.0}%", vol_frac * 100.0), sans(fs(9.5)), neon_cyan, 30.0);
             }
 
             // Queue Drawer
@@ -11846,14 +11873,14 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 pos2(badge_rect.left() + 8.0, badge_rect.center().y),
                 Align2::LEFT_CENTER,
                 if variant == GameHudVariant::GlassmorphismHud { icon::DROP } else { icon::LIGHTNING },
-                glyph(11.0),
+                glyph(fs(11.0)),
                 accent,
             );
             ui.painter().text(
                 pos2(badge_rect.left() + 22.0, badge_rect.center().y),
                 Align2::LEFT_CENTER,
                 badge_label,
-                bold(9.5),
+                bold(fs(9.5)),
                 accent,
             );
 
@@ -11862,7 +11889,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 pos2(rect.left() + 112.0, header_mid_y),
                 Align2::LEFT_CENTER,
                 "⋮⋮",
-                bold(12.0),
+                bold(fs(12.0)),
                 MUTED.gamma_multiply(0.6),
             );
 
@@ -11875,7 +11902,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let c_resp = ui.interact(close_r, close_id, if is_preview { Sense::hover() } else { Sense::click() });
             let c_hov = hover_of(ui, &c_resp);
             ui.painter().circle_filled(close_r.center(), 11.0, veil(0.08 * c_hov));
-            ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(13.0), if c_hov > 0.1 { TEXT } else { MUTED });
+            ui.painter().text(close_r.center(), Align2::CENTER_CENTER, icon::X, glyph(fs(13.0)), if c_hov > 0.1 { TEXT } else { MUTED });
             describe(&c_resp, if is_preview { "Close HUD (Ctrl+Shift+G in-game)" } else { "Hide HUD (Ctrl+Shift+G to reopen)" });
             if !is_preview && c_resp.clicked() {
                 actions.push(Action::ToggleGameOverlay);
@@ -11888,7 +11915,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let e_resp = ui.interact(exit_r, exit_id, if is_preview { Sense::hover() } else { Sense::click() });
             let e_hov = hover_of(ui, &e_resp);
             ui.painter().circle_filled(exit_r.center(), 11.0, veil(0.08 * e_hov));
-            ui.painter().text(exit_r.center(), Align2::CENTER_CENTER, icon::SIGN_OUT, glyph(13.0), if e_hov > 0.1 { Color32::from_rgb(239, 68, 68) } else { MUTED });
+            ui.painter().text(exit_r.center(), Align2::CENTER_CENTER, icon::SIGN_OUT, glyph(fs(13.0)), if e_hov > 0.1 { Color32::from_rgb(239, 68, 68) } else { MUTED });
             describe(&e_resp, "Exit Gaming Mode (Restore Normal AURI)");
             if !is_preview && e_resp.clicked() {
                 actions.push(Action::ExitGameMode);
@@ -11905,7 +11932,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 let dev_hov = hover_of(ui, &dev_resp);
                 let dev_open = !is_preview && egui::Popup::menu(&dev_resp).is_open();
                 ui.painter().circle_filled(dev_r.center(), 11.0, if dev_open { accent.gamma_multiply(0.25) } else { veil(0.08 * dev_hov) });
-                ui.painter().text(dev_r.center(), Align2::CENTER_CENTER, dev_sym, glyph(13.0), if dev_open || dev_hov > 0.1 { accent } else { MUTED });
+                ui.painter().text(dev_r.center(), Align2::CENTER_CENTER, dev_sym, glyph(fs(13.0)), if dev_open || dev_hov > 0.1 { accent } else { MUTED });
                 describe(&dev_resp, if is_preview { "Switch Audio Output Device (Preview)" } else { "Switch Audio Output Device" });
 
                 if !is_preview {
@@ -11922,10 +11949,10 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                                 let w = 220.0;
                                 ui.set_width(w);
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new("Audio Output").font(bold(11.0)).color(TEXT));
+                                    ui.label(RichText::new("Audio Output").font(bold(fs(11.0))).color(TEXT));
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                         let (r_rect, r_resp) = ui.allocate_exact_size(Vec2::splat(16.0), Sense::click());
-                                        ui.painter().text(r_rect.center(), Align2::CENTER_CENTER, icon::ARROWS_CLOCKWISE, glyph(11.0), MUTED);
+                                        ui.painter().text(r_rect.center(), Align2::CENTER_CENTER, icon::ARROWS_CLOCKWISE, glyph(fs(11.0)), MUTED);
                                         describe(&r_resp, "Refresh devices");
                                         if r_resp.clicked() {
                                             actions.push(Action::RefreshAudioDevices);
@@ -11940,10 +11967,10 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                                 let hov = hover_of(ui, &resp);
                                 let bg = if is_def { accent.gamma_multiply(0.20) } else { veil(0.04 * hov) };
                                 ui.painter().rect_filled(row_r, 4.0, bg);
-                                ui.painter().text(pos2(row_r.left() + 12.0, row_r.center().y), Align2::CENTER_CENTER, icon::SPEAKER_SIMPLE_HIGH, glyph(12.0), if is_def { accent } else { MUTED });
-                                ui.painter().text(pos2(row_r.left() + 26.0, row_r.center().y), Align2::LEFT_CENTER, "System Default", medium(11.0), if is_def { accent } else { TEXT });
+                                ui.painter().text(pos2(row_r.left() + 12.0, row_r.center().y), Align2::CENTER_CENTER, icon::SPEAKER_SIMPLE_HIGH, glyph(fs(12.0)), if is_def { accent } else { MUTED });
+                                ui.painter().text(pos2(row_r.left() + 26.0, row_r.center().y), Align2::LEFT_CENTER, "System Default", medium(fs(11.0)), if is_def { accent } else { TEXT });
                                 if is_def {
-                                    ui.painter().text(pos2(row_r.right() - 12.0, row_r.center().y), Align2::CENTER_CENTER, icon::CHECK, glyph(11.0), accent);
+                                    ui.painter().text(pos2(row_r.right() - 12.0, row_r.center().y), Align2::CENTER_CENTER, icon::CHECK, glyph(fs(11.0)), accent);
                                 }
                                 if resp.clicked() {
                                     actions.push(Action::SetAudioDevice(None));
@@ -11958,10 +11985,10 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                                     let bg = if is_active { accent.gamma_multiply(0.20) } else { veil(0.04 * hov) };
                                     ui.painter().rect_filled(row_r, 4.0, bg);
                                     let d_sym = device_icon(Some(dev.as_str()));
-                                    ui.painter().text(pos2(row_r.left() + 12.0, row_r.center().y), Align2::CENTER_CENTER, d_sym, glyph(12.0), if is_active { accent } else { MUTED });
-                                    label(ui, pos2(row_r.left() + 26.0, row_r.center().y), Align2::LEFT_CENTER, dev, medium(11.0), if is_active { accent } else { TEXT }, w - 44.0);
+                                    ui.painter().text(pos2(row_r.left() + 12.0, row_r.center().y), Align2::CENTER_CENTER, d_sym, glyph(fs(12.0)), if is_active { accent } else { MUTED });
+                                    label(ui, pos2(row_r.left() + 26.0, row_r.center().y), Align2::LEFT_CENTER, dev, medium(fs(11.0)), if is_active { accent } else { TEXT }, w - 44.0);
                                     if is_active {
-                                        ui.painter().text(pos2(row_r.right() - 12.0, row_r.center().y), Align2::CENTER_CENTER, icon::CHECK, glyph(11.0), accent);
+                                        ui.painter().text(pos2(row_r.right() - 12.0, row_r.center().y), Align2::CENTER_CENTER, icon::CHECK, glyph(fs(11.0)), accent);
                                     }
                                     if resp.clicked() {
                                         actions.push(Action::SetAudioDevice(Some(dev.clone())));
@@ -11981,7 +12008,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let q_hov = hover_of(ui, &q_resp);
             let q_open = app.game_hud_queue_open;
             ui.painter().circle_filled(q_r.center(), 11.0, if q_open { accent.gamma_multiply(0.25) } else { veil(0.08 * q_hov) });
-            ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(13.0), if q_open || q_hov > 0.1 { accent } else { MUTED });
+            ui.painter().text(q_r.center(), Align2::CENTER_CENTER, icon::QUEUE, glyph(fs(13.0)), if q_open || q_hov > 0.1 { accent } else { MUTED });
             describe(&q_resp, if is_preview { "View Queue (Preview)" } else if q_open { "Hide Queue" } else { "View & Manipulate Queue" });
             if !is_preview && q_resp.clicked() {
                 actions.push(Action::ToggleGameHudQueue);
@@ -11994,7 +12021,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                     artwork(ui, &app.art, app.saved.covers.of(it), art_rect, 6.0);
                 } else {
                     ui.painter().rect_filled(art_rect, 6.0, veil(0.08));
-                    ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(24.0), accent);
+                    ui.painter().text(art_rect.center(), Align2::CENTER_CENTER, icon::MUSIC_NOTE, glyph(fs(24.0)), accent);
                 }
             }
 
@@ -12002,10 +12029,10 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let text_avail = rect.right() - text_left - 10.0;
 
             if let Some(ref it) = item {
-                label(ui, pos2(text_left, rect.top() + 42.0), Align2::LEFT_CENTER, &it.title, bold(12.5), TEXT, text_avail);
-                label(ui, pos2(text_left, rect.top() + 57.0), Align2::LEFT_CENTER, &it.subtitle, sans(10.5), MUTED, text_avail);
+                label(ui, pos2(text_left, rect.top() + 42.0), Align2::LEFT_CENTER, &it.title, bold(fs(12.5)), TEXT, text_avail);
+                label(ui, pos2(text_left, rect.top() + 57.0), Align2::LEFT_CENTER, &it.subtitle, sans(fs(10.5)), MUTED, text_avail);
             } else {
-                label(ui, pos2(text_left, rect.top() + 48.0), Align2::LEFT_CENTER, "No track playing", medium(12.0), MUTED, text_avail);
+                label(ui, pos2(text_left, rect.top() + 48.0), Align2::LEFT_CENTER, "No track playing", medium(fs(12.0)), MUTED, text_avail);
             }
 
             // Scrubber
@@ -12017,8 +12044,8 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
 
                 let pos_str = format_ms(pos_ms);
                 let dur_str = format_ms(dur_ms);
-                label(ui, pos2(text_left, scrob_y), Align2::LEFT_CENTER, &pos_str, sans(9.0), MUTED, time_w);
-                label(ui, pos2(rect.right() - 10.0, scrob_y), Align2::RIGHT_CENTER, &dur_str, sans(9.0), MUTED, time_w);
+                label(ui, pos2(text_left, scrob_y), Align2::LEFT_CENTER, &pos_str, sans(fs(9.0)), MUTED, time_w);
+                label(ui, pos2(rect.right() - 10.0, scrob_y), Align2::RIGHT_CENTER, &dur_str, sans(fs(9.0)), MUTED, time_w);
 
                 let scrob_id = if is_preview { Id::new("game-hud-scrubber-prev") } else { Id::new("game-hud-scrubber") };
                 let bar_rect = Rect::from_min_max(pos2(scrob_left, scrob_y - 6.0), pos2(scrob_right, scrob_y + 6.0));
@@ -12064,16 +12091,16 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 if let Some(ref it) = item {
                     let liked = it.is_song() && app.saved.liked.iter().any(|l| l.video_id == it.video_id);
                     let (heart_font, heart_col, hint) = if liked {
-                        (solid(15.0), accent, "Remove from Liked")
+                        (solid(fs(15.0)), accent, "Remove from Liked")
                     } else {
-                        (glyph(15.0), MUTED, "Add to Liked")
+                        (glyph(fs(15.0)), MUTED, "Add to Liked")
                     };
                     let resp = icon_button(ui, heart_r, heart_id, icon::HEART, heart_font, heart_col, if is_preview { "Favorite (Preview)" } else { hint });
                     if !is_preview && resp.clicked() {
                         actions.push(Action::Like(it.clone()));
                     }
                 } else {
-                    ui.painter().text(heart_r.center(), Align2::CENTER_CENTER, icon::HEART, glyph(15.0), FAINT.gamma_multiply(0.3));
+                    ui.painter().text(heart_r.center(), Align2::CENTER_CENTER, icon::HEART, glyph(fs(15.0)), FAINT.gamma_multiply(0.3));
                 }
             }
 
@@ -12087,7 +12114,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             // Prev
             let prev_r = Rect::from_center_size(pos2(play_center_x - 32.0, ctrl_y), Vec2::splat(24.0));
             let prev_id = if is_preview { Id::new("game-hud-prev-prev") } else { Id::new("game-hud-prev") };
-            let pr_resp = icon_button(ui, prev_r, prev_id, icon::SKIP_BACK, solid(14.0), TEXT, if is_preview { "Prev (Preview)" } else { "Previous track" });
+            let pr_resp = icon_button(ui, prev_r, prev_id, icon::SKIP_BACK, solid(fs(14.0)), TEXT, if is_preview { "Prev (Preview)" } else { "Previous track" });
             if !is_preview && pr_resp.clicked() {
                 actions.push(Action::Previous);
             }
@@ -12099,7 +12126,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             let play_hov = hover_of(ui, &play_resp);
             ui.painter().circle_filled(play_rect.center(), 14.0, accent.lerp_to_gamma(Color32::WHITE, 0.15 * play_hov));
             let p_sym = if is_playing { icon::PAUSE } else { icon::PLAY };
-            ui.painter().text(play_rect.center(), Align2::CENTER_CENTER, p_sym, solid(14.0), contrast_text_for(accent));
+            ui.painter().text(play_rect.center(), Align2::CENTER_CENTER, p_sym, solid(fs(14.0)), contrast_text_for(accent));
             describe(&play_resp, if is_preview { "Play/Pause (Preview)" } else if is_playing { "Pause" } else { "Play" });
             if !is_preview && play_resp.clicked() {
                 actions.push(Action::Toggle);
@@ -12108,7 +12135,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
             // Next
             let next_r = Rect::from_center_size(pos2(play_center_x + 32.0, ctrl_y), Vec2::splat(24.0));
             let next_id = if is_preview { Id::new("game-hud-next-prev") } else { Id::new("game-hud-next") };
-            let nx_resp = icon_button(ui, next_r, next_id, icon::SKIP_FORWARD, solid(14.0), TEXT, if is_preview { "Next (Preview)" } else { "Next track" });
+            let nx_resp = icon_button(ui, next_r, next_id, icon::SKIP_FORWARD, solid(fs(14.0)), TEXT, if is_preview { "Next (Preview)" } else { "Next track" });
             if !is_preview && nx_resp.clicked() {
                 actions.push(Action::Next);
             }
@@ -12121,7 +12148,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 let v_icon_r = Rect::from_center_size(pos2(vol_icon_x, ctrl_y), Vec2::splat(22.0));
                 let vi_id = if is_preview { Id::new("game-hud-vol-mute-prev") } else { Id::new("game-hud-vol-mute") };
                 let vi_resp = ui.interact(v_icon_r, vi_id, if is_preview { Sense::hover() } else { Sense::click() });
-                ui.painter().text(v_icon_r.center(), Align2::CENTER_CENTER, v_sym, glyph(13.0), if vol_muted { MUTED } else { accent });
+                ui.painter().text(v_icon_r.center(), Align2::CENTER_CENTER, v_sym, glyph(fs(13.0)), if vol_muted { MUTED } else { accent });
                 describe(&vi_resp, if is_preview { "Mute toggle (Preview)" } else if vol_muted { "Unmute" } else { "Mute" });
                 if !is_preview && vi_resp.clicked() {
                     let last_vol_id = Id::new("game-hud-unmute-vol");
@@ -12146,7 +12173,7 @@ pub fn render_quick_hud_card(ui: &mut Ui, app: &App, actions: &mut Vec<Action>, 
                 ui.painter().hline(vol_bar_left..=v_fill, ctrl_y, Stroke::new(2.5_f32, accent));
                 ui.painter().circle_filled(pos2(v_fill, ctrl_y), 3.5 + 1.0 * vol_hov, accent);
 
-                label(ui, pos2(rect.right() - 10.0, ctrl_y), Align2::RIGHT_CENTER, &format!("{:.0}%", vol_frac * 100.0), sans(9.5), TEXT, 30.0);
+                label(ui, pos2(rect.right() - 10.0, ctrl_y), Align2::RIGHT_CENTER, &format!("{:.0}%", vol_frac * 100.0), sans(fs(9.5)), TEXT, 30.0);
 
                 if !is_preview && (vol_resp.clicked() || vol_resp.dragged()) {
                     if let Some(pos) = vol_resp.interact_pointer_pos() {

@@ -722,15 +722,21 @@ pub enum GameHudPosition {
     TopLeft,
     BottomRight,
     BottomCenter,
+    BottomLeft,
+    Center,
+    Custom,
 }
 
 impl GameHudPosition {
-    pub const ALL: [GameHudPosition; 5] = [
+    pub const ALL: [GameHudPosition; 8] = [
         GameHudPosition::TopRight,
         GameHudPosition::TopCenter,
         GameHudPosition::TopLeft,
         GameHudPosition::BottomRight,
         GameHudPosition::BottomCenter,
+        GameHudPosition::BottomLeft,
+        GameHudPosition::Center,
+        GameHudPosition::Custom,
     ];
 
     pub fn label(&self) -> &'static str {
@@ -740,6 +746,9 @@ impl GameHudPosition {
             GameHudPosition::TopLeft => "Top-Left",
             GameHudPosition::BottomRight => "Bottom-Right",
             GameHudPosition::BottomCenter => "Bottom-Center",
+            GameHudPosition::BottomLeft => "Bottom-Left",
+            GameHudPosition::Center => "Center",
+            GameHudPosition::Custom => "Custom",
         }
     }
 }
@@ -1020,9 +1029,13 @@ pub struct Saved {
     #[serde(default)]
     pub game_hud_position: GameHudPosition,
     #[serde(default)]
+    pub game_hud_custom_pos: Option<[f32; 2]>,
+    #[serde(default)]
     pub game_hud_variant: GameHudVariant,
     #[serde(default = "default_game_hud_scale")]
     pub game_hud_scale: f32,
+    #[serde(default = "default_game_hud_scale")]
+    pub game_hud_font_scale: f32,
     #[serde(default = "default_game_hud_opacity")]
     pub game_hud_opacity: f32,
     #[serde(default)]
@@ -1366,8 +1379,10 @@ impl Default for Saved {
             discord_button2: DiscordButtonOption::GetApp,
             game_overlay_hotkey: GameOverlayHotkey::CtrlShiftG,
             game_hud_position: GameHudPosition::TopRight,
+            game_hud_custom_pos: None,
             game_hud_variant: GameHudVariant::ClassicCard,
             game_hud_scale: default_game_hud_scale(),
+            game_hud_font_scale: default_game_hud_scale(),
             game_hud_opacity: default_game_hud_opacity(),
             game_hud_background: MiniBackground::Obsidian,
             game_hud_corner_radius: default_game_hud_corner_radius(),
@@ -1647,6 +1662,8 @@ pub enum Action {
     SetGameHudPosition(GameHudPosition),
     SetGameHudVariant(GameHudVariant),
     SetGameHudScale(f32),
+    SetGameHudFontScale(f32),
+    SaveGameHudCustomPos(f32, f32),
     SetGameHudOpacity(f32),
     SetGameHudBackground(MiniBackground),
     SetGameHudCornerRadius(f32),
@@ -2655,7 +2672,7 @@ impl App {
 
     pub fn reposition_game_hud(&self) {
         let (base_w, base_h) = self.saved.game_hud_variant.base_size(self.game_hud_queue_open);
-        let scale = self.saved.game_hud_scale.clamp(0.75, 1.30);
+        let scale = self.saved.game_hud_scale.clamp(0.70, 1.60);
         let w_points = (base_w * scale).round();
         let h_points = (base_h * scale).round();
         #[cfg(windows)]
@@ -2724,6 +2741,18 @@ impl App {
                     }
                 }
                 (cur_x, cur_y)
+            } else if self.saved.game_hud_position == GameHudPosition::Custom {
+                if let Some([cx, cy]) = self.saved.game_hud_custom_pos {
+                    (cx as i32, cy as i32)
+                } else if let Some(drag_pos) = self.game_hud_drag_pos {
+                    ((drag_pos.x * ppp).round() as i32, (drag_pos.y * ppp).round() as i32)
+                } else if has_monitor {
+                    let margin = (24.0 * ppp).round() as i32;
+                    (work.right - w_px - margin, work.top + margin)
+                } else {
+                    let (screen_w, _screen_h) = screen_size();
+                    ((screen_w - w_points - 24.0) as i32, 24)
+                }
             } else if let Some(drag_pos) = self.game_hud_drag_pos {
                 ((drag_pos.x * ppp).round() as i32, (drag_pos.y * ppp).round() as i32)
             } else {
@@ -2753,6 +2782,23 @@ impl App {
                         GameHudPosition::BottomCenter => {
                             calc_x = work.left + (work.right - work.left - w_px) / 2;
                             calc_y = work.bottom - h_px - margin;
+                        }
+                        GameHudPosition::BottomLeft => {
+                            calc_x = work.left + margin;
+                            calc_y = work.bottom - h_px - margin;
+                        }
+                        GameHudPosition::Center => {
+                            calc_x = work.left + (work.right - work.left - w_px) / 2;
+                            calc_y = work.top + (work.bottom - work.top - h_px) / 2;
+                        }
+                        GameHudPosition::Custom => {
+                            if let Some([cx, cy]) = self.saved.game_hud_custom_pos {
+                                calc_x = cx as i32;
+                                calc_y = cy as i32;
+                            } else {
+                                calc_x = work.right - w_px - margin;
+                                calc_y = work.top + margin;
+                            }
                         }
                     }
                 }
@@ -3953,10 +3999,16 @@ impl App {
                 apply_startup_registration(val);
             }
             Action::RestoreFromTray => {
-                self.hidden_in_tray = false;
-                self.force_quit = false;
-                crate::tray::restore_main_window();
-                self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                if self.in_game_mode {
+                    self.apply(Action::ExitGameMode);
+                } else {
+                    self.hidden_in_tray = false;
+                    self.force_quit = false;
+                    crate::tray::restore_main_window();
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                }
             }
             Action::HideToTray => {
                 self.hidden_in_tray = true;
@@ -4095,6 +4147,7 @@ impl App {
                 self.game_mode_start_time = None;
                 self.game_hotkey_stop.store(true, Relaxed);
                 self.art.set_budget_bytes(self.saved.perf_art_cache_mb * 1024 * 1024);
+                self.hidden_in_tray = false;
 
                 #[cfg(windows)]
                 {
@@ -4105,6 +4158,8 @@ impl App {
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 }
 
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
@@ -4152,6 +4207,12 @@ impl App {
                         let auri_hwnd = crate::tray::main_hwnd();
                         if !auri_hwnd.is_null() {
                             unsafe {
+                                let mut rect: windows_sys::Win32::Foundation::RECT = std::mem::zeroed();
+                                if windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(auri_hwnd, &mut rect) != 0 {
+                                    if rect.left > -10000 && rect.top > -10000 && rect.left < 30000 && rect.top < 30000 {
+                                        self.saved.game_hud_custom_pos = Some([rect.left as f32, rect.top as f32]);
+                                    }
+                                }
                                 let ex_style = GetWindowLongPtrW(auri_hwnd, GWL_EXSTYLE) as u32;
                                 let new_ex = (ex_style & !WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
                                 SetWindowLongPtrW(auri_hwnd, GWL_EXSTYLE, new_ex as isize);
@@ -4232,10 +4293,16 @@ impl App {
                 }
             }
             Action::SetGameHudScale(scale) => {
-                self.saved.game_hud_scale = scale.clamp(0.75, 1.30);
+                self.saved.game_hud_scale = scale.clamp(0.70, 1.60);
                 if self.in_game_mode && self.game_overlay_open {
                     self.reposition_game_hud();
                 }
+            }
+            Action::SetGameHudFontScale(scale) => {
+                self.saved.game_hud_font_scale = scale.clamp(0.80, 1.50);
+            }
+            Action::SaveGameHudCustomPos(x, y) => {
+                self.saved.game_hud_custom_pos = Some([x, y]);
             }
             Action::SetGameHudOpacity(opacity) => {
                 self.saved.game_hud_opacity = opacity.clamp(0.50, 1.00);
@@ -4613,6 +4680,18 @@ impl eframe::App for App {
 
         if self.in_game_mode {
             if self.game_overlay_open {
+                #[cfg(windows)]
+                {
+                    let auri_hwnd = crate::tray::main_hwnd();
+                    if !auri_hwnd.is_null() {
+                        let mut rect: windows_sys::Win32::Foundation::RECT = unsafe { std::mem::zeroed() };
+                        if unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect(auri_hwnd, &mut rect) } != 0 {
+                            if rect.left > -10000 && rect.top > -10000 && rect.left < 30000 && rect.top < 30000 {
+                                self.saved.game_hud_custom_pos = Some([rect.left as f32, rect.top as f32]);
+                            }
+                        }
+                    }
+                }
                 if window_focused {
                     self.game_hud_has_focused = true;
                 }
@@ -5206,8 +5285,10 @@ mod tests {
         assert!(saved.close_to_game_mode);
         assert!(saved.close_to_tray);
         assert_eq!(saved.game_hud_position, GameHudPosition::TopRight);
+        assert_eq!(saved.game_hud_custom_pos, None);
         assert_eq!(saved.game_hud_variant, GameHudVariant::ClassicCard);
         assert_eq!(saved.game_hud_scale, 1.0);
+        assert_eq!(saved.game_hud_font_scale, 1.0);
         assert_eq!(saved.game_hud_opacity, 0.95);
         assert_eq!(saved.game_hud_background, MiniBackground::Obsidian);
         assert_eq!(saved.game_hud_corner_radius, 14.0);
@@ -5223,8 +5304,10 @@ mod tests {
         assert!(deserialized.close_to_game_mode);
         assert!(deserialized.close_to_tray);
         assert_eq!(deserialized.game_hud_position, GameHudPosition::TopRight);
+        assert_eq!(deserialized.game_hud_custom_pos, None);
         assert_eq!(deserialized.game_hud_variant, GameHudVariant::ClassicCard);
         assert_eq!(deserialized.game_hud_scale, 1.0);
+        assert_eq!(deserialized.game_hud_font_scale, 1.0);
         assert_eq!(deserialized.game_hud_opacity, 0.95);
         assert_eq!(deserialized.game_hud_background, MiniBackground::Obsidian);
         assert_eq!(deserialized.game_hud_corner_radius, 14.0);
@@ -5235,12 +5318,14 @@ mod tests {
         assert_eq!(deserialized.cache_limit_mb, 200);
 
         // Deserializing explicit custom values
-        let custom_json = r#"{"close_to_game_mode": false, "game_hud_position": "BottomCenter", "game_hud_variant": "CompactPill", "game_hud_scale": 1.15, "game_hud_opacity": 0.85, "game_hud_background": "SlateCarbon", "game_hud_corner_radius": 18.5, "game_hud_show_volume": false, "auto_cache_songs": false, "cache_limit_mb": 500}"#;
+        let custom_json = r#"{"close_to_game_mode": false, "game_hud_position": "Custom", "game_hud_custom_pos": [120.0, 240.0], "game_hud_variant": "CompactPill", "game_hud_scale": 1.15, "game_hud_font_scale": 1.25, "game_hud_opacity": 0.85, "game_hud_background": "SlateCarbon", "game_hud_corner_radius": 18.5, "game_hud_show_volume": false, "auto_cache_songs": false, "cache_limit_mb": 500}"#;
         let deserialized_custom: Saved = serde_json::from_str(custom_json).unwrap();
         assert!(!deserialized_custom.close_to_game_mode);
-        assert_eq!(deserialized_custom.game_hud_position, GameHudPosition::BottomCenter);
+        assert_eq!(deserialized_custom.game_hud_position, GameHudPosition::Custom);
+        assert_eq!(deserialized_custom.game_hud_custom_pos, Some([120.0, 240.0]));
         assert_eq!(deserialized_custom.game_hud_variant, GameHudVariant::CompactPill);
         assert_eq!(deserialized_custom.game_hud_scale, 1.15);
+        assert_eq!(deserialized_custom.game_hud_font_scale, 1.25);
         assert_eq!(deserialized_custom.game_hud_opacity, 0.85);
         assert_eq!(deserialized_custom.game_hud_background, MiniBackground::SlateCarbon);
         assert_eq!(deserialized_custom.game_hud_corner_radius, 18.5);
@@ -5251,11 +5336,15 @@ mod tests {
         assert_eq!(deserialized_custom.cache_limit_mb, 500);
 
         // Test position labels
+        assert_eq!(GameHudPosition::ALL.len(), 8);
         assert_eq!(GameHudPosition::TopRight.label(), "Top-Right");
         assert_eq!(GameHudPosition::TopCenter.label(), "Top-Center");
         assert_eq!(GameHudPosition::TopLeft.label(), "Top-Left");
         assert_eq!(GameHudPosition::BottomRight.label(), "Bottom-Right");
         assert_eq!(GameHudPosition::BottomCenter.label(), "Bottom-Center");
+        assert_eq!(GameHudPosition::BottomLeft.label(), "Bottom-Left");
+        assert_eq!(GameHudPosition::Center.label(), "Center");
+        assert_eq!(GameHudPosition::Custom.label(), "Custom");
 
         // Test variant labels & sizes
         assert_eq!(GameHudVariant::ClassicCard.label(), "Classic Card");
