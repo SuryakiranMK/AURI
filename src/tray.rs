@@ -22,12 +22,12 @@ mod implementation {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DispatchMessageW,
         FindWindowW, GetCursorPos, GetMessageW, GetWindowLongPtrW, GetWindowRect, IsZoomed, MF_DISABLED,
-        MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, PostMessageW, RegisterClassW, SetForegroundWindow,
-        SetWindowLongPtrW, SetWindowPos, ShowWindow, TrackPopupMenu, TranslateMessage, GWL_EXSTYLE,
-        HICON, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, SW_RESTORE, SW_SHOWMAXIMIZED,
-        TPM_BOTTOMALIGN, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND,
-        WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
-        WS_POPUP,
+        MF_GRAYED, MF_SEPARATOR, MF_STRING, MSG, PostMessageW, RegisterClassW, SendMessageW,
+        SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, TrackPopupMenu, TranslateMessage,
+        GWL_EXSTYLE, HICON, ICON_BIG, ICON_SMALL, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, SWP_NOZORDER, SW_RESTORE, SW_SHOWMAXIMIZED, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+        TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_LBUTTONDBLCLK, WM_LBUTTONUP,
+        WM_NULL, WM_RBUTTONUP, WM_SETICON, WNDCLASSW, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_POPUP,
     };
 
     const WM_TRAY: u32 = WM_APP + 1;
@@ -239,6 +239,79 @@ mod implementation {
         }
     }
 
+    /// Removes the window tab from the Windows taskbar and ensures WS_EX_TOOLWINDOW is set and WS_EX_APPWINDOW cleared.
+    pub fn remove_from_taskbar(hwnd: HWND) {
+        if hwnd.is_null() {
+            return;
+        }
+        unsafe {
+            let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            let new_ex = (ex_style & !WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex as isize);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+
+            use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx};
+            use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            if let Ok(taskbar) = CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER) {
+                let _ = taskbar.HrInit();
+                let _ = taskbar.DeleteTab(windows::Win32::Foundation::HWND(hwnd as _));
+            }
+        }
+    }
+
+    /// Restores the window tab to the Windows taskbar and ensures WS_EX_APPWINDOW is set and WS_EX_TOOLWINDOW cleared.
+    pub fn add_to_taskbar(hwnd: HWND) {
+        if hwnd.is_null() {
+            return;
+        }
+        unsafe {
+            let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+            let new_ex = (ex_style & !WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW;
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex as isize);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                0,
+                0,
+                0,
+                0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+
+            use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx};
+            use windows::Win32::UI::Shell::{ITaskbarList3, TaskbarList};
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            if let Ok(taskbar) = CoCreateInstance::<_, ITaskbarList3>(&TaskbarList, None, CLSCTX_INPROC_SERVER) {
+                let _ = taskbar.HrInit();
+                let _ = taskbar.AddTab(windows::Win32::Foundation::HWND(hwnd as _));
+            }
+        }
+    }
+
+    /// Sets the window icon globally on `main_hwnd()` (or the provided hwnd) for ICON_BIG (1) and ICON_SMALL (0) using `app_icon()`.
+    pub fn set_window_icon(hwnd: HWND) {
+        let target = if !hwnd.is_null() { hwnd } else { main_hwnd() };
+        if target.is_null() {
+            return;
+        }
+        unsafe {
+            let icon = app_icon();
+            if !icon.is_null() {
+                SendMessageW(target, WM_SETICON, ICON_BIG as WPARAM, icon as LPARAM);
+                SendMessageW(target, WM_SETICON, ICON_SMALL as WPARAM, icon as LPARAM);
+            }
+        }
+    }
+
     /// Hides the main AURI window off-screen and removes it from the taskbar,
     /// but keeps WS_VISIBLE active so the Win32 message pump (and eframe/winit
     /// event loop) continues to run background ticks at 0% CPU.
@@ -261,9 +334,7 @@ mod implementation {
                 }
             }
 
-            let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-            let new_ex = (ex_style & !WS_EX_APPWINDOW) | WS_EX_TOOLWINDOW;
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex as isize);
+            remove_from_taskbar(hwnd);
 
             SetWindowPos(
                 hwnd,
@@ -285,9 +356,7 @@ mod implementation {
             return;
         }
         unsafe {
-            let ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
-            let new_ex = (ex_style & !WS_EX_TOOLWINDOW) | WS_EX_APPWINDOW;
-            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new_ex as isize);
+            add_to_taskbar(hwnd);
 
             let cell = SAVED_PLACEMENT.get_or_init(Mutex::default);
             let placement = cell.lock().ok().and_then(|mut s| s.take());
@@ -312,6 +381,7 @@ mod implementation {
                 ShowWindow(hwnd, SW_RESTORE);
                 ShowWindow(hwnd, SW_SHOWMAXIMIZED);
             }
+            set_window_icon(hwnd);
             SetForegroundWindow(hwnd);
         }
     }
@@ -503,12 +573,18 @@ mod stubs {
         Prev,
     }
 
+    pub type HWND = *mut std::ffi::c_void;
+
     pub fn start(_callback: std::sync::Arc<dyn Fn(TrayAction) + Send + Sync>) {}
     pub fn set_visible(_visible: bool) {}
     pub fn notify_song(_title: &str, _subtitle: &str) {}
     pub fn shutdown() {}
     pub fn hide_main_window_to_tray() {}
     pub fn restore_main_window() {}
+    pub fn remove_from_taskbar(_hwnd: HWND) {}
+    pub fn add_to_taskbar(_hwnd: HWND) {}
+    pub fn set_window_icon(_hwnd: HWND) {}
+    pub fn main_hwnd() -> HWND { std::ptr::null_mut() }
     pub fn set_playing(_playing: bool) {}
     pub fn is_playing() -> bool { false }
     pub fn is_force_quit() -> bool { false }
@@ -539,5 +615,12 @@ mod tests {
     fn test_notify_song_no_panic() {
         notify_song("Starboy", "The Weeknd, Daft Punk");
         notify_song("A very long title that exceeds the limits of standard notification buffers to ensure truncation handles wide characters correctly", "Artist");
+    }
+
+    #[test]
+    fn test_taskbar_null_hwnd_safety() {
+        remove_from_taskbar(std::ptr::null_mut());
+        add_to_taskbar(std::ptr::null_mut());
+        set_window_icon(std::ptr::null_mut());
     }
 }

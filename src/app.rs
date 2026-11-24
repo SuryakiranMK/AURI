@@ -1811,6 +1811,7 @@ pub struct App {
     /// Set when the user really wants to exit (tray Quit), so the
     /// close-to-tray interception lets the close through.
     pub force_quit: bool,
+    pub icon_bound: bool,
     /// Last track a song notification was shown for.
     pub last_notified_track: Option<String>,
     /// Instant search suggestions for the live dropdown.
@@ -1991,6 +1992,7 @@ impl App {
             dismissed_sync_code: None,
             last_clipboard_code: None,
             force_quit: false,
+            icon_bound: false,
             last_notified_track: None,
             suggestions: Vec::new(),
             suggestions_query: String::new(),
@@ -4006,7 +4008,7 @@ impl App {
                     self.force_quit = false;
                     crate::tray::restore_main_window();
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
+                    self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                     self.ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
                 }
             }
@@ -4127,6 +4129,10 @@ impl App {
 
                     #[cfg(windows)]
                     {
+                        let auri_hwnd = crate::tray::main_hwnd();
+                        if !auri_hwnd.is_null() {
+                            crate::tray::remove_from_taskbar(auri_hwnd);
+                        }
                         crate::tray::hide_main_window_to_tray();
                     }
                     #[cfg(not(windows))]
@@ -4151,6 +4157,10 @@ impl App {
 
                 #[cfg(windows)]
                 {
+                    let auri_hwnd = crate::tray::main_hwnd();
+                    if !auri_hwnd.is_null() {
+                        crate::tray::add_to_taskbar(auri_hwnd);
+                    }
                     crate::tray::restore_main_window();
                 }
                 #[cfg(not(windows))]
@@ -4159,7 +4169,7 @@ impl App {
                 }
 
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(true));
+                self.ctx.send_viewport_cmd(egui::ViewportCommand::Decorations(false));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
                 self.ctx.send_viewport_cmd(egui::ViewportCommand::WindowLevel(egui::WindowLevel::Normal));
@@ -4218,6 +4228,7 @@ impl App {
                                 SetWindowLongPtrW(auri_hwnd, GWL_EXSTYLE, new_ex as isize);
                                 SetWindowPos(auri_hwnd, std::ptr::null_mut(), -32000, -32000, 0, 0, SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOSIZE | SWP_FRAMECHANGED);
                             }
+                            crate::tray::remove_from_taskbar(auri_hwnd);
                         }
                         if self.last_game_hwnd != 0 {
                             unsafe {
@@ -4604,8 +4615,31 @@ impl eframe::App for App {
         }
         let (size, minimized) = ctx.input(|input| (input.content_rect().size(), input.viewport().minimized == Some(true)));
         let window_focused = ctx.input(|input| input.focused);
+        if window_focused {
+            if self.in_game_mode && !self.game_overlay_open {
+                self.apply(Action::ExitGameMode);
+            } else if self.hidden_in_tray {
+                self.apply(Action::RestoreFromTray);
+            }
+        }
+        #[cfg(windows)]
+        if !self.icon_bound {
+            let hwnd = crate::tray::main_hwnd();
+            if !hwnd.is_null() {
+                crate::tray::set_window_icon(hwnd);
+                self.icon_bound = true;
+            }
+        }
         if window_focused && !self.prev_window_focused {
             self.check_clipboard_join();
+            #[cfg(windows)]
+            {
+                let hwnd = crate::tray::main_hwnd();
+                if !hwnd.is_null() {
+                    crate::tray::set_window_icon(hwnd);
+                    self.icon_bound = true;
+                }
+            }
         }
         self.prev_window_focused = window_focused;
         if minimized && (self.saved.auto_purge_ram || (self.saved.performance_mode && self.saved.perf_aggressive_ram)) {

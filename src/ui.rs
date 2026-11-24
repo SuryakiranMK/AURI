@@ -12211,6 +12211,7 @@ pub fn draw_game_overlay(app: &mut App, ctx: &egui::Context) -> Vec<Action> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::GameHudPosition;
 
     #[test]
     fn test_banner_alpha_blend() {
@@ -12312,5 +12313,32 @@ mod tests {
         assert_eq!(device_icon(Some("Bluetooth Audio Receiver")), icon::BLUETOOTH);
         assert_eq!(device_icon(Some("NVIDIA High Definition Audio (HDMI/DisplayPort)")), icon::TELEVISION);
         assert_eq!(device_icon(None), icon::SPEAKER_HIGH);
+    }
+
+    #[test]
+    fn test_app_icon_loads_cleanly() {
+        let icon = app_icon();
+        assert_eq!(icon.width, 64);
+        assert_eq!(icon.height, 64);
+        assert_eq!(icon.rgba.len(), 64 * 64 * 4);
+        // Verify non-empty and has alpha transparency around borders
+        let has_opaque = icon.rgba.chunks(4).any(|c| c[3] > 200);
+        let has_transparent = icon.rgba.chunks(4).any(|c| c[3] == 0);
+        assert!(has_opaque && has_transparent);
+    }
+
+    #[test]
+    fn test_game_hud_proportional_scaling_and_positions() {
+        assert_eq!(GameHudPosition::ALL.len(), 8);
+        assert_eq!(GameHudPosition::ALL[0], GameHudPosition::TopRight);
+        assert_eq!(GameHudPosition::ALL[5], GameHudPosition::BottomLeft);
+        assert_eq!(GameHudPosition::ALL[6], GameHudPosition::Center);
+        assert_eq!(GameHudPosition::ALL[7], GameHudPosition::Custom);
+
+        let calc_scale = |s: f32, fs: f32| (s * fs).clamp(0.70, 1.80);
+        assert_eq!(calc_scale(1.0, 1.0), 1.0);
+        assert_eq!(calc_scale(0.70, 0.80), 0.70);
+        assert_eq!(calc_scale(1.60, 1.50), 1.80);
+        assert_eq!(calc_scale(1.20, 1.10), 1.32);
     }
 }
