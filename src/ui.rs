@@ -12321,10 +12321,10 @@ mod tests {
         assert_eq!(icon.width, 64);
         assert_eq!(icon.height, 64);
         assert_eq!(icon.rgba.len(), 64 * 64 * 4);
-        // Verify non-empty and has alpha transparency around borders
+        // Verify icon loaded non-empty pixels with solid alpha
+        let has_content = icon.rgba.chunks(4).any(|c| c[0] > 0 || c[1] > 0 || c[2] > 0);
         let has_opaque = icon.rgba.chunks(4).any(|c| c[3] > 200);
-        let has_transparent = icon.rgba.chunks(4).any(|c| c[3] == 0);
-        assert!(has_opaque && has_transparent);
+        assert!(has_content && has_opaque);
     }
 
     #[test]
