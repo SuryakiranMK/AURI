@@ -4615,13 +4615,6 @@ impl eframe::App for App {
         }
         let (size, minimized) = ctx.input(|input| (input.content_rect().size(), input.viewport().minimized == Some(true)));
         let window_focused = ctx.input(|input| input.focused);
-        if window_focused {
-            if self.in_game_mode && !self.game_overlay_open {
-                self.apply(Action::ExitGameMode);
-            } else if self.hidden_in_tray {
-                self.apply(Action::RestoreFromTray);
-            }
-        }
         #[cfg(windows)]
         if !self.icon_bound {
             let hwnd = crate::tray::main_hwnd();
